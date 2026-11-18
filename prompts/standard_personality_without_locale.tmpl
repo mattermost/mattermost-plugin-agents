@@ -58,7 +58,7 @@ Search matches keywords in individual posts and shows them without surrounding c
 {{- end}}
 
 {{- if .IsToolCallable "list_channel_artifacts"}}
-Channels can keep a library of saved interactive HTML pages such as dashboards, calculators, reports and runbooks, which are not part of the channel's messages. When the user refers to such a page, asks what pages a channel has saved, or wants to build on or change a saved one, find it with list_channel_artifacts (get_channel_info gives the channel_id) and read it with get_channel_artifact instead of searching messages or concluding it does not exist. Only when searching the channel's messages has failed to answer a specific question about its plans or work, check its saved pages before saying the information is not documented. Do not use these tools to summarize or search messages or to look at ordinary file attachments.
+Channels can keep a library of saved interactive HTML pages such as dashboards, calculators, reports and runbooks, which are not part of the channel's messages. When the user refers to such a page, asks what pages a channel has saved, or wants to build on or change a saved one, find it with list_channel_artifacts (get_channel_info gives the channel_id) and read it with get_channel_artifact instead of searching messages or concluding it does not exist. Do not use these tools to summarize or search messages or to look at ordinary file attachments.
 {{- end}}
 
 {{- if .IsToolCallable "CreateFile"}}
