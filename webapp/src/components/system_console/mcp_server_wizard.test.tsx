@@ -350,19 +350,8 @@ describe('reauthReasons', () => {
         {name: 'editing the description', change: {description: 'Tickets'}, want: []},
         {name: 'disabling the server', change: {enabled: false}, want: []},
         {name: 'several at once', change: {name: 'T', baseURL: 'https://x.example.com', clientID: 'c'}, want: ['name', 'url', 'clientID']},
-        {name: 'adding an authorization parameter', change: {authorizationParams: {access_type: 'offline'} as Record<string, string>}, want: ['authorizationParams']},
-        {name: 'an empty authorization parameter map', change: {authorizationParams: {} as Record<string, string>}, want: []},
     ])('$name', ({change, want}) => {
         expect(reauthReasons(base, {...base, ...change})).toEqual(want);
-    });
-
-    test.each<{name: string; after: Record<string, string>; want: string[]}>([
-        {name: 'changing a value', after: {access_type: 'online', prompt: 'consent'}, want: ['authorizationParams']},
-        {name: 'removing a parameter', after: {access_type: 'offline'}, want: ['authorizationParams']},
-        {name: 'the same parameters in another order', after: {prompt: 'consent', access_type: 'offline'}, want: []},
-    ])('authorization parameters: $name', ({after, want}) => {
-        const before = {...base, authorizationParams: {access_type: 'offline', prompt: 'consent'}};
-        expect(reauthReasons(before, {...base, authorizationParams: after})).toEqual(want);
     });
 
     test('a save that trims a stored name moves its sign-ins', () => {
@@ -547,54 +536,87 @@ describe('MCPServerWizard edit mode', () => {
         expect(edited.clientID).toBe('client-a');
     });
 
-    test('authorization parameters are saved trimmed, in clear text, after a sign-in warning', async () => {
-        const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
-        mockGetMCPServerTools.mockResolvedValue(discoveredServer());
-
-        await screen.findByDisplayValue('Tracker');
+    const addAuthorizationParam = (name: string, value: string) => {
         fireEvent.click(screen.getByRole('button', {name: 'Add Parameter'}));
-        const value = screen.getByPlaceholderText('Parameter value (e.g. offline)') as HTMLInputElement;
-        expect(value.type).toBe('text');
-        fireEvent.change(value, {target: {value: ' offline '}});
-        fireEvent.change(screen.getByPlaceholderText('Parameter name (e.g. access_type)'), {target: {value: ' access_type '}});
+        fireEvent.change(screen.getAllByPlaceholderText('Parameter value (e.g. offline)').at(-1) as HTMLElement, {target: {value}});
+        fireEvent.change(screen.getAllByPlaceholderText('Parameter name (e.g. access_type)').at(-1) as HTMLElement, {target: {value: name}});
+    };
+
+    const saveAndGetAuthorizationParams = async (onPersist: jest.Mock) => {
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-
-        expect(screen.getByText(/Changing the OAuth authorization parameters/)).not.toBeNull();
-        expect(onPersist).not.toHaveBeenCalled();
-        fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
-
         await waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1));
         const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
-        expect(edited.authorizationParams).toEqual({access_type: 'offline'});
-    });
+        return edited.authorizationParams;
+    };
 
-    test('a blank authorization parameter row is dropped without a sign-in warning', async () => {
+    test('authorization parameters are saved trimmed, in clear text, without ending sign-ins', async () => {
         const {onPersist, onClose} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
 
         await screen.findByDisplayValue('Tracker');
-        fireEvent.click(screen.getByRole('button', {name: 'Add Parameter'}));
-        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+        addAuthorizationParam(' access_type ', ' offline ');
+        expect((screen.getByPlaceholderText('Parameter value (e.g. offline)') as HTMLInputElement).type).toBe('text');
 
+        expect(await saveAndGetAuthorizationParams(onPersist)).toEqual({access_type: 'offline'});
+        expect(screen.queryByRole('button', {name: 'Save and sign in again'})).toBeNull();
         await waitFor(() => expect(onClose).toHaveBeenCalled());
-        const [edited] = onPersist.mock.calls[0] as unknown as [MCPServerConfig, string];
-        expect(edited.authorizationParams).toEqual({});
     });
 
-    test.each([
-        {name: 'a reserved name', key: 'state', value: 'fixed', error: 'state is set by the OAuth sign-in and cannot be changed.'},
-        {name: 'a reserved name in another case', key: 'Client_ID', value: 'other', error: 'Client_ID is set by the OAuth sign-in and cannot be changed.'},
-        {name: 'a value without a name', key: ' ', value: 'offline', error: 'Enter a name for every authorization parameter.'},
-    ])('an authorization parameter with $name is not saved', async ({key, value, error}) => {
+    test('a blank authorization parameter row is dropped', async () => {
         const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
 
         await screen.findByDisplayValue('Tracker');
         fireEvent.click(screen.getByRole('button', {name: 'Add Parameter'}));
-        fireEvent.change(screen.getByPlaceholderText('Parameter value (e.g. offline)'), {target: {value}});
-        fireEvent.change(screen.getByPlaceholderText('Parameter name (e.g. access_type)'), {target: {value: key}});
+
+        expect(await saveAndGetAuthorizationParams(onPersist)).toEqual({});
+    });
+
+    test('authorization parameter rows stay separate while a name is typed', async () => {
+        const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        await screen.findByDisplayValue('Tracker');
+        addAuthorizationParam('prompt', 'consent');
+        addAuthorizationParam('prompt', 'login');
+        fireEvent.change(screen.getAllByPlaceholderText('Parameter name (e.g. access_type)')[1], {target: {value: 'prompt_mode'}});
+
+        expect(await saveAndGetAuthorizationParams(onPersist)).toEqual({prompt: 'consent', prompt_mode: 'login'});
+    });
+
+    test('adding a row keeps a value that has no name yet', async () => {
+        const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        await screen.findByDisplayValue('Tracker');
+        addAuthorizationParam('', 'offline');
+        addAuthorizationParam('prompt', 'consent');
+        fireEvent.change(screen.getAllByPlaceholderText('Parameter name (e.g. access_type)')[0], {target: {value: 'access_type'}});
+
+        expect(await saveAndGetAuthorizationParams(onPersist)).toEqual({access_type: 'offline', prompt: 'consent'});
+    });
+
+    test('a stored parameter named __proto__ survives an unrelated save', async () => {
+        const server = {...saved, authorizationParams: JSON.parse('{"__proto__": "kept"}')};
+        const {onPersist} = renderWizard({kind: 'edit', server}, ['Tracker'], [server]);
+
+        await screen.findByDisplayValue('Tracker');
+
+        expect(Object.entries(await saveAndGetAuthorizationParams(onPersist) ?? {})).toEqual([['__proto__', 'kept']]);
+    });
+
+    test.each([
+        {name: 'a reserved name', params: [['state', 'fixed']], error: 'state is set by the OAuth sign-in and cannot be changed.'},
+        {name: 'a reserved name in another case', params: [['Client_ID', 'other']], error: 'Client_ID is set by the OAuth sign-in and cannot be changed.'},
+        {name: 'the response mode', params: [['response_mode', 'form_post']], error: 'response_mode is set by the OAuth sign-in and cannot be changed.'},
+        {name: 'a value without a name', params: [[' ', 'offline']], error: 'Enter a name for every authorization parameter.'},
+        {name: 'a name without a value', params: [['access_type', ' ']], error: 'Enter a value for access_type.'},
+        {name: 'an invalid name', params: [['access type', 'offline']], error: 'access type can only contain letters, digits, hyphens, periods, and underscores.'},
+        {name: 'a name used twice once trimmed', params: [['prompt', 'consent'], [' prompt ', 'none']], error: 'prompt is set more than once.'},
+    ])('an authorization parameter with $name is not saved', async ({params, error}) => {
+        const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
+
+        await screen.findByDisplayValue('Tracker');
+        params.forEach(([name, value]) => addAuthorizationParam(name, value));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         expect(screen.getByText(error)).not.toBeNull();
-        expect(screen.queryByRole('button', {name: 'Save and sign in again'})).toBeNull();
         expect(onPersist).not.toHaveBeenCalled();
     });
 

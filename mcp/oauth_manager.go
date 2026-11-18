@@ -10,8 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -356,16 +358,16 @@ func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID st
 // space-separated scope from an insufficient_scope challenge when present
 // (treated as authoritative per the MCP specification).
 func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL, challengeScope string) (string, error) {
-	return m.initiateOAuthFlow(ctx, userID, serverConfig.ID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig))
+	return m.initiateOAuthFlow(ctx, userID, serverConfig.ID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig), serverConfig.AuthorizationParams)
 }
 
 // InitiateOAuthFlow starts a sign-in for a server known only by name and URL;
 // its grant is bound to the server's configuration ID at callback time.
 func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
-	return m.initiateOAuthFlow(ctx, userID, "", serverID, serverURL, metadataURL, challengeScope, staticCreds)
+	return m.initiateOAuthFlow(ctx, userID, "", serverID, serverURL, metadataURL, challengeScope, staticCreds, nil)
 }
 
-func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConfigID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
+func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConfigID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials, authorizationParams map[string]string) (string, error) {
 	// Generate PKCE parameters
 	codeVerifier := oauth2.GenerateVerifier()
 
@@ -401,7 +403,7 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 		oauth2.S256ChallengeOption(codeVerifier),
 		oauth2.SetAuthURLParam("resource", resolved.resource),
 	}
-	extraOpts, optsErr := m.authorizationParamOptions(serverConfigID, serverID, serverURL)
+	extraOpts, optsErr := authorizationParamOptions(resolved.config.Endpoint.AuthURL, authorizationParams)
 	if optsErr != nil {
 		return "", optsErr
 	}
@@ -444,26 +446,30 @@ type staticIssuerPin struct {
 	Issuer string `json:"issuer"`
 }
 
-// authorizationParamOptions returns the server's configured authorization
-// parameters from the live config. A server that no longer matches the sign-in
-// being started is an error, as it would be at callback time. Reserved keys are
-// rejected when a config is saved, and skipped here too because a stored config
-// may not have gone through that validation.
-func (m *OAuthManager) authorizationParamOptions(serverConfigID, serverID, serverURL string) ([]oauth2.AuthCodeOption, error) {
-	if m.serverConfigLookup == nil {
+// authorizationParamOptions returns the options for a server's configured
+// authorization parameters. Entries are validated when a config is saved, and
+// invalid ones are skipped here too because a stored config may not have gone
+// through that validation. A parameter the authorization endpoint URL already
+// carries is an error: AuthCodeURL would send it twice, which RFC 6749 section
+// 3.1 forbids.
+func authorizationParamOptions(authorizationEndpoint string, params map[string]string) ([]oauth2.AuthCodeOption, error) {
+	if len(params) == 0 {
 		return nil, nil
 	}
-	cfg, ok := m.serverConfigLookup(serverID)
-	if !ok || !sameServerOrigin(cfg.BaseURL, serverURL) ||
-		(serverConfigID != "" && cfg.ID != "" && cfg.ID != serverConfigID) {
-		return nil, fmt.Errorf("the MCP server's configuration changed; please sign in again")
+	endpoint, err := url.Parse(authorizationEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid authorization endpoint: %w", err)
 	}
-	opts := make([]oauth2.AuthCodeOption, 0, len(cfg.AuthorizationParams))
-	for key, value := range cfg.AuthorizationParams {
-		if strings.TrimSpace(key) == "" || config.IsReservedMCPAuthorizationParam(key) {
+	endpointParams := endpoint.Query()
+	opts := make([]oauth2.AuthCodeOption, 0, len(params))
+	for _, name := range slices.Sorted(maps.Keys(params)) {
+		if config.ValidateMCPAuthorizationParam(name, params[name]) != nil {
 			continue
 		}
-		opts = append(opts, oauth2.SetAuthURLParam(key, value))
+		if endpointParams.Has(name) {
+			return nil, fmt.Errorf("the authorization endpoint already sets the OAuth authorization parameter %q", name)
+		}
+		opts = append(opts, oauth2.SetAuthURLParam(name, params[name]))
 	}
 	return opts, nil
 }

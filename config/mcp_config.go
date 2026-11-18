@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/textproto"
+	"regexp"
 	"strings"
 )
 
@@ -98,16 +99,18 @@ type MCPServerConfig struct {
 
 	// AuthorizationParams are extra query parameters added to the OAuth
 	// authorization URL, such as access_type=offline. They are not secret and
-	// are not sent on the token or refresh requests. Keys the OAuth flow sets
-	// itself are rejected; see IsReservedMCPAuthorizationParam.
+	// are not sent on the token or refresh requests. See
+	// ValidateMCPAuthorizationParam for the entries that are accepted.
 	AuthorizationParams map[string]string `json:"authorizationParams,omitempty"`
 
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
 }
 
 // reservedMCPAuthorizationParams are the authorization request parameters the
-// OAuth flow sets itself. Overriding one would break the flow or its CSRF,
-// PKCE, or audience protections.
+// OAuth flow sets or depends on. Overriding one would break the flow or its
+// CSRF, PKCE, or audience protections: the callback only reads a query response
+// (response_mode), and a request object can replace the other parameters
+// (request, request_uri).
 var reservedMCPAuthorizationParams = map[string]bool{
 	"response_type":         true,
 	"client_id":             true,
@@ -117,12 +120,30 @@ var reservedMCPAuthorizationParams = map[string]bool{
 	"code_challenge":        true,
 	"code_challenge_method": true,
 	"resource":              true,
+	"response_mode":         true,
+	"request":               true,
+	"request_uri":           true,
 }
 
-// IsReservedMCPAuthorizationParam reports whether key names a parameter the
-// OAuth flow sets itself, ignoring case and surrounding whitespace.
-func IsReservedMCPAuthorizationParam(key string) bool {
-	return reservedMCPAuthorizationParams[strings.ToLower(strings.TrimSpace(key))]
+// mcpAuthorizationParamName is the RFC 6749 section 8.2 parameter name syntax.
+var mcpAuthorizationParamName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// ValidateMCPAuthorizationParam reports why an entry cannot be sent on the
+// authorization URL. The error completes a sentence about the server. Reserved
+// names are matched ignoring case and surrounding whitespace; other names must
+// be valid exactly as stored, because they are sent unchanged.
+func ValidateMCPAuthorizationParam(name, value string) error {
+	switch {
+	case strings.TrimSpace(name) == "":
+		return errors.New("has an OAuth authorization parameter with an empty name")
+	case reservedMCPAuthorizationParams[strings.ToLower(strings.TrimSpace(name))]:
+		return fmt.Errorf("cannot set the reserved OAuth authorization parameter %q", name)
+	case !mcpAuthorizationParamName.MatchString(name):
+		return fmt.Errorf("has an OAuth authorization parameter with the invalid name %q", name)
+	case strings.TrimSpace(value) == "":
+		return fmt.Errorf("has an empty value for the OAuth authorization parameter %q", name)
+	}
+	return nil
 }
 
 // GetToolPolicy returns the policy and enabled state for a tool.

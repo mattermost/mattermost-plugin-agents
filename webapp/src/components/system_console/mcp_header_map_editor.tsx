@@ -19,9 +19,6 @@ export const HeaderMapEditor = ({
     valuePlaceholder,
     disableAdd,
     disableEdit,
-    showValues,
-    addLabel,
-    removeLabel,
 }: {
     headers: {[key: string]: string};
     onChange: (headers: {[key: string]: string}) => void;
@@ -29,16 +26,10 @@ export const HeaderMapEditor = ({
     valuePlaceholder?: string;
     disableAdd?: boolean;
     disableEdit?: boolean;
-
-    // Shows values in clear text, for maps that hold no secrets.
-    showValues?: boolean;
-    addLabel?: React.ReactNode;
-    removeLabel?: string;
 }) => {
     const intl = useIntl();
     const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
     const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
-    const removeRowLabel = removeLabel ?? intl.formatMessage({defaultMessage: 'Remove header'});
 
     const addHeader = () => {
         onChange({...headers, '': ''});
@@ -75,7 +66,7 @@ export const HeaderMapEditor = ({
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
-                            type={showValues ? 'text' : 'password'}
+                            type='password'
                             placeholder={headerValuePlaceholder}
                             value={value}
                             disabled={disableEdit}
@@ -83,7 +74,7 @@ export const HeaderMapEditor = ({
                         />
                         <IconButton
                             icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                            aria-label={removeRowLabel}
+                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
                             size='small'
                             destructive={true}
                             disabled={disableEdit}
@@ -99,9 +90,81 @@ export const HeaderMapEditor = ({
                     leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                     onClick={addHeader}
                 >
-                    {addLabel ?? <FormattedMessage defaultMessage='Add Header'/>}
+                    <FormattedMessage defaultMessage='Add Header'/>
                 </AddHeaderButton>
             )}
+        </>
+    );
+};
+
+export type KeyValueRow = {
+    id: number;
+    name: string;
+    value: string;
+};
+
+let nextKeyValueRowID = 0;
+
+export const newKeyValueRow = (name = '', value = ''): KeyValueRow => {
+    nextKeyValueRowID += 1;
+    return {id: nextKeyValueRowID, name, value};
+};
+
+// Edits name/value pairs shown in clear text. Rows are kept apart by ID, so two
+// rows can briefly share a name while one is typed; the owner validates them.
+export const KeyValueRowsEditor = ({
+    rows,
+    onChange,
+    namePlaceholder,
+    valuePlaceholder,
+    addLabel,
+    removeLabel,
+}: {
+    rows: KeyValueRow[];
+    onChange: (rows: KeyValueRow[]) => void;
+    namePlaceholder: string;
+    valuePlaceholder: string;
+    addLabel: React.ReactNode;
+    removeLabel: string;
+}) => {
+    const updateRow = (id: number, change: Partial<KeyValueRow>) => {
+        onChange(rows.map((row) => (row.id === id ? {...row, ...change} : row)));
+    };
+
+    return (
+        <>
+            <HeadersList>
+                {rows.map((row) => (
+                    <HeaderRow key={row.id}>
+                        <HeaderInput
+                            placeholder={namePlaceholder}
+                            value={row.name}
+                            onChange={(e) => updateRow(row.id, {name: e.target.value})}
+                        />
+                        <HeaderInput
+                            type='text'
+                            placeholder={valuePlaceholder}
+                            value={row.value}
+                            onChange={(e) => updateRow(row.id, {value: e.target.value})}
+                        />
+                        <IconButton
+                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                            aria-label={removeLabel}
+                            size='small'
+                            destructive={true}
+                            onClick={() => onChange(rows.filter(({id}) => id !== row.id))}
+                        />
+                    </HeaderRow>
+                ))}
+            </HeadersList>
+            <AddHeaderButton
+                emphasis='quaternary'
+                size='small'
+                leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                onClick={() => onChange([...rows, newKeyValueRow()])}
+            >
+                {addLabel}
+            </AddHeaderButton>
         </>
     );
 };

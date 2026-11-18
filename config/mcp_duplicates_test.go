@@ -90,6 +90,13 @@ func TestMCPConfigValidateAuthorizationParams(t *testing.T) {
 		{name: "resource", params: map[string]string{"resource": "https://other.example.com"}, wantErr: `"resource"`},
 		{name: "reserved name in another case", params: map[string]string{"State": "fixed"}, wantErr: `"State"`},
 		{name: "reserved name with spaces", params: map[string]string{" state ": "fixed"}, wantErr: `" state "`},
+		{name: "response_mode", params: map[string]string{"response_mode": "form_post"}, wantErr: `"response_mode"`},
+		{name: "request", params: map[string]string{"request": "jwt"}, wantErr: `"request"`},
+		{name: "request_uri", params: map[string]string{"request_uri": "urn:example"}, wantErr: `"request_uri"`},
+		{name: "name with surrounding spaces", params: map[string]string{" access_type ": "offline"}, wantErr: `" access_type "`},
+		{name: "name with a character outside RFC 6749", params: map[string]string{"access&type": "offline"}, wantErr: `"access&type"`},
+		{name: "empty value", params: map[string]string{"access_type": ""}, wantErr: `"access_type"`},
+		{name: "blank value", params: map[string]string{"access_type": "  "}, wantErr: `"access_type"`},
 	}
 
 	for _, tc := range testCases {

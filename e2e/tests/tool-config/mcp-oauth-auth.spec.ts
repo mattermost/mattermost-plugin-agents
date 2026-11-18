@@ -171,17 +171,21 @@ test.describe('MCP OAuth Authentication', () => {
         await addAuthorizationParam(dialog, 'prompt', 'consent');
         await dialog.getByRole('button', { name: 'Save', exact: true }).click();
 
-        await expect(dialog.getByText(/Changing the OAuth authorization parameters/)).toBeVisible();
-        await dialog.getByRole('button', { name: 'Save and sign in again' }).click();
-        await expect(dialog.getByText(`Sign in to ${MOCK_OAUTH_SERVER_NAME}`)).toBeVisible({ timeout: 30000 });
+        // The parameters do not end sign-ins, so the save needs no confirmation.
+        await expect(dialog).toBeHidden();
 
-        // The provider lives on the Docker network, so the browser's request
-        // to it is what the test inspects.
+        const adminClient = await mattermost.getAdminClient();
+        const apiHelper = await createToolConfigAPIHelper(mattermost);
+        const tools = await apiHelper.getUserMCPTools(adminClient.getToken());
+        const { authURL } = tools.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
+
+        // The provider lives on the Docker network, so the browser cannot load
+        // it: the request it attempts is what the test inspects.
         const authorizeRequest = context.waitForEvent('request', (request) => request.url().startsWith(MOCK_OAUTH_AUTHORIZE_URL));
-        const signInWindow = context.waitForEvent('page');
-        await dialog.getByRole('button', { name: 'Sign in' }).click();
+        const signInPage = await context.newPage();
+        await signInPage.goto(authURL).catch(() => undefined);
         const params = new URL((await authorizeRequest).url()).searchParams;
-        await (await signInWindow).close();
+        await signInPage.close();
 
         expect(params.get('access_type')).toBe('offline');
         expect(params.get('prompt')).toBe('consent');
@@ -199,12 +203,18 @@ test.describe('MCP OAuth Authentication', () => {
         await addAuthorizationParam(dialog, 'state', 'fixed');
         await dialog.getByRole('button', { name: 'Save', exact: true }).click();
         await expect(dialog.getByText('state is set by the OAuth sign-in and cannot be changed.')).toBeVisible();
-        await expect(dialog.getByRole('button', { name: 'Save and sign in again' })).toBeHidden();
+        await expect(dialog).toBeVisible();
 
         const adminClient = await mattermost.getAdminClient();
         const configURL = `${mattermost.url()}/plugins/mattermost-ai/admin/config`;
         const headers = { Authorization: `Bearer ${adminClient.getToken()}`, 'Content-Type': 'application/json' };
         const config = await (await fetch(configURL, { headers })).json();
+
+        // The same config is accepted without the reserved parameter, so the
+        // rejection below can only come from it.
+        const accepted = await fetch(configURL, { method: 'PUT', headers, body: JSON.stringify(config) });
+        expect(accepted.status).toBe(200);
+
         const server = config.mcp.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
         server.authorizationParams = { ...server.authorizationParams, state: 'fixed' };
 

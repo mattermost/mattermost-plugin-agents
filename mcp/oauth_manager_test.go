@@ -301,97 +301,117 @@ func TestResolveOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 }
 
 func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
-	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/.well-known/oauth-authorization-server" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
-			Issuer:                        serverURL,
-			AuthorizationEndpoint:         serverURL + "/authorize",
-			TokenEndpoint:                 serverURL + "/token",
-			CodeChallengeMethodsSupported: []string{"S256"},
-		})
-	}))
-	defer server.Close()
-	serverURL = server.URL
+	const spacedName = " access_type "
 
-	serverConfig := func(params map[string]string) ServerConfig {
-		return ServerConfig{
-			ID:                  "server-id",
-			Name:                "YouTrack",
-			Enabled:             true,
-			BaseURL:             serverURL + "/mcp",
-			ClientID:            "static-client",
-			ClientSecret:        "static-secret",
-			AuthorizationParams: params,
-		}
-	}
-	start := func(t *testing.T, lookup ServerConfigLookup) (url.Values, error) {
-		t.Helper()
-		manager, _ := newStatefulKVManager(t, lookup, server.Client())
-		authURL, err := manager.InitiateOAuthFlowForServer(context.Background(), "user-id", serverConfig(nil))
-		if err != nil {
-			return nil, err
-		}
-		parsed, err := url.Parse(authURL)
-		require.NoError(t, err)
-		return parsed.Query(), nil
-	}
-	lookupOf := func(cfg ServerConfig) ServerConfigLookup {
-		return func(name string) (ServerConfig, bool) { return cfg, name == cfg.Name }
-	}
-
-	baseline, err := start(t, lookupOf(serverConfig(nil)))
-	require.NoError(t, err)
-	require.Empty(t, baseline.Get("access_type"))
-
-	t.Run("configured parameters are added and protocol parameters are kept", func(t *testing.T) {
-		query, err := start(t, lookupOf(serverConfig(map[string]string{"access_type": "offline", "prompt": "consent"})))
-		require.NoError(t, err)
-		assert.Equal(t, "offline", query.Get("access_type"))
-		assert.Equal(t, "consent", query.Get("prompt"))
-		assert.Equal(t, baseline.Get("resource"), query.Get("resource"))
-		assert.NotEmpty(t, query.Get("code_challenge"))
-		assert.Equal(t, "S256", query.Get("code_challenge_method"))
-	})
-
-	t.Run("reserved parameters in a stored config are ignored", func(t *testing.T) {
-		query, err := start(t, lookupOf(serverConfig(map[string]string{
-			"state":          "fixed",
-			"code_challenge": "fixed",
-			"resource":       "https://other.example.com",
-			"redirect_uri":   "https://other.example.com/callback",
-		})))
-		require.NoError(t, err)
-		assert.NotEqual(t, "fixed", query.Get("state"))
-		assert.NotEqual(t, "fixed", query.Get("code_challenge"))
-		assert.Equal(t, baseline.Get("resource"), query.Get("resource"))
-		assert.Equal(t, baseline.Get("redirect_uri"), query.Get("redirect_uri"))
-	})
-
-	failures := []struct {
-		name   string
-		lookup ServerConfigLookup
+	testCases := []struct {
+		name          string
+		params        map[string]string
+		endpointQuery string
+		want          map[string]string
+		absent        []string
+		wantErr       string
 	}{
-		{name: "server no longer configured", lookup: func(string) (ServerConfig, bool) { return ServerConfig{}, false }},
-		{name: "name now on another origin", lookup: func(string) (ServerConfig, bool) {
-			cfg := serverConfig(map[string]string{"access_type": "offline"})
-			cfg.BaseURL = "https://other.example.com/mcp"
-			return cfg, true
-		}},
-		{name: "name now held by another server", lookup: func(string) (ServerConfig, bool) {
-			cfg := serverConfig(map[string]string{"access_type": "offline"})
-			cfg.ID = "other-id"
-			return cfg, true
-		}},
+		{name: "no parameters", absent: []string{"access_type"}},
+		{
+			name:   "configured parameters are added",
+			params: map[string]string{"access_type": "offline", "prompt": "consent"},
+			want:   map[string]string{"access_type": "offline", "prompt": "consent"},
+		},
+		{
+			name: "reserved parameters in a stored config are ignored",
+			params: map[string]string{
+				"state":          "fixed",
+				"code_challenge": "fixed",
+				"resource":       "https://other.example.com",
+				"redirect_uri":   "https://other.example.com/callback",
+				"response_mode":  "form_post",
+			},
+			absent: []string{"response_mode"},
+		},
+		{
+			name:   "invalid entries in a stored config are ignored",
+			params: map[string]string{spacedName: "offline", "prompt": " "},
+			absent: []string{spacedName, "access_type", "prompt"},
+		},
+		{
+			name:          "unrelated endpoint parameters are kept",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "tenant=acme",
+			want:          map[string]string{"access_type": "offline", "tenant": "acme"},
+		},
+		{
+			name:          "a parameter the endpoint already sets is refused",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "access_type=online",
+			wantErr:       `"access_type"`,
+		},
 	}
-	for _, tc := range failures {
+
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := start(t, tc.lookup)
-			require.ErrorContains(t, err, "configuration changed")
+			var serverURL string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/oauth-authorization-server" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				authorizationEndpoint := serverURL + "/authorize"
+				if tc.endpointQuery != "" {
+					authorizationEndpoint += "?" + tc.endpointQuery
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+					Issuer:                        serverURL,
+					AuthorizationEndpoint:         authorizationEndpoint,
+					TokenEndpoint:                 serverURL + "/token",
+					CodeChallengeMethodsSupported: []string{"S256"},
+				})
+			}))
+			defer server.Close()
+			serverURL = server.URL
+
+			manager, _ := newStatefulKVManager(t, nil, server.Client())
+			authURL, err := manager.InitiateOAuthFlowForServer(context.Background(), "user-id", ServerConfig{
+				ID:                  "server-id",
+				Name:                "YouTrack",
+				Enabled:             true,
+				BaseURL:             serverURL + "/mcp",
+				ClientID:            "static-client",
+				ClientSecret:        "static-secret",
+				AuthorizationParams: tc.params,
+			})
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			parsed, err := url.Parse(authURL)
+			require.NoError(t, err)
+			query := parsed.Query()
+
+			for key, value := range tc.want {
+				assert.Equal(t, []string{value}, query[key], key)
+			}
+			for _, key := range tc.absent {
+				assert.NotContains(t, query, key)
+			}
+
+			// Whatever is configured, the flow's own parameters are present
+			// once, with the values the flow generated.
+			for _, key := range []string{"state", "code_challenge"} {
+				require.Len(t, query[key], 1, key)
+				assert.NotEmpty(t, query.Get(key), key)
+				assert.NotEqual(t, "fixed", query.Get(key), key)
+			}
+			for key, value := range map[string]string{
+				"response_type":         "code",
+				"client_id":             "static-client",
+				"redirect_uri":          "http://test.com/callback",
+				"resource":              serverURL + "/mcp",
+				"code_challenge_method": "S256",
+			} {
+				assert.Equal(t, []string{value}, query[key], key)
+			}
 		})
 	}
 }

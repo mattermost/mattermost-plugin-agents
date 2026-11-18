@@ -190,11 +190,8 @@ func (c MCPConfig) Validate() error {
 			err = errors.Join(err, fmt.Errorf("MCP server %q description is %d characters; the limit is %d", server.Name, n, MaxMCPServerDescriptionRunes))
 		}
 		for _, key := range slices.Sorted(maps.Keys(server.AuthorizationParams)) {
-			switch {
-			case strings.TrimSpace(key) == "":
-				err = errors.Join(err, fmt.Errorf("MCP server %q has an OAuth authorization parameter with an empty name", server.Name))
-			case IsReservedMCPAuthorizationParam(key):
-				err = errors.Join(err, fmt.Errorf("MCP server %q cannot set the reserved OAuth authorization parameter %q", server.Name, key))
+			if paramErr := ValidateMCPAuthorizationParam(key, server.AuthorizationParams[key]); paramErr != nil {
+				err = errors.Join(err, fmt.Errorf("MCP server %q %w", server.Name, paramErr))
 			}
 		}
 	}

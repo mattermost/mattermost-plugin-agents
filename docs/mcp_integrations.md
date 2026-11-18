@@ -45,9 +45,7 @@ These changes remove every user's saved sign-in for the server, and Mattermost w
 - Moving it to another host, meaning a different scheme, host, or port. Its tool policies are cleared too.
 - Changing the OAuth client ID.
 
-Mattermost also warns you when you change **OAuth authorization parameters**, but saved sign-ins are kept. See [Add OAuth authorization parameters](#add-oauth-authorization-parameters).
-
-Deleting a server also removes its sign-ins. Changing only the URL's path, the client secret, headers, service account headers, the description, or whether the server is enabled doesn't affect sign-ins. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
+Deleting a server also removes its sign-ins. Changing only the URL's path, the client secret, headers, service account headers, OAuth authorization parameters, the description, or whether the server is enabled doesn't affect sign-ins. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
 
 Automation must read the configuration with `GET /plugins/mattermost-ai/admin/config` and send it back with `PUT`, keeping each server's `id`. A server sent without its `id` is treated as deleted and added again, which removes its users' saved sign-ins.
 
@@ -78,6 +76,7 @@ Some providers need extra parameters on the authorization URL, for example to is
 ```json
 {
   "name": "YouTrack",
+  "enabled": true,
   "baseURL": "https://youtrack.example.com/mcp",
   "authorizationParams": {
     "access_type": "offline"
@@ -85,7 +84,9 @@ Some providers need extra parameters on the authorization URL, for example to is
 }
 ```
 
-Saving fails if a parameter has no name or uses a name the OAuth flow sets itself: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, or `resource`. Names are compared without regard to case.
+Every parameter needs a name and a value. Names can contain only letters, digits, hyphens, periods, and underscores. Saving fails otherwise, or if a name is one the OAuth flow relies on, compared without regard to case: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `response_mode`, `request`, or `request_uri`.
+
+Sign-in fails if the provider's authorization endpoint URL already contains a parameter with the same name.
 
 A change applies at the next sign-in. Users who are already connected must disconnect and connect again to get it.
 
