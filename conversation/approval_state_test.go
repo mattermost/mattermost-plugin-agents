@@ -60,6 +60,34 @@ func TestComputePostApprovalState(t *testing.T) {
 			want: ApprovalStageDone,
 		},
 		{
+			name:   "interrupted post keeps the share decision of results that already ran",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_ran", Name: "x", Status: StatusSuccess},
+				})},
+				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolResult, ToolUseID: "tc_ran", Status: StatusSuccess},
+				})},
+				{Role: "assistant", Sequence: 4, PostID: new("p1"), Status: store.TurnStatusInterrupted, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_lost", Name: "y", Status: StatusInterrupted},
+				})},
+			},
+			want: ApprovalStageResult,
+		},
+		{
+			name:   "interrupted post with only interrupted calls offers no decision",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Status: store.TurnStatusInterrupted, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_lost", Name: "y", Status: StatusInterrupted},
+				})},
+			},
+			want: ApprovalStageDone,
+		},
+		{
 			name:   "post with only pending auto-execute tool_use returns call",
 			postID: "p1",
 			turns: []store.Turn{

@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {chooseOption, getSelect, optionLabels, selectedLabel} from '../../../tests/compass_select';
@@ -532,5 +532,59 @@ describe('ServiceFields Cohere North', () => {
         renderFields(northService);
         expect(screen.getByText('Structured output')).toBeTruthy();
         expect(screen.getByText('Auto (recommended)')).toBeTruthy();
+    });
+});
+
+describe('ServiceFields model list when settings change during a fetch', () => {
+    it('ignores a response for the previous endpoint', async () => {
+        const resolvers: Array<(models: unknown[]) => void> = [];
+        fetchModels.mockImplementation(() => new Promise((resolve) => {
+            resolvers.push(resolve);
+        }));
+        const first: LLMService = {...baseService, type: 'openaicompatible', apiURL: 'https://one.example.com/v1', apiKey: 'key'};
+
+        const {rerender} = renderFields(first);
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={{...first, apiURL: 'https://two.example.com/v1'}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+        await waitFor(() => expect(resolvers).toHaveLength(2));
+
+        await act(async () => {
+            resolvers[1]([]);
+        });
+        await act(async () => {
+            resolvers[0]([{id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5', inputTokenLimit: 200000, outputTokenLimit: 8192}]);
+        });
+
+        expect(screen.queryByDisplayValue('200000')).toBeNull();
+    });
+});
+
+describe('ServiceFields model list for a saved service', () => {
+    it('names the saved service so the server resolves its stored credentials', async () => {
+        fetchModels.mockResolvedValue([]);
+
+        renderFields({...baseService, apiKey: '********************************'});
+
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        const [, apiKey, , , options] = fetchModels.mock.calls[0];
+        expect(options.serviceID).toBe(baseService.id);
+        expect(apiKey).toBe('********************************');
+    });
+
+    it('does not name a service that has not been saved', async () => {
+        fetchModels.mockResolvedValue([]);
+
+        renderFields({...baseService, id: '', apiKey: 'typed-key'});
+
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        const [, apiKey, , , options] = fetchModels.mock.calls[0];
+        expect(options.serviceID).toBeFalsy();
+        expect(apiKey).toBe('typed-key');
     });
 });
