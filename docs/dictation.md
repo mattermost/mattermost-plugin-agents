@@ -7,7 +7,7 @@ Dictation needs an Enterprise license or above. It uses its own transcription se
 ## How it works
 
 1. A user selects the microphone button and allows microphone access.
-2. The browser asks the plugin for a dictation session. The plugin checks the license, the settings, and the user's access to the service, then asks OpenAI for a short-lived browser key with the service's API key. The key only lets the browser connect, and only for about 60 seconds.
+2. The browser asks the plugin for a dictation session. The plugin checks the license, the settings, and the user's access to the service, then asks OpenAI for a short-lived browser key with the service's API key. The key expires 15 seconds after it is issued. That only limits how long the browser has to connect: a session that has connected keeps running after its key expires.
 3. The browser connects to OpenAI over WebRTC with that key and streams the microphone audio.
 4. OpenAI sends the transcript back to the browser, which types it into the message box at the cursor.
 
@@ -62,8 +62,9 @@ Each user's browser or desktop app connects to OpenAI itself, so the network bet
 
 OpenAI bills transcription to the transcription service's API key. Once a session has started, the server can't end it, so cost is bounded by:
 
-- A per-user limit on how often sessions can be started.
+- A per-user limit on how often sessions can be started. One key can open more than one session while it is valid, so the limit counts session starts, not open sessions.
 - The browser stops dictating after 30 seconds without speech and after 10 minutes in any case.
+- OpenAI ends every session after 60 minutes. A browser that ignores the limits above, such as a modified client, can keep a session open that long.
 
 Dictation isn't included in [token usage logging](observability.md#token-usage-log), because the server never sees the transcription usage. Use OpenAI's usage dashboard for the service's API key, or a dedicated key for dictation.
 
@@ -80,5 +81,5 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 | No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user has access to the service, and the formatting bar is shown. Users may need to reload after you turn dictation on. |
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
 | "The speech service could not be reached" | The browser can't reach OpenAI over HTTPS or WebRTC, or a `Content-Security-Policy` blocks it. See [Network requirements](#network-requirements). The server log has the reason when OpenAI refused to create the session. |
-| "Dictation was started too often" | The user hit the per-user session limit. Waiting a minute clears it. |
+| "Dictation was started too often" | The user hit the per-user limit on starting sessions. Wait and try again. |
 | "You don't have access to dictation" | The user lacks access to the transcription service, or the license is below Enterprise. |
