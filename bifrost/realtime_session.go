@@ -26,8 +26,11 @@ const (
 	// (measured at about 1 s); a connected session outlives it, up to the
 	// provider's 60 minute maximum. Within the TTL one key can open any
 	// number of sessions, so it is kept short.
-	realtimeSessionTTL     = 15 * time.Second
-	realtimeMintTimeout    = 15 * time.Second
+	realtimeSessionTTL  = 15 * time.Second
+	realtimeMintTimeout = 15 * time.Second
+	// realtimeExpirySkew allows for clock differences with the provider
+	// when checking that a key honors the requested TTL.
+	realtimeExpirySkew     = 30 * time.Second
 	defaultOpenAIBaseURL   = "https://api.openai.com"
 	openAIRealtimeCallPath = "/v1/realtime/calls"
 	azureRealtimeCallPath  = "/openai/v1/realtime/calls"
@@ -66,8 +69,13 @@ type TranscriptionSessionRequest struct {
 // TranscriptionSession is a minted browser session. ClientSecret is a
 // credential: never log it or put it in spans, audit records or errors.
 type TranscriptionSession struct {
-	ClientSecret  string `json:"clientSecret"`
-	ExpiresAt     int64  `json:"expiresAt"` // Unix milliseconds
+	ClientSecret string `json:"clientSecret"`
+	// ExpiresAt is when the browser must have connected by, never later
+	// than the requested TTL. Unix milliseconds.
+	ExpiresAt int64 `json:"expiresAt"`
+	// KeyExpiresAt is the provider's expiry for the key, which can open
+	// sessions until then; rate limiting counts keys by it. Unix milliseconds.
+	KeyExpiresAt  int64  `json:"-"`
 	CallsURL      string `json:"callsURL"`
 	Provider      string `json:"provider"`
 	Model         string `json:"model"`
@@ -237,6 +245,7 @@ func (m *RealtimeSessionMinter) CreateTranscriptionSession(ctx context.Context, 
 		return fail(fmt.Errorf("provider %s does not support realtime sessions", m.provider))
 	}
 
+	sentAt := time.Now()
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, realtimeMintTimeout)
 	defer cancel()
 	trackAttemptErrors(bifrostCtx)
@@ -272,16 +281,25 @@ func (m *RealtimeSessionMinter) CreateTranscriptionSession(ctx context.Context, 
 		return fail(errors.New("realtime session provider returned no client secret"))
 	}
 
-	// An upstream expiry later than the requested TTL must not widen the
-	// window in which the key can open sessions.
-	expiresAt := time.Now().Add(realtimeSessionTTL)
-	if upstream := time.Unix(secret.ExpiresAt, 0); secret.ExpiresAt > 0 && upstream.Before(expiresAt) {
-		expiresAt = upstream
+	now := time.Now()
+	keyExpiresAt := now.Add(realtimeSessionTTL)
+	if secret.ExpiresAt > 0 {
+		keyExpiresAt = time.Unix(secret.ExpiresAt, 0)
+	}
+	// Shortening the expiry we report does not shorten the key itself, so a
+	// key that outlives the requested TTL is never handed out.
+	if keyExpiresAt.After(sentAt.Add(realtimeSessionTTL + realtimeExpirySkew)) {
+		return fail(errors.New("realtime session provider returned a key that outlives the requested TTL"))
+	}
+	expiresAt := keyExpiresAt
+	if limit := now.Add(realtimeSessionTTL); expiresAt.After(limit) {
+		expiresAt = limit
 	}
 
 	return &TranscriptionSession{
 		ClientSecret:  secret.Value,
 		ExpiresAt:     expiresAt.UnixMilli(),
+		KeyExpiresAt:  keyExpiresAt.UnixMilli(),
 		CallsURL:      m.callsURL,
 		Provider:      m.serviceType,
 		Model:         req.Model,

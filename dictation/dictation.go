@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
@@ -212,7 +213,7 @@ func reasonFor(err error) (string, bool) {
 
 // CreateSession mints a dictation session for userID. Every check runs on
 // every call, so a license downgrade or config change applies immediately.
-func (s *Service) CreateSession(ctx context.Context, userID string) (*bifrost.TranscriptionSession, error) {
+func (s *Service) CreateSession(ctx context.Context, userID string) (session *bifrost.TranscriptionSession, err error) {
 	r, err := s.resolve()
 	if err != nil {
 		return nil, err
@@ -220,14 +221,21 @@ func (s *Service) CreateSession(ctx context.Context, userID string) (*bifrost.Tr
 	if err = s.checkAccess(ctx, userID, r.service.ID); err != nil {
 		return nil, err
 	}
+	// The access check can take a while; a config or license change during
+	// it must not let the request mint with what it read before.
+	if current, recheckErr := s.resolve(); recheckErr != nil {
+		return nil, recheckErr
+	} else if !reflect.DeepEqual(current, r) {
+		return nil, fmt.Errorf("%w: the configuration changed during the request", ErrMisconfigured)
+	}
 
 	release, ok := s.limiter.reserve(userID)
 	if !ok {
 		return nil, ErrRateLimited
 	}
+	defer func() { release(session) }()
 
-	session, err := s.mint(ctx, r)
-	release(session)
+	session, err = s.mint(ctx, r)
 	switch {
 	case errors.Is(err, errMinterBuild):
 		s.log.Warn("Failed to build the dictation session minter", "service_id", r.service.ID, "error", err.Error())

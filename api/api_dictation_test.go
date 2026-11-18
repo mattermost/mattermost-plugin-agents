@@ -42,9 +42,18 @@ const (
 )
 
 type fakeRealtimeProvider struct {
+	// keyTTL is the key lifetime the fake reports; zero means 20 s.
+	keyTTL   atomic.Int64
 	status   atomic.Int32
 	requests atomic.Int32
 	lastBody atomic.Value // map[string]any
+}
+
+func (p *fakeRealtimeProvider) keyLifetime() time.Duration {
+	if ttl := time.Duration(p.keyTTL.Load()); ttl > 0 {
+		return ttl
+	}
+	return 20 * time.Second
 }
 
 func newFakeRealtimeProvider(t *testing.T) (*fakeRealtimeProvider, *httptest.Server) {
@@ -66,7 +75,7 @@ func newFakeRealtimeProvider(t *testing.T) (*fakeRealtimeProvider, *httptest.Ser
 			_, _ = w.Write([]byte(`{"error":{"message":"` + upstreamBodySentinel + `","type":"server_error"}}`))
 			return
 		}
-		expiresAt := time.Now().Add(time.Minute).Unix()
+		expiresAt := time.Now().Add(p.keyLifetime()).Unix()
 		_, _ = w.Write([]byte(`{"value":"` + dictationSecretSentinel + `","expires_at":` + strconv.FormatInt(expiresAt, 10) + `}`))
 	}))
 	t.Cleanup(server.Close)
@@ -156,6 +165,13 @@ func TestCreateDictationSessionOutcomes(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
+			name:          "provider key outlives the requested TTL",
+			level:         enterprise.LevelEnterprise,
+			setup:         func(_ *TestEnvironment, p *fakeRealtimeProvider) { p.keyTTL.Store(int64(time.Hour)) },
+			wantStatus:    http.StatusBadGateway,
+			wantProviders: 1,
+		},
+		{
 			name:       "service access denied",
 			level:      enterprise.LevelEnterprise,
 			setup:      func(e *TestEnvironment, _ *fakeRealtimeProvider) { e.denyDictationService() },
@@ -222,7 +238,7 @@ func TestCreateDictationSessionResponse(t *testing.T) {
 				[]string{"clientSecret", "expiresAt", "callsURL", "provider", "model", "turnDetection"},
 				keysOf(body))
 			assert.Equal(t, dictationSecretSentinel, body["clientSecret"])
-			// The fake provider returns an expiry a minute out; the response
+			// The fake provider returns an expiry 20 s out; the response
 			// must not exceed the 15 s TTL the server asked for.
 			assert.Greater(t, body["expiresAt"], float64(time.Now().UnixMilli()))
 			assert.LessOrEqual(t, body["expiresAt"], float64(time.Now().Add(16*time.Second).UnixMilli()))

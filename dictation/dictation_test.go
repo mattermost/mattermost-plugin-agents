@@ -71,7 +71,8 @@ func (m *fakeMinter) CreateTranscriptionSession(_ context.Context, req bifrost.T
 	}
 	return &bifrost.TranscriptionSession{
 		ClientSecret: "ek_" + m.svc.ID,
-		ExpiresAt:    time.Now().Add(time.Minute).UnixMilli(),
+		ExpiresAt:    time.Now().Add(15 * time.Second).UnixMilli(),
+		KeyExpiresAt: time.Now().Add(15 * time.Second).UnixMilli(),
 		Provider:     m.svc.Type,
 		Model:        req.Model,
 	}, nil
@@ -189,6 +190,75 @@ func TestEveryMintUsesAndShutsDownItsOwnClient(t *testing.T) {
 	}
 }
 
+func TestConfigChangeDuringAccessCheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		change  func(cfg *config.Container)
+		wantErr error
+	}{
+		{
+			name: "dictation disabled",
+			change: func(cfg *config.Container) {
+				setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "key-1"))
+			},
+			wantErr: ErrDisabled,
+		},
+		{
+			name:    "service key replaced",
+			change:  func(cfg *config.Container) { setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-2")) },
+			wantErr: ErrMisconfigured,
+		},
+		{
+			name: "unrelated setting changed",
+			change: func(cfg *config.Container) {
+				c := cfg.Config().Clone()
+				c.AgentVersionsToKeep = 7
+				cfg.Update(c)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Container{}
+			setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-1"))
+			var svc *Service
+			changeDuringCheck := accessFunc(func(context.Context, string, string) error {
+				tt.change(cfg)
+				svc.Reconcile()
+				return nil
+			})
+			svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), changeDuringCheck)
+
+			session, err := svc.CreateSession(context.Background(), testUserID)
+
+			if tt.wantErr == nil {
+				require.NoError(t, err)
+				assert.NotNil(t, session)
+				return
+			}
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.Nil(t, session)
+			assert.Empty(t, factory.built, "no client is built from the config read before the change")
+		})
+	}
+}
+
+func TestPanickingMintsDoNotHoldKeySlots(t *testing.T) {
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
+	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
+
+	factory.panics = true
+	for range maxUnexpiredKeys {
+		assert.Panics(t, func() { _, _ = svc.CreateSession(context.Background(), testUserID) })
+	}
+	factory.panics = false
+
+	_, err := svc.CreateSession(context.Background(), testUserID)
+	assert.NoError(t, err)
+}
+
 // blockingLicense blocks its first Check until released, to hold one
 // Reconcile in the middle of reading state.
 type blockingLicense struct {
@@ -252,7 +322,7 @@ func TestCreateSessionProviderFailure(t *testing.T) {
 
 func TestRateLimiter(t *testing.T) {
 	session := func(expiresIn time.Duration, now time.Time) *bifrost.TranscriptionSession {
-		return &bifrost.TranscriptionSession{ExpiresAt: now.Add(expiresIn).UnixMilli()}
+		return &bifrost.TranscriptionSession{ExpiresAt: now.Add(expiresIn).UnixMilli(), KeyExpiresAt: now.Add(expiresIn).UnixMilli()}
 	}
 
 	tests := []struct {
@@ -293,6 +363,22 @@ func TestRateLimiter(t *testing.T) {
 				*clock = clock.Add(mintWindow)
 				_, ok = l.reserve(testUserID)
 				assert.True(t, ok)
+			},
+		},
+		{
+			name: "keys are counted until the provider's expiry, not the reported one",
+			run: func(t *testing.T, l *rateLimiter, clock *time.Time) {
+				for range maxUnexpiredKeys {
+					release, ok := l.reserve(testUserID)
+					require.True(t, ok)
+					release(&bifrost.TranscriptionSession{
+						ExpiresAt:    clock.Add(time.Second).UnixMilli(),
+						KeyExpiresAt: clock.Add(40 * time.Second).UnixMilli(),
+					})
+				}
+				*clock = clock.Add(20 * time.Second)
+				_, ok := l.reserve(testUserID)
+				assert.False(t, ok, "keys the provider still honors hold their slots")
 			},
 		},
 		{

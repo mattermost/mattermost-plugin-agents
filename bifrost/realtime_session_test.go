@@ -137,16 +137,18 @@ func TestCreateTranscriptionSession(t *testing.T) {
 	}
 }
 
-func TestCreateTranscriptionSessionClampsExpiry(t *testing.T) {
+func TestCreateTranscriptionSessionExpiry(t *testing.T) {
 	tests := []struct {
-		name     string
-		upstream time.Duration // 0 sends no expires_at
-		wantMax  time.Duration
-		wantMin  time.Duration
+		name      string
+		upstream  time.Duration // 0 sends no expires_at
+		wantErr   bool
+		wantShown time.Duration
+		wantKey   time.Duration
 	}{
-		{name: "later upstream expiry is clamped to the requested TTL", upstream: time.Hour, wantMin: realtimeSessionTTL - time.Second, wantMax: realtimeSessionTTL + time.Second},
-		{name: "earlier upstream expiry is kept", upstream: 5 * time.Second, wantMin: 3 * time.Second, wantMax: 6 * time.Second},
-		{name: "missing upstream expiry uses the requested TTL", wantMin: realtimeSessionTTL - time.Second, wantMax: realtimeSessionTTL + time.Second},
+		{name: "key that outlives the requested TTL is refused", upstream: time.Hour, wantErr: true},
+		{name: "slightly later key is accepted but reported at the TTL", upstream: 20 * time.Second, wantShown: realtimeSessionTTL, wantKey: 20 * time.Second},
+		{name: "earlier key is reported as is", upstream: 5 * time.Second, wantShown: 5 * time.Second, wantKey: 5 * time.Second},
+		{name: "missing expiry uses the requested TTL", wantShown: realtimeSessionTTL, wantKey: realtimeSessionTTL},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,9 +163,15 @@ func TestCreateTranscriptionSessionClampsExpiry(t *testing.T) {
 
 			now := time.Now()
 			session, err := minter.CreateTranscriptionSession(context.Background(), TranscriptionSessionRequest{Model: "gpt-live-transcribe"})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, session)
+				assert.NotContains(t, err.Error(), "ek_secret")
+				return
+			}
 			require.NoError(t, err)
-			expires := time.UnixMilli(session.ExpiresAt)
-			assert.WithinRange(t, expires, now.Add(tt.wantMin), now.Add(tt.wantMax))
+			assert.WithinDuration(t, now.Add(tt.wantShown), time.UnixMilli(session.ExpiresAt), 1500*time.Millisecond)
+			assert.WithinDuration(t, now.Add(tt.wantKey), time.UnixMilli(session.KeyExpiresAt), 1500*time.Millisecond)
 		})
 	}
 }

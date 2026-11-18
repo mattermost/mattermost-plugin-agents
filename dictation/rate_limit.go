@@ -77,7 +77,7 @@ func (l *rateLimiter) reserve(userID string) (release func(*bifrost.Transcriptio
 			key.expires = time.Time{}
 			return
 		}
-		key.expires = time.UnixMilli(session.ExpiresAt)
+		key.expires = time.UnixMilli(session.KeyExpiresAt)
 	}, true
 }
 
