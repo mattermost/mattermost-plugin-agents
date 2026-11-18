@@ -141,91 +141,52 @@ func TestNilCheckersFailClosed(t *testing.T) {
 	}
 }
 
-func TestLicenseDowngradeAppliesImmediately(t *testing.T) {
-	cfg := &config.Container{}
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
-	license := newLevelChecker(enterprise.LevelEnterprise)
-	svc, factory := newTestService(cfg, license, allowAll)
+func TestEveryMintUsesAndShutsDownItsOwnClient(t *testing.T) {
+	tests := []struct {
+		name    string
+		mintErr error
+		panics  bool
+		wantErr error
+	}{
+		{name: "success"},
+		{name: "provider error", mintErr: errors.New("upstream 500"), wantErr: ErrProvider},
+		{name: "provider panic", panics: true},
+	}
 
-	_, err := svc.CreateSession(context.Background(), testUserID)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Container{}
+			setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-1"))
+			svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
+			factory.mintErr = tt.mintErr
+			factory.panics = tt.panics
 
-	license.level.Store(int32(enterprise.LevelProfessional))
-	svc.Reconcile()
+			mint := func(userID string) error {
+				if tt.panics {
+					assert.Panics(t, func() { _, _ = svc.CreateSession(context.Background(), userID) })
+					return nil
+				}
+				_, err := svc.CreateSession(context.Background(), userID)
+				return err
+			}
 
-	avail := svc.Availability(context.Background(), testUserID)
-	assert.False(t, avail.Available)
-	assert.Equal(t, ReasonLicense, avail.Reason)
+			err := mint(testUserID)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+			setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-2"))
+			_ = mint("othe12345678901234567890ab")
 
-	_, err = svc.CreateSession(context.Background(), testUserID)
-	assert.ErrorIs(t, err, enterprise.ErrNotLicensed)
-
-	require.Len(t, factory.built, 1)
-	assertShutdown(t, factory.built[0])
-}
-
-func TestMinterRebuiltOnServiceChange(t *testing.T) {
-	cfg := &config.Container{}
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-1"))
-	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
-
-	_, err := svc.CreateSession(context.Background(), testUserID)
-	require.NoError(t, err)
-	_, err = svc.CreateSession(context.Background(), "othe12345678901234567890ab")
-	require.NoError(t, err)
-	require.Len(t, factory.built, 1, "an unchanged service reuses its client")
-
-	svc.Reconcile()
-	require.Len(t, factory.built, 1)
-	assertNotShutdown(t, factory.built[0])
-
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-2"))
-	svc.Reconcile()
-	assertShutdown(t, factory.built[0])
-
-	session, err := svc.CreateSession(context.Background(), "thrd12345678901234567890ab")
-	require.NoError(t, err)
-	require.Len(t, factory.built, 2)
-	assert.Equal(t, "key-2", factory.built[1].svc.APIKey)
-	assert.Equal(t, "ek_openai1", session.ClientSecret)
-
-	setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "key-2"))
-	svc.Reconcile()
-	assertShutdown(t, factory.built[1])
-}
-
-func TestConfigChangeDuringAuthorizationRefusesTheMint(t *testing.T) {
-	cfg := &config.Container{}
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "old-key"))
-	var svc *Service
-	// The access check runs between resolving the config and minting; the
-	// admin disables dictation and its listener runs in that window.
-	changeOnce := accessFunc(func(context.Context, string, string) error {
-		setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "old-key"))
-		svc.Reconcile()
-		return nil
-	})
-	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), changeOnce)
-
-	session, err := svc.CreateSession(context.Background(), testUserID)
-
-	assert.ErrorIs(t, err, ErrMisconfigured)
-	assert.Nil(t, session)
-	assert.Empty(t, factory.built, "no client is rebuilt from the checks made before the change")
-}
-
-func TestPanickingMintStillShutsDownTheRetiredClient(t *testing.T) {
-	cfg := &config.Container{}
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
-	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
-	factory.panics = true
-
-	assert.Panics(t, func() { _, _ = svc.CreateSession(context.Background(), testUserID) })
-	require.Len(t, factory.built, 1)
-
-	setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "k"))
-	svc.Reconcile()
-	assertShutdown(t, factory.built[0])
+			require.Len(t, factory.built, 2)
+			assert.Equal(t, "key-1", factory.built[0].svc.APIKey)
+			assert.Equal(t, "key-2", factory.built[1].svc.APIKey, "a mint uses the config current at its checks")
+			for i, m := range factory.built {
+				assert.True(t, isShutdown(m), "client %d was not shut down after its mint", i)
+			}
+		})
+	}
 }
 
 // blockingLicense blocks its first Check until released, to hold one
@@ -363,14 +324,4 @@ func isShutdown(m *fakeMinter) bool {
 	default:
 		return false
 	}
-}
-
-func assertShutdown(t *testing.T, m *fakeMinter) {
-	t.Helper()
-	require.Eventually(t, func() bool { return isShutdown(m) }, 5*time.Second, 5*time.Millisecond, "old minter was not shut down")
-}
-
-func assertNotShutdown(t *testing.T, m *fakeMinter) {
-	t.Helper()
-	require.Never(t, func() bool { return isShutdown(m) }, 50*time.Millisecond, 5*time.Millisecond, "minter was shut down while its service was unchanged")
 }

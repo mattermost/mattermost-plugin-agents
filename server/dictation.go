@@ -16,8 +16,7 @@ type websocketPublisher interface {
 
 // newDictationService builds the dictation service and reconciles it on
 // config updates and license changes. Both reach every node, so each node
-// drops minters built from a stale service and tells its clients to refetch
-// availability.
+// tells its clients to refetch availability.
 func (p *Plugin) newDictationService(license dictation.LicenseChecker, access dictation.AccessChecker, log dictation.Logger, ws websocketPublisher) *dictation.Service {
 	svc := dictation.New(&p.configuration, license, access, log)
 	svc.OnAvailabilityChange(func() {
