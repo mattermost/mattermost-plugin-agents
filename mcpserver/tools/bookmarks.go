@@ -41,7 +41,7 @@ type DeleteChannelBookmarkArgs struct {
 }
 
 const (
-	listChannelBookmarksDescription  = "List a channel's bookmarks (pinned links and files). Parameters: channel_id (required)."
+	listChannelBookmarksDescription  = "List a channel's bookmarks (pinned links and files). A link containing mm_ai_library_artifact=<id> is a saved channel artifact: read it with get_channel_artifact. Parameters: channel_id (required)."
 	createChannelBookmarkDescription = "Add a link or file bookmark to a channel. Parameters: channel_id (required), display_name (required), link_url OR file_id, emoji (optional)."
 	updateChannelBookmarkDescription = "Edit a channel bookmark (name, link, or emoji). Parameters: channel_id (required), bookmark_id (required), plus any of display_name, link_url, emoji."
 	deleteChannelBookmarkDescription = "Remove a channel bookmark. Parameters: channel_id (required), bookmark_id (required)."

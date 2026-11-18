@@ -53,13 +53,12 @@ const (
 	AuditEventArchiveConversation = "archiveConversation"
 
 	// Channel artifact library.
-	AuditEventCreateChannelArtifact   = "createChannelArtifact"
-	AuditEventUpdateChannelArtifact   = "updateChannelArtifact"
-	AuditEventReplaceChannelArtifact  = "replaceChannelArtifact"
-	AuditEventRollbackChannelArtifact = "rollbackChannelArtifact"
-	AuditEventDeleteChannelArtifact   = "deleteChannelArtifact"
-	AuditEventReorderChannelArtifacts = "reorderChannelArtifacts"
-	AuditEventExportChannelArtifacts  = "exportChannelArtifacts"
+	AuditEventCreateChannelArtifact        = "createChannelArtifact"
+	AuditEventUpdateChannelArtifact        = "updateChannelArtifact"
+	AuditEventReplaceChannelArtifact       = "replaceChannelArtifact"
+	AuditEventRollbackChannelArtifact      = "rollbackChannelArtifact"
+	AuditEventDeleteChannelArtifact        = "deleteChannelArtifact"
+	AuditEventDeleteChannelArtifactVersion = "deleteChannelArtifactVersion"
 
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
@@ -147,13 +146,11 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleArchiveConversation): AuditEventArchiveConversation,
 
 		// Channel artifact library.
-		handlerFuncName(a.handleCreateChannelArtifact):   AuditEventCreateChannelArtifact,
-		handlerFuncName(a.handlePatchChannelArtifact):    AuditEventUpdateChannelArtifact,
-		handlerFuncName(a.handleReplaceChannelArtifact):  AuditEventReplaceChannelArtifact,
-		handlerFuncName(a.handleRollbackChannelArtifact): AuditEventRollbackChannelArtifact,
-		handlerFuncName(a.handleDeleteChannelArtifact):   AuditEventDeleteChannelArtifact,
-		handlerFuncName(a.handleReorderChannelArtifacts): AuditEventReorderChannelArtifacts,
-		handlerFuncName(a.handleExportChannelArtifacts):  AuditEventExportChannelArtifacts,
+		handlerFuncName(a.handleCreateChannelArtifact):        AuditEventCreateChannelArtifact,
+		handlerFuncName(a.handlePatchChannelArtifact):         AuditEventUpdateChannelArtifact,
+		handlerFuncName(a.handleDeleteChannelArtifactVersion): AuditEventDeleteChannelArtifactVersion,
+		handlerFuncName(a.handleRollbackChannelArtifact):      AuditEventRollbackChannelArtifact,
+		handlerFuncName(a.handleDeleteChannelArtifact):        AuditEventDeleteChannelArtifact,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,

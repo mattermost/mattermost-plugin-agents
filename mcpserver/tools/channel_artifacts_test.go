@@ -5,12 +5,9 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -19,14 +16,15 @@ import (
 )
 
 type fakeChannelArtifactsService struct {
-	entries       []*channelartifacts.Entry
-	view          ChannelArtifactContent
-	listErr       error
-	getErr        error
-	canSaveErr    error
-	canSavePostID string
-	canSaveFileID string
+	enabled bool
+	entries []*channelartifacts.Entry
+	view    ChannelArtifactContent
+	listErr error
+	getErr  error
+	gotOpts ChannelArtifactReadOptions
 }
+
+func (f *fakeChannelArtifactsService) Enabled() bool { return f.enabled }
 
 func (f *fakeChannelArtifactsService) List(_ context.Context, _, _ string) ([]*channelartifacts.Entry, error) {
 	if f.listErr != nil {
@@ -35,17 +33,12 @@ func (f *fakeChannelArtifactsService) List(_ context.Context, _, _ string) ([]*c
 	return f.entries, nil
 }
 
-func (f *fakeChannelArtifactsService) Get(_ context.Context, _, _ string, _ bool, _ int) (ChannelArtifactContent, error) {
+func (f *fakeChannelArtifactsService) Get(_ context.Context, _, _ string, opts ChannelArtifactReadOptions) (ChannelArtifactContent, error) {
+	f.gotOpts = opts
 	if f.getErr != nil {
 		return ChannelArtifactContent{}, f.getErr
 	}
 	return f.view, nil
-}
-
-func (f *fakeChannelArtifactsService) CanSave(_ context.Context, _, postID, fileID string) error {
-	f.canSavePostID = postID
-	f.canSaveFileID = fileID
-	return f.canSaveErr
 }
 
 func TestToolListChannelArtifacts(t *testing.T) {
@@ -57,59 +50,34 @@ func TestToolListChannelArtifacts(t *testing.T) {
 		service     ChannelArtifactsService
 		channelID   string
 		wantErr     string
-		wantContain string
+		wantContain []string
 	}{
-		{
-			name:      "nil service returns clear error",
-			service:   nil,
-			channelID: channelID,
-			wantErr:   "channel artifacts are not available",
-		},
-		{
-			name:      "invalid channel id",
-			service:   &fakeChannelArtifactsService{},
-			channelID: "short",
-			wantErr:   "channel_id",
-		},
-		{
-			name:      "not found maps to guidance",
-			service:   &fakeChannelArtifactsService{listErr: channelartifacts.ErrNotFound},
-			channelID: channelID,
-			wantErr:   "permission",
-		},
-		{
-			name:        "empty list",
-			service:     &fakeChannelArtifactsService{entries: nil},
-			channelID:   channelID,
-			wantContain: "no channel library artifacts",
-		},
+		{name: "nil service returns clear error", service: nil, channelID: channelID, wantErr: "channel artifacts are not available"},
+		{name: "invalid channel id", service: &fakeChannelArtifactsService{}, channelID: "short", wantErr: "channel_id"},
+		{name: "not found maps to guidance", service: &fakeChannelArtifactsService{listErr: channelartifacts.ErrNotFound}, channelID: channelID, wantErr: "permission"},
+		{name: "empty list", service: &fakeChannelArtifactsService{}, channelID: channelID, wantContain: []string{"no saved artifacts"}},
 		{
 			name: "lists entries with metadata",
-			service: &fakeChannelArtifactsService{entries: []*channelartifacts.Entry{{
-				ID: artifactID, ChannelID: channelID, Title: "Ops Report", Version: 2,
-				SHA256: "abcdef0123456789", SourceAgentDisplayName: "Fusion",
-			}}},
+			service: &fakeChannelArtifactsService{entries: []*channelartifacts.Entry{
+				{ID: artifactID, ChannelID: channelID, Title: "Ops Report", Version: 2, SHA256: "abcdef0123456789", SourceAgentDisplayName: "Fusion", Available: true},
+				{ID: model.NewId(), Title: "Gone", Available: false},
+			}},
 			channelID:   channelID,
-			wantContain: "Ops Report",
+			wantContain: []string{"Ops Report", artifactID, "abcdef012345", "Fusion", "Availability: unavailable"},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &MattermostToolProvider{channelArtifactsService: tt.service}
-			mcpCtx := &MCPToolContext{Ctx: t.Context(), UserID: model.NewId()}
-			result, err := p.toolListChannelArtifacts(mcpCtx, ListChannelArtifactsArgs{ChannelID: tt.channelID})
+			result, err := p.toolListChannelArtifacts(&MCPToolContext{Ctx: t.Context(), UserID: model.NewId()}, ListChannelArtifactsArgs{ChannelID: tt.channelID})
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
 				return
 			}
 			require.NoError(t, err)
-			assert.Contains(t, result, tt.wantContain)
-			if tt.name == "lists entries with metadata" {
-				assert.Contains(t, result, "library")
-				assert.Contains(t, result, artifactID)
-				assert.Contains(t, result, "abcdef012345")
+			for _, want := range tt.wantContain {
+				assert.Contains(t, result, want)
 			}
 		})
 	}
@@ -117,247 +85,96 @@ func TestToolListChannelArtifacts(t *testing.T) {
 
 func TestToolGetChannelArtifact(t *testing.T) {
 	artifactID := model.NewId()
+	entry := &channelartifacts.Entry{ID: artifactID, Title: "Dashboard", Version: 3, Available: true}
+	off := false
 
 	tests := []struct {
 		name        string
-		service     ChannelArtifactsService
+		service     *fakeChannelArtifactsService
 		args        GetChannelArtifactArgs
 		wantErr     string
-		wantContain string
+		wantContain []string
+		wantOpts    ChannelArtifactReadOptions
 	}{
+		{name: "not found", service: &fakeChannelArtifactsService{getErr: channelartifacts.ErrNotFound}, args: GetChannelArtifactArgs{ArtifactID: artifactID}, wantErr: "list_channel_artifacts"},
+		{name: "source deleted", service: &fakeChannelArtifactsService{getErr: channelartifacts.ErrUnavailable}, args: GetChannelArtifactArgs{ArtifactID: artifactID}, wantErr: "deleted"},
+		{name: "invalid id", service: &fakeChannelArtifactsService{}, args: GetChannelArtifactArgs{ArtifactID: "x"}, wantErr: "artifact_id"},
 		{
-			name:    "nil service",
-			service: nil,
-			args:    GetChannelArtifactArgs{ArtifactID: artifactID},
-			wantErr: "channel artifacts are not available",
+			name:        "metadata only",
+			service:     &fakeChannelArtifactsService{view: ChannelArtifactContent{Entry: entry}},
+			args:        GetChannelArtifactArgs{ArtifactID: artifactID, IncludeContent: &off},
+			wantContain: []string{"Dashboard"},
+			wantOpts:    ChannelArtifactReadOptions{IncludeContent: false},
 		},
 		{
-			name:    "not found",
-			service: &fakeChannelArtifactsService{getErr: channelartifacts.ErrNotFound},
-			args:    GetChannelArtifactArgs{ArtifactID: artifactID},
-			wantErr: "list_channel_artifacts",
-		},
-		{
-			name: "returns truncated content",
+			name: "first window points at the rest",
 			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
-				Entry:           &channelartifacts.Entry{ID: artifactID, Title: "Deck", Version: 1},
-				ContentIncluded: true,
-				Content:         "<html>hi</html>",
-				TotalRunes:      14,
-				Returned:        14,
+				Entry: entry, ContentIncluded: true, Content: "<html>", TotalRunes: 100, Returned: 6, HasMore: true, NextOffset: 6,
 			}},
-			args:        GetChannelArtifactArgs{ArtifactID: artifactID},
-			wantContain: "<html>hi</html>",
+			args:        GetChannelArtifactArgs{ArtifactID: artifactID, ContentLimit: 6},
+			wantContain: []string{"<html>", "characters 0-6 of 100", "offset=6"},
+			wantOpts:    ChannelArtifactReadOptions{IncludeContent: true, Limit: 6},
+		},
+		{
+			name: "later window and version are passed through",
+			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
+				Entry: entry, ContentIncluded: true, Content: "tail", Offset: 96, TotalRunes: 100, Returned: 4,
+			}},
+			args:        GetChannelArtifactArgs{ArtifactID: artifactID, Offset: 96, Version: 2},
+			wantContain: []string{"characters 96-100 of 100", "tail"},
+			wantOpts:    ChannelArtifactReadOptions{IncludeContent: true, Offset: 96, Version: 2},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &MattermostToolProvider{channelArtifactsService: tt.service}
-			mcpCtx := &MCPToolContext{Ctx: t.Context(), UserID: model.NewId()}
-			result, err := p.toolGetChannelArtifact(mcpCtx, tt.args)
+			result, err := p.toolGetChannelArtifact(&MCPToolContext{Ctx: t.Context(), UserID: model.NewId()}, tt.args)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
 				return
 			}
 			require.NoError(t, err)
-			assert.Contains(t, result, tt.wantContain)
-			assert.Contains(t, result, "library")
+			for _, want := range tt.wantContain {
+				assert.Contains(t, result, want)
+			}
+			assert.Equal(t, tt.wantOpts, tt.service.gotOpts)
 		})
 	}
 }
 
-func TestToolProposeChannelArtifactUpdate(t *testing.T) {
-	channelID := model.NewId()
-	artifactID := model.NewId()
-	postID := model.NewId()
-	fileID := model.NewId()
-	otherChannel := model.NewId()
-
+func TestChannelArtifactWindow(t *testing.T) {
 	tests := []struct {
-		name     string
-		service  ChannelArtifactsService
-		setupMux func(mux *http.ServeMux)
-		args     ProposeChannelArtifactUpdateArgs
-		wantErr  string
-		wantOK   string
+		name       string
+		text       string
+		offset     int
+		limit      int
+		want       string
+		wantMore   bool
+		wantNext   int
+		wantReturn int
 	}{
-		{
-			name:    "nil service",
-			service: nil,
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantErr: "channel artifacts are not available",
-		},
-		{
-			name: "artifact in different channel fails closed",
-			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
-				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: otherChannel, Title: "Wrong"},
-			}},
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantErr: "is not in channel",
-		},
-		{
-			name: "posts proposal when artifact and file match",
-			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
-				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Brief"},
-			}},
-			setupMux: func(mux *http.ServeMux) {
-				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
-				})
-				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "brief.html"})
-				})
-				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
-					var post model.Post
-					assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
-					assert.Equal(t, channelID, post.ChannelId)
-					assert.Contains(t, post.Message, "Brief")
-					assert.Contains(t, post.Message, artifactID)
-					assert.Contains(t, post.Message, "brief.html")
-					post.Id = model.NewId()
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&post)
-				})
-			},
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantOK: "Posted proposal",
-		},
-		{
-			name: "non-html file is rejected",
-			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
-				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Brief"},
-			}},
-			setupMux: func(mux *http.ServeMux) {
-				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
-				})
-				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "notes.txt", Extension: "txt"})
-				})
-			},
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantErr: "is not an HTML artifact",
-		},
-		{
-			name: "human-authored file is rejected by the plugin check",
-			service: &fakeChannelArtifactsService{
-				view: ChannelArtifactContent{
-					Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Brief"},
-				},
-				canSaveErr: fmt.Errorf("channel artifacts only accept files posted by agents"),
-			},
-			setupMux: func(mux *http.ServeMux) {
-				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
-				})
-				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "brief.html", Extension: "html"})
-				})
-			},
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantErr: "only accept files posted by agents",
-		},
-		{
-			name: "mentions in the title are not posted raw",
-			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
-				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Hello @channel"},
-			}},
-			setupMux: func(mux *http.ServeMux) {
-				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{fileID}})
-				})
-				mux.HandleFunc("/api/v4/files/"+fileID+"/info", func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.FileInfo{Id: fileID, Name: "brief.html", Extension: "html"})
-				})
-				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
-					var post model.Post
-					assert.NoError(t, json.NewDecoder(r.Body).Decode(&post))
-					assert.NotContains(t, post.Message, "@channel")
-					assert.Contains(t, post.Message, "@\u200bchannel")
-					assert.Contains(t, post.Message, "Hello")
-					post.Id = model.NewId()
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&post)
-				})
-			},
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantOK: "Posted proposal",
-		},
-		{
-			name: "file not on post fails closed",
-			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
-				Entry: &channelartifacts.Entry{ID: artifactID, ChannelID: channelID, Title: "Brief"},
-			}},
-			setupMux: func(mux *http.ServeMux) {
-				mux.HandleFunc("/api/v4/posts/"+postID, func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(&model.Post{Id: postID, ChannelId: channelID, FileIds: model.StringArray{model.NewId()}})
-				})
-			},
-			args: ProposeChannelArtifactUpdateArgs{
-				ChannelID: channelID, ArtifactID: artifactID, PostID: postID, FileID: fileID,
-			},
-			wantErr: "is not attached",
-		},
+		{name: "whole text", text: "héllo", limit: 10, want: "héllo", wantReturn: 5},
+		{name: "first window counts characters", text: "héllo wörld", limit: 5, want: "héllo", wantMore: true, wantNext: 5, wantReturn: 5},
+		{name: "continues from the offset", text: "héllo wörld", offset: 5, limit: 100, want: " wörld", wantReturn: 6},
+		{name: "offset past the end", text: "abc", offset: 9, want: ""},
+		{name: "negative offset starts at zero", text: "abc", offset: -4, want: "abc", wantReturn: 3},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			if tt.setupMux != nil {
-				tt.setupMux(mux)
-			}
-			ts := httptest.NewServer(mux)
-			defer ts.Close()
-
-			p := &MattermostToolProvider{channelArtifactsService: tt.service, trackAIGenerated: true}
-			mcpCtx := &MCPToolContext{
-				Ctx:        t.Context(),
-				Client:     newTestClient(ts.URL),
-				UserID:     model.NewId(),
-				AccessMode: AccessModeRemote,
-			}
-			result, err := p.toolProposeChannelArtifactUpdate(mcpCtx, tt.args)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Contains(t, result, tt.wantOK)
-			fake, ok := tt.service.(*fakeChannelArtifactsService)
-			if ok {
-				assert.Equal(t, tt.args.PostID, fake.canSavePostID)
-				assert.Equal(t, tt.args.FileID, fake.canSaveFileID)
-			}
+			got := ChannelArtifactWindow(tt.text, tt.offset, tt.limit)
+			assert.Equal(t, tt.want, got.Content)
+			assert.Equal(t, tt.wantMore, got.HasMore)
+			assert.Equal(t, tt.wantNext, got.NextOffset)
+			assert.Equal(t, tt.wantReturn, got.Returned)
 		})
 	}
-}
 
-func TestLiteralChannelLabelFlattensBreaksAndEscapesBlockquote(t *testing.T) {
-	assert.Equal(t, `Report \> note`, literalChannelLabel("Report\r\n> note"))
+	t.Run("limit is capped and defaulted", func(t *testing.T) {
+		long := string(make([]rune, MaxChannelArtifactContentLimit+500))
+		assert.Equal(t, MaxChannelArtifactContentLimit, ChannelArtifactWindow(long, 0, 1<<20).Returned)
+		assert.Equal(t, DefaultChannelArtifactContentLimit, ChannelArtifactWindow(long, 0, 0).Returned)
+	})
 }
 
 func TestGetChannelArtifactToolsRegistered(t *testing.T) {
@@ -366,9 +183,46 @@ func TestGetChannelArtifactToolsRegistered(t *testing.T) {
 	for _, tool := range p.getChannelArtifactTools() {
 		names[tool.Name] = tool.ReadOnly
 	}
-	assert.Equal(t, map[string]bool{
-		"list_channel_artifacts":          true,
-		"get_channel_artifact":            true,
-		"propose_channel_artifact_update": false,
-	}, names)
+	assert.Equal(t, map[string]bool{"list_channel_artifacts": true, "get_channel_artifact": true}, names)
+}
+
+func TestChannelArtifactsToolsMiddleware(t *testing.T) {
+	tools := []string{"read_post", "list_channel_artifacts", "get_channel_artifact"}
+
+	t.Run("tools/list hides the library tools while it is off", func(t *testing.T) {
+		handler := channelArtifactsToolsMiddleware(alwaysFalse)(newToolsListHandler(tools...))
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools/list keeps them while it is on", func(t *testing.T) {
+		handler := channelArtifactsToolsMiddleware(alwaysTrue)(newToolsListHandler(tools...))
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, tools, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools/call is refused while it is off", func(t *testing.T) {
+		called := false
+		handler := channelArtifactsToolsMiddleware(alwaysFalse)(newToolsCallHandler(&called, "ran"))
+		result, err := handler(context.Background(), "tools/call", callToolRequest("get_channel_artifact"))
+		require.NoError(t, err)
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		assert.True(t, callResult.IsError)
+		assert.False(t, called)
+	})
+
+	t.Run("other tools are untouched", func(t *testing.T) {
+		called := false
+		handler := channelArtifactsToolsMiddleware(alwaysFalse)(newToolsCallHandler(&called, "ran"))
+		_, err := handler(context.Background(), "tools/call", callToolRequest("read_post"))
+		require.NoError(t, err)
+		assert.True(t, called)
+	})
 }

@@ -1,18 +1,22 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package channelartifacts
+package channelartifacts_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -26,6 +30,11 @@ func (b testBots) IsAnyBot(userID string) bool {
 
 func (b testBots) AgentDisplayName(userID string) string { return b[userID] }
 
+func hashHex(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
 const testHTML = "<html>dashboard</html>"
 
 func TestServiceCan(t *testing.T) {
@@ -38,37 +47,37 @@ func TestServiceCan(t *testing.T) {
 		getErr  error
 		guest   bool
 		allowed map[*model.Permission]bool
-		op      Op
+		op      channelartifacts.Op
 		want    bool
 	}{
 		{
-			name: "public channel with the add permission", op: OpAdd, want: true,
+			name: "public channel with the add permission", op: channelartifacts.OpAdd, want: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
 			allowed: map[*model.Permission]bool{model.PermissionAddBookmarkPublicChannel: true},
 		},
 		{
-			name: "public channel without the edit permission", op: OpEdit,
+			name: "public channel without the edit permission", op: channelartifacts.OpEdit,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
 			allowed: map[*model.Permission]bool{model.PermissionAddBookmarkPublicChannel: true},
 		},
 		{
-			name: "private channel uses the private delete permission", op: OpDelete, want: true,
+			name: "private channel uses the private delete permission", op: channelartifacts.OpDelete, want: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypePrivate},
 			allowed: map[*model.Permission]bool{model.PermissionDeleteBookmarkPrivateChannel: true},
 		},
 		{
-			name: "archived channel is denied even with the permission", op: OpAdd,
+			name: "archived channel is denied even with the permission", op: channelartifacts.OpAdd,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen, DeleteAt: 1},
 			allowed: map[*model.Permission]bool{model.PermissionAddBookmarkPublicChannel: true},
 		},
-		{name: "lookup failure fails closed", op: OpAdd, getErr: errors.New("db down")},
+		{name: "lookup failure fails closed", op: channelartifacts.OpAdd, getErr: errors.New("db down")},
 		{
-			name: "direct message member", op: OpAdd, want: true,
+			name: "direct message member", op: channelartifacts.OpAdd, want: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeDirect},
 			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true},
 		},
 		{
-			name: "direct message guest", op: OpAdd, guest: true,
+			name: "direct message guest", op: channelartifacts.OpAdd, guest: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeDirect},
 			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true},
 		},
@@ -85,14 +94,16 @@ func TestServiceCan(t *testing.T) {
 			}
 			mm.EXPECT().GetUser(user).Return(&model.User{Id: user, Roles: roles}, nil).Maybe()
 
-			svc := NewService(NewStore(nil), mm, testBots{})
+			svc := channelartifacts.NewService(channelartifacts.NewStore(nil), mm, testBots{})
 			assert.Equal(t, tt.want, svc.Can(user, channelID, tt.op))
 		})
 	}
 }
 
 type serviceEnv struct {
-	svc       *Service
+	db        *sqlx.DB
+	store     *channelartifacts.Store
+	svc       *channelartifacts.Service
 	mm        *mocks.MockClient
 	channelID string
 	botID     string
@@ -115,7 +126,9 @@ func newServiceEnv(t *testing.T) *serviceEnv {
 		fileID:    model.NewId(),
 	}
 	seedSource(t, db, env.postID, env.fileID)
-	env.svc = NewService(NewStore(db), env.mm, testBots{env.botID: "Helper"})
+	env.db = db
+	env.store = channelartifacts.NewStore(db)
+	env.svc = channelartifacts.NewService(env.store, env.mm, testBots{env.botID: "Helper"})
 
 	env.mm.EXPECT().GetChannel(env.channelID).Return(&model.Channel{Id: env.channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
 	env.mm.EXPECT().HasPermissionToChannel(env.userID, env.channelID, mock.Anything).Return(true).Maybe()
@@ -145,7 +158,7 @@ func TestServiceSaveChecksTheSource(t *testing.T) {
 		wantErr error
 	}{
 		{name: "agent post", wantErr: nil},
-		{name: "person's post", author: func(e *serviceEnv) string { return e.userID }, wantErr: ErrIneligible},
+		{name: "person's post", author: func(e *serviceEnv) string { return e.userID }, wantErr: channelartifacts.ErrIneligible},
 		{
 			name: "not an html file",
 			info: func(e *serviceEnv) *model.FileInfo {
@@ -153,10 +166,10 @@ func TestServiceSaveChecksTheSource(t *testing.T) {
 				i.Extension, i.Name = "txt", "notes.txt"
 				return i
 			},
-			wantErr: ErrIneligible,
+			wantErr: channelartifacts.ErrIneligible,
 		},
-		{name: "post in another channel", channel: func(*serviceEnv) string { return model.NewId() }, wantErr: ErrIneligible},
-		{name: "file not on the post", files: func(*serviceEnv) []string { return []string{model.NewId()} }, wantErr: ErrIneligible},
+		{name: "post in another channel", channel: func(*serviceEnv) string { return model.NewId() }, wantErr: channelartifacts.ErrIneligible},
+		{name: "file not on the post", files: func(*serviceEnv) []string { return []string{model.NewId()} }, wantErr: channelartifacts.ErrIneligible},
 		{
 			name: "file deleted",
 			info: func(e *serviceEnv) *model.FileInfo {
@@ -164,9 +177,9 @@ func TestServiceSaveChecksTheSource(t *testing.T) {
 				i.DeleteAt = 1
 				return i
 			},
-			wantErr: ErrNotFound,
+			wantErr: channelartifacts.ErrNotFound,
 		},
-		{name: "larger than the limit", maxSize: 5, wantErr: ErrTooLarge},
+		{name: "larger than the limit", maxSize: 5, wantErr: channelartifacts.ErrTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -190,7 +203,7 @@ func TestServiceSaveChecksTheSource(t *testing.T) {
 				maxSize = 1 << 20
 			}
 
-			entry, err := e.svc.Save(e.userID, e.mm, SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, Limits{MaxSize: maxSize})
+			entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: maxSize})
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				list, listErr := e.svc.List(e.userID, e.channelID)
@@ -215,57 +228,57 @@ func TestServiceSaveRequiresThePermissionForTheOperation(t *testing.T) {
 		func(_, _ string, p *model.Permission) bool { return p == model.PermissionReadChannel }).Maybe()
 	e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
 
-	_, err := e.svc.Save(stranger, e.mm, SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, Limits{MaxSize: 1 << 20})
-	require.ErrorIs(t, err, ErrForbidden, "a reader without the add permission is told so")
+	_, err := e.svc.Save(stranger, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
+	require.ErrorIs(t, err, channelartifacts.ErrForbidden, "a reader without the add permission is told so")
 
 	outsider := model.NewId()
 	e.mm.EXPECT().HasPermissionToChannel(outsider, e.channelID, mock.Anything).Return(false).Maybe()
-	_, err = e.svc.Save(outsider, e.mm, SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, Limits{MaxSize: 1 << 20})
-	require.ErrorIs(t, err, ErrNotFound, "someone who cannot read the channel learns nothing")
+	_, err = e.svc.Save(outsider, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
+	require.ErrorIs(t, err, channelartifacts.ErrNotFound, "someone who cannot read the channel learns nothing")
 }
 
 func TestServiceReadContentFailsClosed(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T, e *serviceEnv, entry *Entry)
+		setup   func(t *testing.T, e *serviceEnv, entry *channelartifacts.Entry)
 		wantErr error
 	}{
 		{
 			name: "allowed",
-			setup: func(t *testing.T, e *serviceEnv, _ *Entry) {
+			setup: func(t *testing.T, e *serviceEnv, _ *channelartifacts.Entry) {
 				e.mm.EXPECT().HasPermissionToFileAction("sess", e.fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true)
 			},
 		},
 		{
 			name: "download policy denies the session",
-			setup: func(t *testing.T, e *serviceEnv, _ *Entry) {
+			setup: func(t *testing.T, e *serviceEnv, _ *channelartifacts.Entry) {
 				e.mm.EXPECT().HasPermissionToFileAction("sess", e.fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(false)
 			},
-			wantErr: ErrNotFound,
+			wantErr: channelartifacts.ErrNotFound,
 		},
 		{
 			name: "source file deleted",
-			setup: func(t *testing.T, e *serviceEnv, entry *Entry) {
-				_, err := e.svc.store.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
+			setup: func(t *testing.T, e *serviceEnv, entry *channelartifacts.Entry) {
+				_, err := e.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
 				require.NoError(t, err)
 				entry.Available = false
 			},
-			wantErr: ErrUnavailable,
+			wantErr: channelartifacts.ErrUnavailable,
 		},
 		{
 			name: "content no longer matches the recorded hash",
-			setup: func(t *testing.T, e *serviceEnv, entry *Entry) {
+			setup: func(t *testing.T, e *serviceEnv, entry *channelartifacts.Entry) {
 				entry.SHA256 = hashHex([]byte("something else"))
 				e.mm.EXPECT().HasPermissionToFileAction("sess", e.fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true)
 			},
-			wantErr: ErrUnavailable,
+			wantErr: channelartifacts.ErrUnavailable,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newServiceEnv(t)
 			e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
-			entry, err := e.svc.Save(e.userID, e.mm, SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, Limits{MaxSize: 1 << 20})
+			entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
 			require.NoError(t, err)
 			tt.setup(t, e, entry)
 
@@ -282,34 +295,34 @@ func TestServiceReadContentFailsClosed(t *testing.T) {
 	t.Run("no session fails closed", func(t *testing.T) {
 		e := newServiceEnv(t)
 		e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
-		entry, err := e.svc.Save(e.userID, e.mm, SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, Limits{MaxSize: 1 << 20})
+		entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
 		require.NoError(t, err)
 		e.mm.EXPECT().HasPermissionToFileAction("", e.fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true)
 		_, err = e.svc.ReadContent("", entry, 0, 1<<20)
-		require.ErrorIs(t, err, ErrNotFound)
+		require.ErrorIs(t, err, channelartifacts.ErrNotFound)
 	})
 }
 
 func TestServiceRollbackRefusesAnUnavailableVersion(t *testing.T) {
 	e := newServiceEnv(t)
 	e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
-	entry, err := e.svc.Save(e.userID, e.mm, SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, Limits{MaxSize: 1 << 20})
+	entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
 	require.NoError(t, err)
 
 	secondPost, secondFile := model.NewId(), model.NewId()
-	seedSource(t, e.svc.store.db, secondPost, secondFile)
-	_, err = e.svc.store.db.Exec(`UPDATE Posts SET DeleteAt = 0 WHERE Id = $1`, secondPost)
+	seedSource(t, e.db, secondPost, secondFile)
+	_, err = e.db.Exec(`UPDATE Posts SET DeleteAt = 0 WHERE Id = $1`, secondPost)
 	require.NoError(t, err)
-	require.NoError(t, e.svc.store.AddVersion(entry.ID, NewVersion{
+	require.NoError(t, e.store.AddVersion(entry.ID, channelartifacts.NewVersion{
 		PostID: secondPost, FileID: secondFile, SHA256: hashHex([]byte("v2")), Size: 2,
 		SourceBotUserID: e.botID, UserID: e.userID, At: model.GetMillis(),
 	}, 5))
 
-	_, err = e.svc.store.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
+	_, err = e.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
 	require.NoError(t, err)
 
 	_, err = e.svc.Rollback(e.userID, entry.ID, 1)
-	require.ErrorIs(t, err, ErrUnavailable)
+	require.ErrorIs(t, err, channelartifacts.ErrUnavailable)
 	current, err := e.svc.GetReadable(e.userID, entry.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 2, current.Version, "a refused rollback leaves the current version alone")

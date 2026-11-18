@@ -64,9 +64,8 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 		nil, // ServerOptions - keeping nil for now
 	)
 
-	// Channel artifacts always go through the plugin HTTP callback so embedded
-	// and external MCP share one permission path. Default when the caller
-	// did not inject a service.
+	// The plugin injects an in-process service. Without one, fall back to the
+	// plugin HTTP callback that external servers use.
 	if channelArtifactsService == nil {
 		base := config.GetMMInternalServerURL()
 		if base == "" {

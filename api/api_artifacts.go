@@ -15,13 +15,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -318,12 +318,13 @@ func artifactRenderLimit(cfg *model.Config) int64 {
 	return min(maxArtifactRenderBytes, mmtools.CreateFileContentLimit(cfg))
 }
 
+// ArtifactRenderLimit is the most HTML bytes the plugin reads for one artifact.
+func ArtifactRenderLimit(cfg *model.Config) int64 {
+	return artifactRenderLimit(cfg)
+}
+
 func isArtifactExtension(info *model.FileInfo) bool {
-	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
-	if ext == "" {
-		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(info.Name), "."))
-	}
-	return ext == "html" || ext == "htm"
+	return channelartifacts.IsHTMLFile(info)
 }
 
 // authorizeArtifact runs the checks shared by every artifact route: the
