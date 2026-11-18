@@ -250,15 +250,32 @@ var everySecret = []string{
 	"sentinel-otlp-path-token",
 }
 
+// maskedForEditors lists the credentials the admin config mask replaces for
+// users who can edit. The rest (credentials inside URLs, the AWS access key
+// ID, nested embedding parameters) reach editors as stored; read-only users
+// never get them.
+var maskedForEditors = map[string]bool{
+	"sentinel-service-api-key":     true,
+	"sentinel-aws-secret":          true,
+	"sentinel-vertex-credentials":  true,
+	"sentinel-mcp-header":          true,
+	"sentinel-mcp-service-account": true,
+	"sentinel-mcp-client-secret":   true,
+	"sentinel-google-key":          true,
+	"sentinel-brave-key":           true,
+	"sentinel-embedding-key":       true,
+	"sentinel-otlp-header":         true,
+}
+
 func TestGetConfigSecretsByAccessLevel(t *testing.T) {
 	tests := []struct {
-		name        string
-		role        string
-		wantSecrets bool
+		name       string
+		role       string
+		wantMasked bool
 	}{
-		{name: "system admin sees credentials", role: "admin", wantSecrets: true},
-		{name: "read/write delegate sees credentials", role: "readWrite", wantSecrets: true},
-		{name: "read-only delegate does not", role: "readOnly", wantSecrets: false},
+		{name: "system admin gets credentials masked", role: "admin", wantMasked: true},
+		{name: "read/write delegate gets credentials masked", role: "readWrite", wantMasked: true},
+		{name: "read-only delegate gets them blanked", role: "readOnly", wantMasked: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -270,12 +287,21 @@ func TestGetConfigSecretsByAccessLevel(t *testing.T) {
 			require.Equal(t, http.StatusOK, recorder.Code)
 			body := recorder.Body.String()
 
+			// Editors get stored credentials masked, which the admin console
+			// sends back unchanged. Credentials inside URLs are not masked
+			// for them: they are part of the URL they edit. Read-only users
+			// get every credential blanked and every URL cut to its origin.
 			for _, secret := range everySecret {
-				if tt.wantSecrets {
+				if tt.wantMasked && !maskedForEditors[secret] {
 					assert.Contains(t, body, secret)
-				} else {
-					assert.NotContains(t, body, secret)
+					continue
 				}
+				assert.NotContains(t, body, secret)
+			}
+			if tt.wantMasked {
+				assert.Contains(t, body, config.SecretPlaceholder)
+			} else {
+				assert.NotContains(t, body, config.SecretPlaceholder)
 			}
 
 			// The rest of the configuration is still there for the viewer, and
