@@ -431,6 +431,29 @@ func TestMCPChannelArtifactCallbacks(t *testing.T) {
 		assert.Equal(t, http.StatusGone, gone.Code)
 	})
 
+	t.Run("an earlier version comes back with its own metadata", func(t *testing.T) {
+		versioned := f.save(t, "Versioned", "<html>0123456789 first</html>")
+		secondPost, secondFile := f.addSource(t, f.botID, "<html>second</html>")
+		_, err := f.svc.Save(testUserID, f.mm, channelartifacts.SaveRequest{
+			ChannelID: f.channelID, PostID: secondPost, FileID: secondFile, ArtifactID: versioned.ID,
+		}, channelartifacts.Limits{MaxSize: 1 << 20})
+		require.NoError(t, err)
+
+		rec := f.do(http.MethodPost, tools.ChannelArtifactsGetPath, `{"artifact_id":"`+versioned.ID+`","version":1}`)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got tools.ChannelArtifactGetResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		assert.Equal(t, "<html>0123456789 first</html>", got.Content)
+		assert.Equal(t, 1, got.Entry.Version)
+		assert.Equal(t, versioned.SHA256, got.Entry.SHA256)
+		assert.Equal(t, versioned.SourceFileID, got.Entry.SourceFileID)
+
+		current := f.do(http.MethodPost, tools.ChannelArtifactsGetPath, `{"artifact_id":"`+versioned.ID+`"}`)
+		require.NoError(t, json.Unmarshal(current.Body.Bytes(), &got))
+		assert.Equal(t, 2, got.Entry.Version)
+		assert.Equal(t, secondFile, got.Entry.SourceFileID)
+	})
+
 	t.Run("library off", func(t *testing.T) {
 		f.e.config.enableChannelArtifacts = false
 		assert.Equal(t, http.StatusServiceUnavailable, f.do(http.MethodPost, tools.ChannelArtifactsListPath, `{"channel_id":"`+f.channelID+`"}`).Code)

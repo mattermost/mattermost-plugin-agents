@@ -51,6 +51,9 @@ type NewVersion struct {
 	SourceBotUserID string
 	UserID          string
 	At              int64
+	// Title, when set, renames the artifact in the same transaction that adds
+	// the version.
+	Title string
 }
 
 func (s *Store) tx(fn func(tx *sqlx.Tx) error) error {
@@ -181,7 +184,7 @@ func (s *Store) Create(id, channelID, title string, v NewVersion, maxPerChannel 
 func (s *Store) AddVersion(id string, v NewVersion, versionsToKeep int) error {
 	return s.tx(func(tx *sqlx.Tx) error {
 		var channelID string
-		if err := tx.Get(&channelID, `SELECT ChannelID FROM Agents_ChannelArtifacts WHERE ID = $1`, id); err != nil {
+		if err := tx.Get(&channelID, `SELECT ChannelID FROM Agents_ChannelArtifacts WHERE ID = $1 FOR UPDATE`, id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -204,7 +207,10 @@ func (s *Store) AddVersion(id string, v NewVersion, versionsToKeep int) error {
 		if err = insertVersion(tx, id, next, v); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`UPDATE Agents_ChannelArtifacts SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4 WHERE ID = $1`, id, next, v.UserID, v.At); err != nil {
+		if _, err = tx.Exec(`
+			UPDATE Agents_ChannelArtifacts
+			SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4, Title = COALESCE(NULLIF($5, ''), Title)
+			WHERE ID = $1`, id, next, v.UserID, v.At, v.Title); err != nil {
 			return fmt.Errorf("failed to update channel artifact: %w", err)
 		}
 		_, err = tx.Exec(`
