@@ -6,18 +6,17 @@ package mcpserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
-	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -29,13 +28,17 @@ import (
 const (
 	listArtifactsTool   = "list_channel_artifacts"
 	getArtifactTool     = "get_channel_artifact"
-	proposeUpdateTool   = "propose_channel_artifact_update"
+	saveArtifactTool    = mmtools.SaveChannelArtifactToolName
+	removeArtifactTool  = mmtools.RemoveChannelArtifactToolName
 	createFileToolName  = mmtools.CreateFileToolName
 	runbookArtifactName = "Migration cutover runbook"
 	checklistName       = "Launch checklist"
 )
 
-var artifactToolNames = []string{listArtifactsTool, getArtifactTool, proposeUpdateTool}
+var (
+	artifactReadToolNames = []string{listArtifactsTool, getArtifactTool}
+	artifactToolNames     = []string{listArtifactsTool, getArtifactTool, saveArtifactTool, removeArtifactTool}
+)
 
 const runbookHTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Migration cutover runbook</title>
@@ -84,27 +87,26 @@ func (f *fakeChannelArtifacts) add(channel *model.Channel, title, html string) *
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	entry := &channelartifacts.Entry{
-		ID:        model.NewId(),
-		ChannelID: channel.Id,
-		TeamID:    channel.TeamId,
-		CreateAt:  model.GetMillis(),
-		VersionSnapshot: channelartifacts.VersionSnapshot{
-			Title:                  title,
-			SourcePostID:           model.NewId(),
-			SourceFileID:           model.NewId(),
-			SourceFileName:         strings.ToLower(strings.ReplaceAll(title, " ", "-")) + ".html",
-			SourceAgentDisplayName: "Matty",
-			UpdateAt:               model.GetMillis(),
-			Size:                   int64(len(html)),
-			SHA256:                 "9f2b7c1d4e8a0b3c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4",
-			Version:                1,
-		},
+		ID:                     model.NewId(),
+		ChannelID:              channel.Id,
+		Title:                  title,
+		Version:                1,
+		SHA256:                 "9f2b7c1d4e8a0b3c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4",
+		Size:                   int64(len(html)),
+		SourcePostID:           model.NewId(),
+		SourceFileID:           model.NewId(),
+		SourceAgentDisplayName: "Matty",
+		CreateAt:               model.GetMillis(),
+		UpdateAt:               model.GetMillis(),
+		Available:              true,
 	}
 	f.entries[entry.ID] = entry
 	f.content[entry.ID] = html
 	f.order = append(f.order, entry.ID)
 	return entry
 }
+
+func (f *fakeChannelArtifacts) Enabled() bool { return true }
 
 func (f *fakeChannelArtifacts) List(_ context.Context, _, channelID string) ([]*channelartifacts.Entry, error) {
 	f.mu.Lock()
@@ -118,29 +120,30 @@ func (f *fakeChannelArtifacts) List(_ context.Context, _, channelID string) ([]*
 	return out, nil
 }
 
-func (f *fakeChannelArtifacts) Get(_ context.Context, _, artifactID string, includeContent bool, contentLimit int) (tools.ChannelArtifactContent, error) {
+func (f *fakeChannelArtifacts) Get(_ context.Context, _, artifactID string, opts tools.ChannelArtifactReadOptions) (tools.ChannelArtifactContent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	entry, ok := f.entries[artifactID]
 	if !ok {
 		return tools.ChannelArtifactContent{}, channelartifacts.ErrNotFound
 	}
-	view := tools.ChannelArtifactContent{Entry: entry, ContentIncluded: includeContent}
-	if includeContent {
-		body := f.content[artifactID]
-		view.TotalRunes = utf8.RuneCountInString(body)
-		runes := []rune(body)
-		if contentLimit > 0 && len(runes) > contentLimit {
-			runes = runes[:contentLimit]
-			view.HasMore = true
-		}
-		view.Content = string(runes)
-		view.Returned = len(runes)
+	view := tools.ChannelArtifactContent{}
+	if opts.IncludeContent {
+		view = tools.ChannelArtifactWindow(f.content[artifactID], opts.Offset, opts.Limit)
 	}
+	view.Entry = entry
 	return view, nil
 }
 
-func (f *fakeChannelArtifacts) CanSave(context.Context, string, string, string) error { return nil }
+// libraryWrite is one SaveChannelArtifact or RemoveChannelArtifact call made
+// by the model under test.
+type libraryWrite struct {
+	tool       string
+	artifactID string
+	title      string
+	content    string
+	fileID     string
+}
 
 // createdFile is one CreateFile call made by the model under test.
 type createdFile struct {
@@ -156,28 +159,11 @@ type artifactEvalEnv struct {
 	library   *fakeChannelArtifacts
 	runbook   *channelartifacts.Entry
 	checklist *channelartifacts.Entry
-	// v2Post carries a newer runbook HTML file the user posted in the channel.
-	v2Post *model.Post
-	v2File *model.FileInfo
 }
 
 func seedArtifactEnv(t *testing.T, suite *TestSuite) *artifactEvalEnv {
 	t.Helper()
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
-
-	adminClient := model.NewAPIv4Client(suite.serverURL)
-	adminClient.SetToken(suite.adminToken)
-	ctx := context.Background()
-
-	upload, _, err := adminClient.UploadFile(ctx, []byte(strings.Replace(runbookHTML, "Priya Raman", "Priya Raman (backup: Omar Haddad)", 1)), data.channel.Id, "migration-cutover-runbook-v2.html")
-	require.NoError(t, err)
-	require.NotEmpty(t, upload.FileInfos)
-	v2Post, _, err := adminClient.CreatePost(ctx, &model.Post{
-		ChannelId: data.channel.Id,
-		Message:   "Here is the updated cutover runbook, now with a backup rollback owner.",
-		FileIds:   []string{upload.FileInfos[0].Id},
-	})
-	require.NoError(t, err)
 
 	library := newFakeChannelArtifacts()
 	return &artifactEvalEnv{
@@ -187,8 +173,6 @@ func seedArtifactEnv(t *testing.T, suite *TestSuite) *artifactEvalEnv {
 		library:   library,
 		runbook:   library.add(data.channel, runbookArtifactName, runbookHTML),
 		checklist: library.add(data.channel, checklistName, checklistHTML),
-		v2Post:    v2Post,
-		v2File:    upload.FileInfos[0],
 	}
 }
 
@@ -215,17 +199,85 @@ func newRecordingCreateFileTool(mu *sync.Mutex, files *[]createdFile) llm.Tool {
 	return tool
 }
 
+// newRecordingLibraryTools keeps the production SaveChannelArtifact and
+// RemoveChannelArtifact descriptions and schemas, but records the calls and
+// answers like the plugin does for the seeded library.
+func newRecordingLibraryTools(llmCtx *llm.Context, env *artifactEvalEnv, mu *sync.Mutex, writes *[]libraryWrite) []llm.Tool {
+	real := (&mmtools.ChannelArtifactTools{
+		Service: &channelartifacts.Service{},
+		Enabled: func() bool { return true },
+	}).Tools(llmCtx)
+
+	record := func(w libraryWrite) {
+		mu.Lock()
+		*writes = append(*writes, w)
+		mu.Unlock()
+	}
+	marshal := func(r mmtools.ChannelArtifactResult) (string, error) {
+		out, err := json.Marshal(r)
+		return string(out), err
+	}
+
+	out := make([]llm.Tool, 0, len(real))
+	for _, tool := range real {
+		switch tool.Name {
+		case saveArtifactTool:
+			tool.Resolver = func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+				var args mmtools.SaveChannelArtifactArgs
+				if err := argsGetter(&args); err != nil {
+					return "invalid parameters to function", err
+				}
+				record(libraryWrite{tool: saveArtifactTool, artifactID: args.ArtifactID, title: args.Title, content: args.Content, fileID: args.FileID})
+				if (args.Content == "") == (args.FileID == "") {
+					return "provide exactly one of content or file_id", errors.New("needs content or file_id")
+				}
+				if args.ArtifactID == "" && strings.TrimSpace(args.Title) == "" && args.Content != "" {
+					return "title is required for a new artifact", errors.New("missing title")
+				}
+				if args.ArtifactID != "" {
+					entry, ok := env.library.entries[args.ArtifactID]
+					if !ok || entry.ChannelID != env.channel.Id {
+						return "the requesting user may not manage channel artifacts here, or the artifact was not found in this channel", errors.New("artifact not in this channel")
+					}
+					return marshal(mmtools.ChannelArtifactResult{ArtifactID: entry.ID, Title: entry.Title, Version: entry.Version + 1, PostID: model.NewId(),
+						Note: "Saved. The library keeps a reference to the message with the file, so the artifact lasts only as long as that message does."})
+				}
+				return marshal(mmtools.ChannelArtifactResult{ArtifactID: model.NewId(), Title: args.Title, Version: 1, PostID: model.NewId(),
+					Note: "Saved. The library keeps a reference to the message with the file, so the artifact lasts only as long as that message does."})
+			}
+		case removeArtifactTool:
+			tool.Resolver = func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+				var args mmtools.RemoveChannelArtifactArgs
+				if err := argsGetter(&args); err != nil {
+					return "invalid parameters to function", err
+				}
+				record(libraryWrite{tool: removeArtifactTool, artifactID: args.ArtifactID})
+				if entry, ok := env.library.entries[args.ArtifactID]; !ok || entry.ChannelID != env.channel.Id {
+					return "the requesting user may not manage channel artifacts here, or the artifact was not found in this channel", errors.New("artifact not in this channel")
+				}
+				return marshal(mmtools.ChannelArtifactResult{ArtifactID: args.ArtifactID, Note: "Removed from the library. The original message and file were not deleted."})
+			}
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
 type artifactEvalCase struct {
-	name string
-	// history is conversation context shown before the user's message.
-	history func(env *artifactEvalEnv) string
+	name    string
 	message string
 	// required lists tools the model must call.
 	required []string
 	// forbidden lists tools the model must not call.
 	forbidden []string
 	rubrics   []string
-	check     func(e *evals.EvalT, env *artifactEvalEnv, calls []llm.ToolCall, files []createdFile)
+	check     func(e *evals.EvalT, env *artifactEvalEnv, run artifactRun)
+}
+
+// artifactRun is what the model under test did in one trial.
+type artifactRun struct {
+	files  []createdFile
+	writes []libraryWrite
 }
 
 // runArtifactEval runs one conversation turn through the production system
@@ -238,24 +290,23 @@ func runArtifactEval(e *evals.EvalT, suite *TestSuite, env *artifactEvalEnv, c a
 		filesMu sync.Mutex
 		files   []createdFile
 	)
-	setup.llmContext.Tools.AddTools([]llm.Tool{newRecordingCreateFileTool(&filesMu, &files)})
+	var writes []libraryWrite
 	setup.llmContext.Channel = env.channel
+	setup.llmContext.BotUserID = model.NewId()
 	setup.llmContext.ToolCatalog.ResponseFilesSupported = true
+	setup.llmContext.Tools.AddTools([]llm.Tool{newRecordingCreateFileTool(&filesMu, &files)})
+	setup.llmContext.Tools.AddTools(newRecordingLibraryTools(setup.llmContext, env, &filesMu, &writes))
 
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(e, err, "Failed to load prompts")
 	systemPrompt, err := promptsObj.Format(prompts.PromptDirectMessageQuestionSystem, setup.llmContext)
 	require.NoError(e, err, "Failed to format system prompt")
 
-	userMessage := c.message
-	if c.history != nil {
-		userMessage = c.history(env) + "\n" + c.message
-	}
 	runner := toolrunner.New(setup.llm)
 	runResult, err := runner.Run(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{
 			{Role: llm.PostRoleSystem, Message: systemPrompt},
-			{Role: llm.PostRoleUser, Message: userMessage},
+			{Role: llm.PostRoleUser, Message: c.message},
 		},
 		Context:   setup.llmContext,
 		Operation: llm.OperationConversation,
@@ -266,7 +317,6 @@ func runArtifactEval(e *evals.EvalT, suite *TestSuite, env *artifactEvalEnv, c a
 	require.NoError(e, err, "ReadAll should succeed")
 	e.Logf("LLM response:\n%s", response)
 
-	calls := setup.logger.ToolCalls()
 	called := setup.logger.CalledTools()
 	for _, name := range c.required {
 		assert.True(e, slices.Contains(called, name), "%s was not called (called tools: %v)", name, called)
@@ -276,10 +326,10 @@ func runArtifactEval(e *evals.EvalT, suite *TestSuite, env *artifactEvalEnv, c a
 	}
 
 	filesMu.Lock()
-	created := slices.Clone(files)
+	run := artifactRun{files: slices.Clone(files), writes: slices.Clone(writes)}
 	filesMu.Unlock()
 	if c.check != nil {
-		c.check(e, env, calls, created)
+		c.check(e, env, run)
 	}
 	for _, rubric := range c.rubrics {
 		evals.LLMRubricT(e, rubric, response)
@@ -290,22 +340,6 @@ func hasHTMLFile(files []createdFile) bool {
 	return slices.ContainsFunc(files, func(f createdFile) bool {
 		return strings.HasSuffix(strings.ToLower(f.name), ".html")
 	})
-}
-
-// threadWithV2File renders the channel's recent posts the way thread context
-// reaches the model, including the post and channel IDs.
-func threadWithV2File(env *artifactEvalEnv) string {
-	var b strings.Builder
-	b.WriteString("Conversation so far:\n\n")
-	format.WritePost(&b, format.PostEntry{
-		HeaderLabel: "Post 1",
-		Username:    "bob.eval",
-		Post:        env.v2Post,
-		ShowChannel: true,
-	})
-	b.WriteString("Attached files:\n")
-	format.WriteFileDescriptor(&b, format.FileDescriptorEntry{Number: 1, FileInfo: env.v2File})
-	return b.String()
 }
 
 // TestChannelArtifactAdoptionEval checks that models reach for the channel
@@ -319,6 +353,19 @@ func TestChannelArtifactAdoptionEval(t *testing.T) {
 
 	env := seedArtifactEnv(t, suite)
 	suite.CreateMCPServerWithChannelArtifacts(false, env.library)
+
+	// anyFileContaining reports whether the model produced HTML, as an
+	// attached file or a library save, that contains every fragment.
+	anyHTMLContaining := func(run artifactRun, fragments ...string) bool {
+		has := func(content string) bool {
+			return !slices.ContainsFunc(fragments, func(f string) bool { return !strings.Contains(content, f) })
+		}
+		return slices.ContainsFunc(run.files, func(f createdFile) bool { return has(f.content) }) ||
+			slices.ContainsFunc(run.writes, func(w libraryWrite) bool { return has(w.content) })
+	}
+	savesOf := func(run artifactRun) []libraryWrite {
+		return slices.DeleteFunc(slices.Clone(run.writes), func(w libraryWrite) bool { return w.tool != saveArtifactTool })
+	}
 
 	cases := []artifactEvalCase{
 		{
@@ -349,58 +396,73 @@ func TestChannelArtifactAdoptionEval(t *testing.T) {
 			rubrics:  []string{"Lists items from the launch checklist such as freezing the deploy pipeline or rotating the staging TLS certificate"},
 		},
 		{
+			name:      "reviews a saved page without changing it",
+			message:   "Read through the cutover runbook page we have and tell me what steps look like they're missing.",
+			required:  []string{getArtifactTool},
+			forbidden: []string{saveArtifactTool, removeArtifactTool},
+		},
+		{
 			name:     "builds on a saved page",
 			message:  "Take our launch checklist page and turn it into a one-page printable HTML status board for the channel.",
-			required: []string{getArtifactTool, createFileToolName},
-			check: func(e *evals.EvalT, _ *artifactEvalEnv, _ []llm.ToolCall, files []createdFile) {
-				assert.True(e, hasHTMLFile(files), "an HTML file should be created")
-				assert.True(e, slices.ContainsFunc(files, func(f createdFile) bool {
-					return strings.Contains(f.content, "TLS certificate")
-				}), "the new page should carry the saved checklist items")
+			required: []string{getArtifactTool},
+			check: func(e *evals.EvalT, _ *artifactEvalEnv, run artifactRun) {
+				assert.True(e, anyHTMLContaining(run, "TLS certificate"), "the new page should carry the saved checklist items")
 			},
 		},
 		{
-			name:     "updates a saved page",
-			message:  "Add a row for 'Comms lead: Jordan Lee' to the cutover runbook page we have and give me the new version.",
-			required: []string{getArtifactTool, createFileToolName},
-			check: func(e *evals.EvalT, _ *artifactEvalEnv, _ []llm.ToolCall, files []createdFile) {
-				assert.True(e, slices.ContainsFunc(files, func(f createdFile) bool {
-					return strings.Contains(f.content, "Jordan Lee") && strings.Contains(f.content, "Priya Raman") && strings.Contains(f.content, "21:15 UTC")
-				}), "the new HTML should add Jordan Lee while keeping the saved runbook content")
+			name:     "updates a saved page when asked to save the change",
+			message:  "Add a row for 'Comms lead: Jordan Lee' to the cutover runbook page we have saved, and save the change so everyone sees it.",
+			required: []string{getArtifactTool, saveArtifactTool},
+			check: func(e *evals.EvalT, env *artifactEvalEnv, run artifactRun) {
+				saves := savesOf(run)
+				require.NotEmpty(e, saves)
+				last := saves[len(saves)-1]
+				assert.Equal(e, env.runbook.ID, last.artifactID, "the change should be a new version of the saved runbook, not a new artifact")
+				assert.True(e, anyHTMLContaining(run, "Jordan Lee", "Priya Raman", "21:15 UTC"), "the saved HTML should add Jordan Lee while keeping the saved runbook content")
 			},
 		},
 		{
-			name:     "proposes an update from a posted file",
-			history:  threadWithV2File,
-			message:  "That file is the v2 of our cutover runbook. Can you update the saved runbook page with it?",
-			required: []string{proposeUpdateTool},
-			check: func(e *evals.EvalT, env *artifactEvalEnv, calls []llm.ToolCall, _ []createdFile) {
-				var proposal *llm.ToolCall
-				for i := range calls {
-					if calls[i].Name == proposeUpdateTool {
-						proposal = &calls[i]
+			name:     "updates a saved page without being told to save",
+			message:  "Add a row for 'Comms lead: Jordan Lee' to the cutover runbook page.",
+			required: []string{getArtifactTool},
+			check: func(e *evals.EvalT, _ *artifactEvalEnv, run artifactRun) {
+				assert.True(e, anyHTMLContaining(run, "Jordan Lee", "Priya Raman", "21:15 UTC"), "the revised page should add Jordan Lee while keeping the saved runbook content")
+			},
+		},
+		{
+			name:     "saves a new page when asked",
+			message:  "Make a small HTML countdown page for Thursday's 22:00 UTC cutover and save it to this channel's artifacts so the team can find it.",
+			required: []string{saveArtifactTool},
+			check: func(e *evals.EvalT, _ *artifactEvalEnv, run artifactRun) {
+				saves := savesOf(run)
+				require.NotEmpty(e, saves)
+				assert.Empty(e, saves[0].artifactID, "a new page should not overwrite an existing artifact")
+				assert.NotEmpty(e, saves[0].title, "a new artifact needs a title")
+				assert.True(e, anyHTMLContaining(run, "<html"), "the saved content should be HTML")
+			},
+			rubrics: []string{"Says the page was saved to the channel's artifacts"},
+		},
+		{
+			name:      "makes a page without saving it when not asked",
+			message:   "Make a small HTML countdown page for Thursday's 22:00 UTC cutover.",
+			required:  []string{createFileToolName},
+			forbidden: []string{saveArtifactTool, removeArtifactTool},
+			check: func(e *evals.EvalT, _ *artifactEvalEnv, run artifactRun) {
+				assert.True(e, hasHTMLFile(run.files), "an HTML file should be created")
+			},
+		},
+		{
+			name:     "removes a saved page when asked",
+			message:  "We don't use the launch checklist page anymore. Take it out of the channel's saved pages.",
+			required: []string{removeArtifactTool},
+			check: func(e *evals.EvalT, env *artifactEvalEnv, run artifactRun) {
+				for _, w := range run.writes {
+					if w.tool == removeArtifactTool {
+						assert.Equal(e, env.checklist.ID, w.artifactID, "the launch checklist, not the runbook, should be removed")
 					}
 				}
-				if proposal == nil {
-					return
-				}
-				var args tools.ProposeChannelArtifactUpdateArgs
-				require.NoError(e, json.Unmarshal(proposal.Arguments, &args))
-				assert.Equal(e, env.runbook.ID, args.ArtifactID, "the runbook, not the checklist, should be targeted")
-				assert.Equal(e, env.channel.Id, args.ChannelID)
-				assert.Equal(e, env.v2Post.Id, args.PostID)
-				assert.Equal(e, env.v2File.Id, args.FileID)
+				assert.Empty(e, savesOf(run), "nothing should be saved when asked to remove")
 			},
-		},
-		{
-			name:      "does not claim a page was saved to the library",
-			message:   "Make a small HTML countdown page for Thursday's 22:00 UTC cutover and save it to the channel's artifact library so the whole team can find it.",
-			required:  []string{createFileToolName},
-			forbidden: []string{proposeUpdateTool},
-			check: func(e *evals.EvalT, _ *artifactEvalEnv, _ []llm.ToolCall, files []createdFile) {
-				assert.True(e, hasHTMLFile(files), "an HTML file should be created")
-			},
-			rubrics: []string{"Does not claim the page is already saved in the channel library. If it mentions the library it says the page still has to be saved from the attached file, for example with a Save action"},
 		},
 
 		{
@@ -414,15 +476,14 @@ func TestChannelArtifactAdoptionEval(t *testing.T) {
 			message:   "Write up the migration risks we discussed as a markdown document I can download.",
 			required:  []string{createFileToolName},
 			forbidden: artifactToolNames,
-			check: func(e *evals.EvalT, _ *artifactEvalEnv, _ []llm.ToolCall, files []createdFile) {
-				assert.False(e, hasHTMLFile(files), "a markdown request should not produce an HTML file")
+			check: func(e *evals.EvalT, _ *artifactEvalEnv, run artifactRun) {
+				assert.False(e, hasHTMLFile(run.files), "a markdown request should not produce an HTML file")
 			},
 		},
 		{
 			name:      "negative: searches posts",
 			message:   "Find what Charlie said about the data volume.",
 			forbidden: artifactToolNames,
-			required:  nil,
 			rubrics:   []string{"Mentions about 500GB of data in the MySQL instance or the downtime concern"},
 		},
 		{

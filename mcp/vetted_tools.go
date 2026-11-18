@@ -198,8 +198,6 @@ var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"search_users_in_channel",
 	"get_user_channel_memberships",
 	"list_channel_bookmarks",
-	"list_channel_artifacts",
-	"get_channel_artifact",
 
 	// Channel artifacts (saved HTML apps; reads go through the requester's permissions and file policy)
 	"list_channel_artifacts",
