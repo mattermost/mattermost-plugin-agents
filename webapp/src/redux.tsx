@@ -96,8 +96,13 @@ function channelArtifactsEnabled(state = false, action: any) {
     }
 }
 
+// A change that arrived while the list was loading; it is replayed over the
+// response so a save or websocket event during the fetch is not lost.
+type PendingChange = {upsert: ChannelArtifactEntry} | {remove: string};
+
 export type ChannelLibraryState = {
     status: 'loading' | 'ready' | 'error';
+    pending?: PendingChange[];
     entries: ChannelArtifactEntry[];
     canAdd: boolean;
     canEdit: boolean;
@@ -106,6 +111,10 @@ export type ChannelLibraryState = {
 };
 
 export type ChannelArtifactLibrary = Record<string, ChannelLibraryState>;
+
+function upsertEntry(entries: ChannelArtifactEntry[], entry: ChannelArtifactEntry): ChannelArtifactEntry[] {
+    return entries.some((e) => e.id === entry.id) ? entries.map((e) => (e.id === entry.id ? entry : e)) : [entry, ...entries];
+}
 
 const emptyLibrary: ChannelLibraryState = {status: 'loading', entries: [], canAdd: false, canEdit: false, canDelete: false, maxPerChannel: 0};
 
@@ -116,40 +125,44 @@ function channelArtifactLibrary(state: ChannelArtifactLibrary = {}, action: any)
     switch (action.type) {
     case 'CHANNEL_ARTIFACTS_LOADING': {
         const current = state[action.channelId];
-        return {...state, [action.channelId]: {...(current || emptyLibrary), status: 'loading'}};
+        return {...state, [action.channelId]: {...(current || emptyLibrary), status: 'loading', pending: []}};
     }
-    case 'CHANNEL_ARTIFACTS_LOADED':
+    case 'CHANNEL_ARTIFACTS_LOADED': {
+        let entries: ChannelArtifactEntry[] = action.list.entries || [];
+        for (const change of state[action.channelId]?.pending ?? []) {
+            entries = 'upsert' in change ? upsertEntry(entries, change.upsert) : entries.filter((entry) => entry.id !== change.remove);
+        }
         return {
             ...state,
             [action.channelId]: {
                 status: 'ready',
-                entries: action.list.entries || [],
+                entries,
                 canAdd: Boolean(action.list.can_add),
                 canEdit: Boolean(action.list.can_edit),
                 canDelete: Boolean(action.list.can_delete),
                 maxPerChannel: action.list.max_per_channel || 0,
             },
         };
+    }
     case 'CHANNEL_ARTIFACTS_FAILED': {
         const current = state[action.channelId] || emptyLibrary;
-        return {...state, [action.channelId]: {...current, status: 'error'}};
+        return {...state, [action.channelId]: {...current, status: 'error', pending: []}};
     }
     case 'CHANNEL_ARTIFACT_UPSERT': {
         const current = state[action.entry.channel_id];
         if (!current || current.status === 'error') {
             return state;
         }
-        const others = current.entries.filter((entry) => entry.id !== action.entry.id);
-        const exists = others.length !== current.entries.length;
-        const entries = exists ? current.entries.map((entry) => (entry.id === action.entry.id ? action.entry : entry)) : [action.entry, ...others];
-        return {...state, [action.entry.channel_id]: {...current, entries}};
+        const pending = current.status === 'loading' ? [...(current.pending ?? []), {upsert: action.entry}] : current.pending;
+        return {...state, [action.entry.channel_id]: {...current, pending, entries: upsertEntry(current.entries, action.entry)}};
     }
     case 'CHANNEL_ARTIFACT_REMOVE': {
         const current = state[action.channelId];
         if (!current) {
             return state;
         }
-        return {...state, [action.channelId]: {...current, entries: current.entries.filter((entry) => entry.id !== action.id)}};
+        const pending = current.status === 'loading' ? [...(current.pending ?? []), {remove: action.id as string}] : current.pending;
+        return {...state, [action.channelId]: {...current, pending, entries: current.entries.filter((entry) => entry.id !== action.id)}};
     }
     case 'SET_CHANNEL_ARTIFACTS_ENABLED':
         return action.channelArtifactsEnabled ? state : {};

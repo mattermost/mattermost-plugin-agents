@@ -130,6 +130,27 @@ describe('channel artifact library cache', () => {
         expect(listChannelArtifacts).toHaveBeenCalledTimes(1);
     });
 
+    test('a save or event that lands while the list is loading is kept when the list arrives', async () => {
+        let resolveList: ((value: ChannelArtifactList) => void) | null = null;
+        jest.mocked(listChannelArtifacts).mockImplementation(() => new Promise((resolve) => {
+            resolveList = resolve;
+        }));
+        const store = setup();
+        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledTimes(1));
+
+        act(() => {
+            store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry: entry('new', 'Saved meanwhile')});
+        });
+        act(() => {
+            applyLibraryEvent(store.dispatch as never, 'deleted', {channel_id: channelId, id: 'gone'});
+        });
+        await act(async () => {
+            resolveList?.(list([entry('gone', 'Deleted meanwhile'), entry('kept', 'Kept')]));
+        });
+
+        expect(screen.getByTestId('consumer-0').textContent).toBe('ready:Saved meanwhile,Kept:true');
+    });
+
     test('turning the feature off clears the cache', async () => {
         jest.mocked(listChannelArtifacts).mockResolvedValue(list([entry('a1')]));
         const store = setup();
