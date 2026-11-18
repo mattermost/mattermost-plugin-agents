@@ -2186,10 +2186,13 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         mockUseConversation.mockReturnValue(withStatus('streaming'));
         const {rerender} = render(ui());
 
+        // The mount refetch comes first; a missed end must not wait on the stale timer.
+        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+
         act(() => {
             jest.advanceTimersByTime(60000);
         });
-        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(invalidateConversation).toHaveBeenCalledTimes(2);
         expect(screen.queryByText(STALE_TEXT)).toBeNull();
 
         // The refetch empties the cache, then lands with the server's status.
@@ -2202,7 +2205,7 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
             jest.advanceTimersByTime(60000);
         });
         expect(Boolean(screen.queryByText(STALE_TEXT))).toBe(expectStale);
-        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(invalidateConversation).toHaveBeenCalledTimes(2);
     });
 
     test('a heartbeat post flush does not rewind live streamed text', () => {
