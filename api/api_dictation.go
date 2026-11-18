@@ -14,6 +14,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 )
 
+// WebsocketEventDictationAvailabilityChanged tells clients to refetch
+// GET /dictation/availability (webapp: custom_mattermost-ai_<name>).
+const WebsocketEventDictationAvailabilityChanged = "dictation_availability_changed"
+
 var errDictationUnavailable = errors.New("dictation is not available")
 
 type dictationErrorResponse struct {

@@ -646,11 +646,7 @@ func (p *Plugin) OnActivate() error {
 
 	apiService.SetConversationService(convService)
 
-	// Config updates and license changes reach every node, so each node
-	// drops a minter built from a stale service configuration.
-	dictationService := dictation.New(&p.configuration, licenseChecker, accessChecker, &pluginAPI.Log)
-	p.configuration.RegisterUpdateListener(dictationService.Reconcile)
-	p.licenseChangeListeners = append(p.licenseChangeListeners, dictationService.Reconcile)
+	dictationService := p.newDictationService(licenseChecker, accessChecker, &pluginAPI.Log, mmClient)
 	apiService.SetDictationService(dictationService)
 	p.dictationService = dictationService
 

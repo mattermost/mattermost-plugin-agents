@@ -92,6 +92,11 @@ type Service struct {
 
 	mu      sync.Mutex
 	current *minterEntry
+
+	// siteState is the user-independent availability last seen by
+	// Reconcile; onAvailabilityChange runs when it changes.
+	siteState            Availability
+	onAvailabilityChange func()
 }
 
 // minterEntry is the cached minter for one service configuration. inUse
@@ -105,7 +110,7 @@ type minterEntry struct {
 // New builds a dictation service. A nil license or access checker denies
 // every request.
 func New(cfg Config, license LicenseChecker, access AccessChecker, log Logger) *Service {
-	return &Service{
+	s := &Service{
 		config:    cfg,
 		license:   license,
 		access:    access,
@@ -113,6 +118,35 @@ func New(cfg Config, license LicenseChecker, access AccessChecker, log Logger) *
 		limiter:   newRateLimiter(),
 		newMinter: newBifrostMinter,
 	}
+	s.siteState = s.siteAvailability()
+	return s
+}
+
+// OnAvailabilityChange registers f to run when Reconcile finds that
+// dictation was enabled or disabled, licensed or unlicensed, or its service
+// or model changed. Per-user access changes are not detected.
+func (s *Service) OnAvailabilityChange(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onAvailabilityChange = f
+}
+
+// siteAvailability is Availability without the per-user access check.
+func (s *Service) siteAvailability() Availability {
+	r, err := s.resolve()
+	avail := Availability{Enabled: r.dictation.Enabled, Transport: TransportWebRTC}
+	if err != nil {
+		reason, ok := reasonFor(err)
+		if !ok {
+			reason = ReasonMisconfigured
+		}
+		avail.Reason = reason
+		return avail
+	}
+	avail.Available = true
+	avail.Provider = r.service.Type
+	avail.Model = r.dictation.Model
+	return avail
 }
 
 // resolved is the dictation setting and its service after every check that
@@ -255,18 +289,24 @@ func (s *Service) acquireMinter(svc llm.ServiceConfig) (*minterEntry, error) {
 }
 
 // Reconcile drops the cached minter when dictation is disabled, unlicensed,
-// or its service changed. Call it on config and license changes, on every node.
+// or its service changed, and reports an availability change. Call it on
+// config and license changes, on every node.
 func (s *Service) Reconcile() {
 	r, err := s.resolve()
+	state := s.siteAvailability()
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.current == nil {
-		return
+	if s.current != nil && (err != nil || !reflect.DeepEqual(s.current.svc, r.service)) {
+		s.retireLocked()
 	}
-	if err == nil && reflect.DeepEqual(s.current.svc, r.service) {
-		return
+	changed := state != s.siteState
+	s.siteState = state
+	notify := s.onAvailabilityChange
+	s.mu.Unlock()
+
+	if changed && notify != nil {
+		notify()
 	}
-	s.retireLocked()
 }
 
 // retireLocked must be called with mu held. In-flight mints keep the old
