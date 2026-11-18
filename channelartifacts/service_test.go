@@ -5,6 +5,8 @@ package channelartifacts
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -724,4 +726,48 @@ func TestPurgeRetryFinishesWhenTheSiteCountDecrementFails(t *testing.T) {
 		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Next",
 	}, []byte("<html>v2</html>"), "v2.html", userID, "Author", "", model.NewId(), limits)
 	require.NoError(t, err)
+}
+
+func TestListByTeamDoesNotHideChannelLookupFailures(t *testing.T) {
+	teamID := model.NewId()
+	failed := model.NewId()
+	missing := model.NewId()
+	healthy := model.NewId()
+	userID := model.NewId()
+
+	tests := []struct {
+		name    string
+		lookup  map[string]error
+		wantErr bool
+		want    int
+	}{
+		{name: "lookup failure is returned", lookup: map[string]error{failed: errors.New("db down")}, wantErr: true},
+		{name: "deleted channel is skipped", lookup: map[string]error{missing: model.NewAppError("GetChannel", "app.channel.get.existing.app_error", nil, "", http.StatusNotFound)}, want: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newMemoryKV()
+			kv.permissionAll = true
+			svc := NewService(NewStore(kv), kv, allowAllMembers{})
+			for _, channelID := range []string{failed, missing, healthy} {
+				kv.channels[channelID] = &model.Channel{Id: channelID, TeamId: teamID, Type: model.ChannelTypeOpen}
+				_, err := svc.CreateFromHTML(userID, CreateRequest{
+					ChannelID: channelID,
+					PostID:    model.NewId(),
+					FileID:    model.NewId(),
+					Title:     "A",
+				}, []byte("<html>"+channelID+"</html>"), "a.html", userID, "Author", teamID, model.NewId(), ContentLimits{MaxSize: 1024})
+				require.NoError(t, err)
+			}
+			kv.channelErrs = tc.lookup
+
+			resp, err := svc.ListByTeam(userID, teamID)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, resp.Entries, tc.want)
+		})
+	}
 }

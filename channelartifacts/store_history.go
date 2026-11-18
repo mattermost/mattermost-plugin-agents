@@ -137,7 +137,10 @@ func (s *Store) ensureHistory(entry *Entry) (*VersionHistory, error) {
 		NextVersion: entry.Version + 1,
 		HeadVersion: entry.Version,
 	}
-	if err := s.saveHistory(entry.ID, hist); err != nil {
+	if err := s.claimHistory(entry.ID, nil, hist); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return s.loadHistory(entry.ID)
+		}
 		return nil, err
 	}
 	return hist, nil
