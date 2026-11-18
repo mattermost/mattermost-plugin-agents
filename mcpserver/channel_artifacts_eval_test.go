@@ -35,10 +35,7 @@ const (
 	checklistName       = "Launch checklist"
 )
 
-var (
-	artifactReadToolNames = []string{listArtifactsTool, getArtifactTool}
-	artifactToolNames     = []string{listArtifactsTool, getArtifactTool, saveArtifactTool, removeArtifactTool}
-)
+var artifactToolNames = []string{listArtifactsTool, getArtifactTool, saveArtifactTool, removeArtifactTool}
 
 const runbookHTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Migration cutover runbook</title>
@@ -203,7 +200,7 @@ func newRecordingCreateFileTool(mu *sync.Mutex, files *[]createdFile) llm.Tool {
 // RemoveChannelArtifact descriptions and schemas, but records the calls and
 // answers like the plugin does for the seeded library.
 func newRecordingLibraryTools(llmCtx *llm.Context, env *artifactEvalEnv, mu *sync.Mutex, writes *[]libraryWrite) []llm.Tool {
-	real := (&mmtools.ChannelArtifactTools{
+	production := (&mmtools.ChannelArtifactTools{
 		Service: &channelartifacts.Service{},
 		Enabled: func() bool { return true },
 	}).Tools(llmCtx)
@@ -218,8 +215,8 @@ func newRecordingLibraryTools(llmCtx *llm.Context, env *artifactEvalEnv, mu *syn
 		return string(out), err
 	}
 
-	out := make([]llm.Tool, 0, len(real))
-	for _, tool := range real {
+	out := make([]llm.Tool, 0, len(production))
+	for _, tool := range production {
 		switch tool.Name {
 		case saveArtifactTool:
 			tool.Resolver = func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
