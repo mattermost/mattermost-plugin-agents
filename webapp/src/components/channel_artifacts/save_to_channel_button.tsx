@@ -60,6 +60,10 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
+    // Set once the save went through but pinning failed, so the next click retries
+    // only the pin instead of saving the same content as another version.
+    const [pendingPin, setPendingPin] = useState<{id: string; title: string} | null>(null);
+
     const existing = library.entries;
     const savedId = pickReplaceTarget(existing, fileId)?.id ?? null;
 
@@ -86,6 +90,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         setError('');
         setAckUpdate(false);
         setPinBookmark(false);
+        setPendingPin(null);
 
         const target = pickReplaceTarget(existing, fileId);
         if (target) {
@@ -123,17 +128,24 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 setOpen(false);
                 return;
             }
+            setPendingPin({id, title: savedTitle});
             try {
                 const bookmark = await pinLibraryArtifactBookmark(store.getState(), channelId, id, savedTitle, store.dispatch);
                 if (!bookmark) {
                     setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
                     return;
                 }
+                setPendingPin(null);
                 setOpen(false);
             } catch {
                 setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
             }
         };
+        if (pendingPin) {
+            await pinSaved(pendingPin.id, pendingPin.title);
+            setSaving(false);
+            return;
+        }
         try {
             const entry = await createChannelArtifact({
                 channel_id: channelId,
@@ -303,9 +315,13 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                                 disabled={saving || !canSubmit}
                                 data-testid='channel-artifact-save-confirm'
                             >
-                                {updating ? (
+                                {pendingPin && (
+                                    <FormattedMessage defaultMessage='Pin to channel bookmarks'/>
+                                )}
+                                {!pendingPin && updating && (
                                     <FormattedMessage defaultMessage='Update artifact'/>
-                                ) : (
+                                )}
+                                {!pendingPin && !updating && (
                                     <FormattedMessage defaultMessage='Save artifact'/>
                                 )}
                             </Button>
