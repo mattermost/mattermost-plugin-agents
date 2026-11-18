@@ -289,7 +289,7 @@ describe('DictationButton', () => {
             },
             draft: FINAL,
             status: 'idle'},
-        {name: 'the session cap', maxSessionMs: 50, trigger: () => new Promise((r) => setTimeout(r, 100)), draft: FINAL, status: 'idle'},
+        {name: 'the session cap', maxSessionMs: 500, trigger: ({transport}) => waitFor(() => expect(transport.stop).toHaveBeenCalled(), {timeout: 2000}), draft: FINAL, status: 'idle'},
         {name: 'a provider error',
             trigger: ({transport}) => {
                 transport.error(new DictationError('provider_error'));
