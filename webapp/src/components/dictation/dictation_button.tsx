@@ -85,6 +85,8 @@ const DictationControl = ({draft, getSelectedText, updateText, createTransport =
             return intl.formatMessage({defaultMessage: 'Dictation was started too often. Wait a minute and try again.'});
         case 'forbidden':
             return intl.formatMessage({defaultMessage: 'You don\'t have access to dictation.'});
+        case 'audio_blocked':
+            return intl.formatMessage({defaultMessage: 'Your browser didn\'t start audio processing. Reload the page and try again.'});
         case 'connection_lost':
             return intl.formatMessage({defaultMessage: 'The connection to the speech service was lost.'});
         case 'provider_error':

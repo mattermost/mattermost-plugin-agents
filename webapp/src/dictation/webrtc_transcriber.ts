@@ -22,7 +22,8 @@ const LEVEL_SAMPLE_INTERVAL_MS = 50;
 // created before any await in start, inside the click that started
 // dictation: browsers start an AudioContext made later suspended.
 export type LevelMeter = {
-    attach(stream: MediaStream): void;
+    // Resolves whether audio processing runs; a suspended context reads silence.
+    attach(stream: MediaStream): Promise<boolean>;
     level(): number;
     close(): void;
 };
@@ -45,9 +46,14 @@ function createAnalyserLevelMeter(): LevelMeter {
     analyser.fftSize = 1024;
     const samples = new Float32Array(analyser.fftSize);
     return {
-        attach: (stream) => {
+        attach: async (stream) => {
             context.createMediaStreamSource(stream).connect(analyser);
-            context.resume().catch(() => { /* levels stay at 0; the idle cap stops dictation */ });
+            try {
+                await context.resume();
+            } catch {
+                return false;
+            }
+            return context.state === 'running';
         },
         level: () => {
             analyser.getFloatTimeDomainData(samples);
@@ -169,6 +175,8 @@ export class WebRTCTranscriber implements DictationTransport {
         }
         this.throwIfStopped();
         this.connectingHandler();
+        const meterRunning = this.meter.attach(this.stream);
+        meterRunning.catch(() => { /* awaited below */ });
 
         let session: DictationSession;
         try {
@@ -213,6 +221,13 @@ export class WebRTCTranscriber implements DictationTransport {
             clearTimeout(openTimer);
         }
         this.throwIfStopped();
+
+        // Without levels no segment would ever be committed, so the user
+        // would see nothing and no error.
+        if (!await meterRunning && this.clientCommits) {
+            throw new DictationError('audio_blocked');
+        }
+        this.throwIfStopped();
         this.startSampling();
         this.started = true;
     }
@@ -253,10 +268,9 @@ export class WebRTCTranscriber implements DictationTransport {
 
     private startSampling() {
         const meter = this.meter;
-        if (!this.stream || !meter) {
+        if (!meter) {
             return;
         }
-        meter.attach(this.stream);
         this.segmenter = new Segmenter({
             onCommit: () => {
                 if (this.clientCommits) {

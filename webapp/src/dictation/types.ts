@@ -40,7 +40,8 @@ export type DictationErrorReason =
     | 'unavailable'
     | 'provider_unreachable'
     | 'provider_error'
-    | 'connection_lost';
+    | 'connection_lost'
+    | 'audio_blocked';
 
 // errorReasonForStatus maps a POST /dictation/session failure to an error state.
 export function errorReasonForStatus(status: number): DictationErrorReason {

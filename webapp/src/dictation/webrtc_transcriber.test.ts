@@ -90,7 +90,7 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
     let now = 0;
     let tick: (() => void) | null = null;
     const meterClose = jest.fn();
-    const meterAttach = jest.fn();
+    const meterAttach = jest.fn(async () => true);
 
     const deps: TranscriberDeps = {
         getUserMedia: jest.fn(async () => stream),
@@ -284,6 +284,21 @@ describe('WebRTCTranscriber', () => {
         resolveMic(stream);
         await starting;
         expect(meterAttach).toHaveBeenCalledWith(stream);
+    });
+
+    test.each([
+        {turnDetection: 'none' as const, fails: true},
+        {turnDetection: 'server_vad' as const, fails: false},
+    ])('a suspended audio context with turn detection $turnDetection fails start: $fails', async ({turnDetection, fails}) => {
+        const {deps, meterAttach, track} = setup({createSession: jest.fn(async () => session({turnDetection}))});
+        meterAttach.mockResolvedValue(false);
+        const starting = new WebRTCTranscriber(deps).start();
+        if (fails) {
+            await expect(starting).rejects.toMatchObject({reason: 'audio_blocked'});
+            expect(track.stop).toHaveBeenCalled();
+        } else {
+            await expect(starting).resolves.toBeUndefined();
+        }
     });
 
     test('a data channel the provider closes reports a lost connection', async () => {
