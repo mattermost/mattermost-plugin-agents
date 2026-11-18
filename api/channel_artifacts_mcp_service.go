@@ -74,22 +74,23 @@ func (m *MCPChannelArtifacts) Get(ctx context.Context, userID, artifactID string
 	if err != nil {
 		return tools.ChannelArtifactContent{}, err
 	}
+	viewed := entry
+	if opts.Version > 0 && opts.Version != entry.Version {
+		rec, recErr := m.svc.VersionOf(entry, opts.Version)
+		if recErr != nil {
+			return tools.ChannelArtifactContent{}, recErr
+		}
+		viewed = entryAtVersion(entry, rec)
+	}
 	if !opts.IncludeContent {
-		return tools.ChannelArtifactContent{Entry: entry}, nil
+		return tools.ChannelArtifactContent{Entry: viewed}, nil
 	}
 	body, err := m.svc.ReadContent(auth.SessionIDFromContext(ctx), entry, opts.Version, artifactRenderLimit(m.mm.GetConfig()))
 	if err != nil {
 		return tools.ChannelArtifactContent{}, err
 	}
 	out := tools.ChannelArtifactWindow(string(body), opts.Offset, opts.Limit)
-	out.Entry = entry
-	if opts.Version > 0 && opts.Version != entry.Version {
-		rec, recErr := m.svc.VersionOf(entry, opts.Version)
-		if recErr != nil {
-			return tools.ChannelArtifactContent{}, recErr
-		}
-		out.Entry = entryAtVersion(entry, rec)
-	}
+	out.Entry = viewed
 	return out, nil
 }
 
