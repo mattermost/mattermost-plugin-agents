@@ -4,7 +4,7 @@ import { containerTest } from 'helpers/container-fixture';
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
-import { createBotConfigHelper, generateBotId } from 'helpers/bot-config';
+import { createBotConfigHelper, generateBotId, SECRET_PLACEHOLDER } from 'helpers/bot-config';
 
 /**
  * Reasoning Configuration Integration Tests
@@ -171,7 +171,7 @@ function createTestSuite() {
             const bot = await botConfig.getBot(botId);
             expect(bot?.reasoningEnabled).toBe(true);
             const service = await botConfig.getService(serviceId);
-            expect(service?.apiKey).toBe('updated-key');
+            expect(service?.apiKey).toBe(SECRET_PLACEHOLDER);
 
             // Clean up
             await botConfig.deleteBot(botId);

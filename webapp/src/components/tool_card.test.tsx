@@ -159,3 +159,13 @@ describe('ToolCard awaiting the requester', () => {
         expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('success');
     });
 });
+
+describe('ToolCard interrupted call', () => {
+    test('shows an interrupted call as an interrupted error, with no spinner or decision buttons', () => {
+        renderComponent(makeTool({status: ToolCallStatus.Error, interrupted: true}), {onApprove: jest.fn(), onReject: jest.fn(), approvalStage: 'done'});
+
+        expect(screen.getByTestId('llm-bot-tool-interrupted').textContent).toBe('Interrupted');
+        expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('error');
+        expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
+    });
+});
