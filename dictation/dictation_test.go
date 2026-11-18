@@ -58,10 +58,14 @@ func (nopLogger) Warn(string, ...any) {}
 type fakeMinter struct {
 	svc      llm.ServiceConfig
 	err      error
+	panics   bool
 	shutdown chan struct{}
 }
 
 func (m *fakeMinter) CreateTranscriptionSession(_ context.Context, req bifrost.TranscriptionSessionRequest) (*bifrost.TranscriptionSession, error) {
+	if m.panics {
+		panic("provider client panicked")
+	}
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -79,12 +83,13 @@ type minterFactory struct {
 	mu      sync.Mutex
 	built   []*fakeMinter
 	mintErr error
+	panics  bool
 }
 
 func (f *minterFactory) build(svc llm.ServiceConfig) (sessionMinter, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	m := &fakeMinter{svc: svc, err: f.mintErr, shutdown: make(chan struct{})}
+	m := &fakeMinter{svc: svc, err: f.mintErr, panics: f.panics, shutdown: make(chan struct{})}
 	f.built = append(f.built, m)
 	return m, nil
 }
@@ -187,6 +192,89 @@ func TestMinterRebuiltOnServiceChange(t *testing.T) {
 	setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "key-2"))
 	svc.Reconcile()
 	assertShutdown(t, factory.built[1])
+}
+
+func TestConfigChangeDuringAuthorizationRefusesTheMint(t *testing.T) {
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "old-key"))
+	var svc *Service
+	// The access check runs between resolving the config and minting; the
+	// admin disables dictation and its listener runs in that window.
+	changeOnce := accessFunc(func(context.Context, string, string) error {
+		setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "old-key"))
+		svc.Reconcile()
+		return nil
+	})
+	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), changeOnce)
+
+	session, err := svc.CreateSession(context.Background(), testUserID)
+
+	assert.ErrorIs(t, err, ErrMisconfigured)
+	assert.Nil(t, session)
+	assert.Empty(t, factory.built, "no client is rebuilt from the checks made before the change")
+}
+
+func TestPanickingMintStillShutsDownTheRetiredClient(t *testing.T) {
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
+	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
+	factory.panics = true
+
+	assert.Panics(t, func() { _, _ = svc.CreateSession(context.Background(), testUserID) })
+	require.Len(t, factory.built, 1)
+
+	setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "k"))
+	svc.Reconcile()
+	assertShutdown(t, factory.built[0])
+}
+
+// blockingLicense blocks its first Check until released, to hold one
+// Reconcile in the middle of reading state.
+type blockingLicense struct {
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingLicense) Check(enterprise.Capability) error {
+	b.once.Do(func() {
+		close(b.entered)
+		<-b.release
+	})
+	return nil
+}
+
+func TestConcurrentReconcilesKeepTheLatestState(t *testing.T) {
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
+	license := &blockingLicense{entered: make(chan struct{}), release: make(chan struct{})}
+	svc := New(cfg, nil, allowAll, nopLogger{})
+	svc.license = license
+
+	slowDone := make(chan struct{})
+	go func() {
+		defer close(slowDone)
+		svc.Reconcile() // reads "enabled", then blocks in the license check
+	}()
+	<-license.entered
+
+	setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "k"))
+	fastDone := make(chan struct{})
+	go func() {
+		defer close(fastDone)
+		svc.Reconcile() // reads "disabled"
+	}()
+	select {
+	case <-fastDone:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(license.release)
+	<-slowDone
+	<-fastDone
+
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	assert.False(t, svc.siteState.Enabled, "the state from the earlier config must not overwrite the later one")
 }
 
 func TestCreateSessionProviderFailure(t *testing.T) {

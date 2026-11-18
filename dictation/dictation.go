@@ -87,8 +87,16 @@ type Service struct {
 	limiter   *rateLimiter
 	newMinter func(llm.ServiceConfig) (sessionMinter, error)
 
+	// reconcileMu serializes Reconcile, so the last config or license change
+	// is the one whose state is kept. It is held across license checks; mu is
+	// not.
+	reconcileMu sync.Mutex
+
 	mu      sync.Mutex
 	current *minterEntry
+	// generation counts Reconciles; a mint whose checks ran before the
+	// latest one is refused rather than rebuilding a minter from them.
+	generation uint64
 
 	// siteState is the user-independent availability last seen by
 	// Reconcile; onAvailabilityChange runs when it changes.
@@ -213,9 +221,17 @@ func reasonFor(err error) (string, bool) {
 	}
 }
 
+// errStaleCheck is returned when the config or license changed while a mint
+// was being authorized.
+var errStaleCheck = errors.New("the dictation configuration changed during the request")
+
 // CreateSession mints a dictation session for userID. Every check runs on
 // every call, so a license downgrade or config change applies immediately.
 func (s *Service) CreateSession(ctx context.Context, userID string) (*bifrost.TranscriptionSession, error) {
+	s.mu.Lock()
+	generation := s.generation
+	s.mu.Unlock()
+
 	r, err := s.resolve()
 	if err != nil {
 		return nil, err
@@ -229,19 +245,15 @@ func (s *Service) CreateSession(ctx context.Context, userID string) (*bifrost.Tr
 		return nil, ErrRateLimited
 	}
 
-	entry, err := s.acquireMinter(r.service)
-	if err != nil {
-		release(nil)
+	session, err := s.mint(ctx, r, generation)
+	release(session)
+	switch {
+	case errors.Is(err, errStaleCheck):
+		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
+	case errors.Is(err, errMinterBuild):
 		s.log.Warn("Failed to build the dictation session minter", "service_id", r.service.ID, "error", err.Error())
 		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
-	}
-	session, err := entry.minter.CreateTranscriptionSession(ctx, bifrost.TranscriptionSessionRequest{
-		Model:    r.dictation.Model,
-		Language: r.dictation.Language,
-	})
-	entry.inUse.Done()
-	release(session)
-	if err != nil {
+	case err != nil:
 		s.log.Warn("Failed to mint a dictation session", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
 		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
 	}
@@ -250,18 +262,39 @@ func (s *Service) CreateSession(ctx context.Context, userID string) (*bifrost.Tr
 	return session, nil
 }
 
+var errMinterBuild = errors.New("failed to build the session minter")
+
+// mint holds a lease on the minter for the whole call, released even if the
+// provider call panics, so a retired client is always shut down.
+func (s *Service) mint(ctx context.Context, r resolved, generation uint64) (*bifrost.TranscriptionSession, error) {
+	entry, err := s.acquireMinter(r.service, generation)
+	if err != nil {
+		return nil, err
+	}
+	defer entry.inUse.Done()
+	return entry.minter.CreateTranscriptionSession(ctx, bifrost.TranscriptionSessionRequest{
+		Model:    r.dictation.Model,
+		Language: r.dictation.Language,
+	})
+}
+
 // acquireMinter returns the minter for svc, building it on first use, with
-// a lease the caller ends with entry.inUse.Done.
-func (s *Service) acquireMinter(svc llm.ServiceConfig) (*minterEntry, error) {
+// a lease the caller ends with entry.inUse.Done. It refuses when a Reconcile
+// ran after the caller's checks, which may have been made against a
+// config or license that no longer holds.
+func (s *Service) acquireMinter(svc llm.ServiceConfig, generation uint64) (*minterEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.generation != generation {
+		return nil, errStaleCheck
+	}
 	if s.current != nil && !reflect.DeepEqual(s.current.svc, svc) {
 		s.retireLocked()
 	}
 	if s.current == nil {
 		minter, err := s.newMinter(svc)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", errMinterBuild, err)
 		}
 		s.current = &minterEntry{svc: svc, minter: minter}
 	}
@@ -273,10 +306,14 @@ func (s *Service) acquireMinter(svc llm.ServiceConfig) (*minterEntry, error) {
 // or its service changed, and reports an availability change. Call it on
 // config and license changes, on every node.
 func (s *Service) Reconcile() {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+
 	r, err := s.resolve()
 	state := availabilityFor(r, err)
 
 	s.mu.Lock()
+	s.generation++
 	if s.current != nil && (err != nil || !reflect.DeepEqual(s.current.svc, r.service)) {
 		s.retireLocked()
 	}
