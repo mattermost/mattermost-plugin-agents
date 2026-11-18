@@ -84,7 +84,7 @@ Some providers need extra parameters on the authorization URL, for example to is
 }
 ```
 
-Every parameter needs a name and a value. Names can contain only letters, digits, hyphens, periods, and underscores. Saving fails otherwise, or if a name is one the OAuth flow relies on, compared without regard to case: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `response_mode`, `request`, or `request_uri`.
+Every parameter needs a name and a non-blank value. Names can contain only ASCII letters, digits, hyphens, periods, and underscores. Saving fails otherwise, or if a name is one the OAuth flow relies on, compared without regard to case: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `response_mode`, `request`, or `request_uri`.
 
 Sign-in fails if the provider's authorization endpoint URL already contains a parameter with the same name.
 

@@ -6,9 +6,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,6 +348,12 @@ func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
 			endpointQuery: "access_type=online",
 			wantErr:       `"access_type"`,
 		},
+		{
+			name:          "a malformed endpoint query is refused",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "tenant=%zz",
+			wantErr:       "invalid authorization endpoint query",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -370,7 +379,7 @@ func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
 			defer server.Close()
 			serverURL = server.URL
 
-			manager, _ := newStatefulKVManager(t, nil, server.Client())
+			manager, kv := newStatefulKVManager(t, nil, server.Client())
 			authURL, err := manager.InitiateOAuthFlowForServer(context.Background(), "user-id", ServerConfig{
 				ID:                  "server-id",
 				Name:                "YouTrack",
@@ -380,6 +389,13 @@ func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
 				ClientSecret:        "static-secret",
 				AuthorizationParams: tc.params,
 			})
+
+			// Only a sign-in that goes ahead pins the issuer.
+			issuerPinned := slices.ContainsFunc(slices.Collect(maps.Keys(kv.data)), func(key string) bool {
+				return strings.HasPrefix(key, "mcp_oauth_issuer_pin_v1_")
+			})
+			assert.Equal(t, tc.wantErr == "", issuerPinned)
+
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				return
@@ -387,7 +403,8 @@ func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
 			require.NoError(t, err)
 			parsed, err := url.Parse(authURL)
 			require.NoError(t, err)
-			query := parsed.Query()
+			query, err := url.ParseQuery(parsed.RawQuery)
+			require.NoError(t, err)
 
 			for key, value := range tc.want {
 				assert.Equal(t, []string{value}, query[key], key)

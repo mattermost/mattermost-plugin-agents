@@ -554,7 +554,8 @@ describe('MCPServerWizard edit mode', () => {
 
         await screen.findByDisplayValue('Tracker');
         addAuthorizationParam(' access_type ', ' offline ');
-        expect((screen.getByPlaceholderText('Parameter value (e.g. offline)') as HTMLInputElement).type).toBe('text');
+        expect((screen.getByRole('textbox', {name: 'Parameter value'}) as HTMLInputElement).type).toBe('text');
+        expect(screen.getByRole('textbox', {name: 'Parameter name'})).not.toBeNull();
 
         expect(await saveAndGetAuthorizationParams(onPersist)).toEqual({access_type: 'offline'});
         expect(screen.queryByRole('button', {name: 'Save and sign in again'})).toBeNull();

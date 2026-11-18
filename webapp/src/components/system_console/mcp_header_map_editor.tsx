@@ -115,6 +115,8 @@ export const newKeyValueRow = (name = '', value = ''): KeyValueRow => {
 export const KeyValueRowsEditor = ({
     rows,
     onChange,
+    nameLabel,
+    valueLabel,
     namePlaceholder,
     valuePlaceholder,
     addLabel,
@@ -122,6 +124,8 @@ export const KeyValueRowsEditor = ({
 }: {
     rows: KeyValueRow[];
     onChange: (rows: KeyValueRow[]) => void;
+    nameLabel: string;
+    valueLabel: string;
     namePlaceholder: string;
     valuePlaceholder: string;
     addLabel: React.ReactNode;
@@ -137,12 +141,14 @@ export const KeyValueRowsEditor = ({
                 {rows.map((row) => (
                     <HeaderRow key={row.id}>
                         <HeaderInput
+                            aria-label={nameLabel}
                             placeholder={namePlaceholder}
                             value={row.name}
                             onChange={(e) => updateRow(row.id, {name: e.target.value})}
                         />
                         <HeaderInput
                             type='text'
+                            aria-label={valueLabel}
                             placeholder={valuePlaceholder}
                             value={row.value}
                             onChange={(e) => updateRow(row.id, {value: e.target.value})}

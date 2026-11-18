@@ -389,6 +389,12 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 		resolved.config.Scopes = strings.Fields(challengeScope)
 	}
 
+	// Checked before the issuer pin, so a refused sign-in does not store one.
+	extraOpts, err := authorizationParamOptions(resolved.config.Endpoint.AuthURL, authorizationParams)
+	if err != nil {
+		return "", err
+	}
+
 	// Static credentials are pinned to the first issuer they were used with
 	// (trust on first use): a compromised MCP server that later advertises a
 	// different authorization server must not receive the static secret.
@@ -402,10 +408,6 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 	authOpts := []oauth2.AuthCodeOption{
 		oauth2.S256ChallengeOption(codeVerifier),
 		oauth2.SetAuthURLParam("resource", resolved.resource),
-	}
-	extraOpts, optsErr := authorizationParamOptions(resolved.config.Endpoint.AuthURL, authorizationParams)
-	if optsErr != nil {
-		return "", optsErr
 	}
 	authURL := resolved.config.AuthCodeURL(state, append(authOpts, extraOpts...)...)
 
@@ -460,7 +462,10 @@ func authorizationParamOptions(authorizationEndpoint string, params map[string]s
 	if err != nil {
 		return nil, fmt.Errorf("invalid authorization endpoint: %w", err)
 	}
-	endpointParams := endpoint.Query()
+	endpointParams, err := url.ParseQuery(endpoint.RawQuery)
+	if err != nil {
+		return nil, fmt.Errorf("invalid authorization endpoint query: %w", err)
+	}
 	opts := make([]oauth2.AuthCodeOption, 0, len(params))
 	for _, name := range slices.Sorted(maps.Keys(params)) {
 		if config.ValidateMCPAuthorizationParam(name, params[name]) != nil {

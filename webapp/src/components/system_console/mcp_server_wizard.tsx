@@ -545,6 +545,8 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 <KeyValueRowsEditor
                     rows={authorizationParams}
                     onChange={setAuthorizationParams}
+                    nameLabel={intl.formatMessage({defaultMessage: 'Parameter name'})}
+                    valueLabel={intl.formatMessage({defaultMessage: 'Parameter value'})}
                     namePlaceholder={intl.formatMessage({defaultMessage: 'Parameter name (e.g. access_type)'})}
                     valuePlaceholder={intl.formatMessage({defaultMessage: 'Parameter value (e.g. offline)'})}
                     addLabel={<FormattedMessage defaultMessage='Add Parameter'/>}
