@@ -112,6 +112,13 @@ func (s *Store) ensureHistory(entry *Entry) (*VersionHistory, error) {
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
+	stored, _, loadErr := s.loadMetaRaw(entry.ID)
+	if errors.Is(loadErr, ErrNotFound) || (loadErr == nil && stored.Purging) {
+		return nil, ErrNotFound
+	}
+	if loadErr != nil {
+		return nil, loadErr
+	}
 	if entry.Version < 1 {
 		entry.Version = 1
 	}

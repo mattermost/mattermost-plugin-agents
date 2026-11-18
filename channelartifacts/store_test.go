@@ -45,6 +45,8 @@ type memoryKV struct {
 	failMetaDelete     bool
 	failBlobDeletes    int
 	failSiteCountCAS   bool
+	failSiteCountWrite int
+	siteCountWrites    int
 }
 
 func newMemoryKV() *memoryKV {
@@ -157,9 +159,16 @@ func (kv *memoryKV) KVDelete(key string) error {
 func (kv *memoryKV) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	if key == keySiteCount && newValue != nil && kv.failSiteCountCAS {
-		kv.failSiteCountCAS = false
-		return false, errors.New("kv set failed")
+	if key == keySiteCount && newValue != nil {
+		kv.siteCountWrites++
+		if kv.failSiteCountCAS {
+			kv.failSiteCountCAS = false
+			return false, errors.New("kv set failed")
+		}
+		if kv.failSiteCountWrite > 0 && kv.siteCountWrites == kv.failSiteCountWrite {
+			kv.failSiteCountWrite = 0
+			return false, errors.New("kv set failed")
+		}
 	}
 	if strings.HasPrefix(key, keyPrefixMeta) && newValue != nil && (kv.failNextMeta || kv.conflictNextMeta) {
 		fail := kv.failNextMeta
@@ -925,8 +934,9 @@ func TestRetentionChannelIDsResumesAndWraps(t *testing.T) {
 		require.NoError(t, store.Save(testEntry(channelID), []byte("<html>a</html>"), 1024, 0, 0))
 	}
 
-	all, err := store.RetentionChannelIDs(10)
+	all, commit, err := store.RetentionChannelIDs(10)
 	require.NoError(t, err)
+	require.NoError(t, commit())
 	require.ElementsMatch(t, want, all)
 
 	seen := map[string]bool{}
@@ -934,8 +944,9 @@ func TestRetentionChannelIDsResumesAndWraps(t *testing.T) {
 		if len(seen) == len(want) {
 			break
 		}
-		batch, batchErr := store.RetentionChannelIDs(1)
+		batch, batchCommit, batchErr := store.RetentionChannelIDs(1)
 		require.NoError(t, batchErr)
+		require.NoError(t, batchCommit())
 		require.LessOrEqual(t, len(batch), 1)
 		for _, id := range batch {
 			seen[id] = true
@@ -948,13 +959,88 @@ func TestRetentionChannelIDsResumesAndWraps(t *testing.T) {
 		if len(seenAgain) == len(want) {
 			break
 		}
-		batch, batchErr := store.RetentionChannelIDs(1)
+		batch, batchCommit, batchErr := store.RetentionChannelIDs(1)
 		require.NoError(t, batchErr)
+		require.NoError(t, batchCommit())
 		for _, id := range batch {
 			seenAgain[id] = true
 		}
 	}
 	require.Len(t, seenAgain, len(want))
+}
+
+func TestRetentionChannelIDsRepeatsUntilTheCursorIsCommitted(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	first := model.NewId()
+	second := model.NewId()
+	require.NoError(t, store.Save(testEntry(first), []byte("<html>a</html>"), 1024, 0, 0))
+	require.NoError(t, store.Save(testEntry(second), []byte("<html>b</html>"), 1024, 0, 0))
+
+	batch, commit, err := store.RetentionChannelIDs(1)
+	require.NoError(t, err)
+	require.Len(t, batch, 1)
+	again, _, err := store.RetentionChannelIDs(1)
+	require.NoError(t, err)
+	require.Equal(t, batch, again)
+
+	require.NoError(t, commit())
+	next, nextCommit, err := store.RetentionChannelIDs(1)
+	require.NoError(t, err)
+	require.NoError(t, nextCommit())
+	require.NotEqual(t, batch, next)
+}
+
+func TestPurgeDoesNotRecreateAMissingHistory(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 0, 0))
+
+	require.NoError(t, kv.KVDelete(histKey(entry.ID)))
+	kv.failHistSet = kv.histSetCount + 1
+	require.NoError(t, store.Purge(entry))
+	_, err := store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	kv.failHistSet = 0
+	fresh := testEntry(model.NewId())
+	require.NoError(t, store.Save(fresh, []byte("<html>2</html>"), 1024, 0, 0))
+	require.NoError(t, store.markPurging(fresh, 0))
+	require.NoError(t, kv.KVDelete(histKey(fresh.ID)))
+	_, err = store.ReadContent(fresh)
+	require.ErrorIs(t, err, ErrNotFound)
+	var hist VersionHistory
+	require.Error(t, kv.KVGet(histKey(fresh.ID), &hist))
+}
+
+func TestPurgeDropsTheRestoredIndexWhenTheCountIncrementFails(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>1</html>"), 1024, 10, 1))
+
+	kv.failMetaDelete = true
+	kv.siteCountWrites = 0
+	kv.failSiteCountWrite = 2
+	require.Error(t, store.Purge(entry))
+
+	idx, _, err := store.getIndex(entry.ChannelID)
+	require.NoError(t, err)
+	require.NotContains(t, idx.IDs, entry.ID)
+	count, _, err := store.getSiteCount()
+	require.NoError(t, err)
+	require.Equal(t, 0, count)
+
+	require.NoError(t, store.Purge(entry))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	count, _, err = store.getSiteCount()
+	require.NoError(t, err)
+	require.Equal(t, 0, count)
+
+	again := testEntry(model.NewId())
+	require.NoError(t, store.Save(again, []byte("<html>2</html>"), 1024, 10, 1))
 }
 
 func TestDeleteHeadLeavesAHistoryWriteThatLandsBeforeTheShorten(t *testing.T) {

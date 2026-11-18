@@ -323,7 +323,7 @@ func (s *Store) purgeIfHeadUnchanged(entry *Entry) error {
 }
 
 func (s *Store) finishPurge(entry *Entry) error {
-	hist, histErr := s.ensureHistory(entry)
+	hist, histErr := s.loadHistory(entry.ID)
 	if histErr != nil && !errors.Is(histErr, ErrNotFound) {
 		return histErr
 	}
@@ -360,6 +360,9 @@ func (s *Store) finishPurge(entry *Entry) error {
 			return errors.Join(deleteErr, putErr)
 		}
 		if countErr := s.adjustSiteCount(1); countErr != nil {
+			if dropErr := s.dropIndexID(entry.ChannelID, entry.ID); dropErr != nil {
+				return errors.Join(deleteErr, countErr, dropErr)
+			}
 			return errors.Join(deleteErr, countErr)
 		}
 		return deleteErr
