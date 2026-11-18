@@ -373,6 +373,11 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         if (document.activeElement === iframe) {
             iframe.blur();
         }
+
+        // blur() can leave the frame focused; the frame's own area is safe.
+        if (document.activeElement === iframe) {
+            containerRef.current?.focus({preventScroll: true});
+        }
     }, []);
 
     // Heartbeat watchdog. A navigation to a response that never finishes

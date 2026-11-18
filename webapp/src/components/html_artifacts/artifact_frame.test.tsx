@@ -842,6 +842,18 @@ describe('ArtifactFrame focus guard', () => {
             expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
         });
 
+        test('a rejected download does not unload the artifact when the browser keeps focus on the frame after blur()', async () => {
+            const {frame, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            jest.spyOn(HTMLElement.prototype, 'blur').mockImplementation(() => undefined); // eslint-disable-line no-undefined
+            send(request('d1', {mimeType: 'text/html', data: 'x'}));
+            advance(1000);
+
+            expect(stopped()).toBeNull();
+            expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('false');
+            expect(document.activeElement).not.toBe(frame);
+        });
+
         test('the viewer sees the sanitized name, type and size, and the host page saves the file only once they confirm', async () => {
             const {frame, win, send} = await renderReadyFrame({startedByClick: true});
             focusArtifact(frame);
