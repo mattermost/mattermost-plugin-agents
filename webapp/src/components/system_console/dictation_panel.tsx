@@ -45,6 +45,18 @@ export function dictationServices(services: LLMService[]): LLMService[] {
     return services.filter((s) => Boolean(s.id) && DICTATION_SERVICE_TYPES.includes(s.type));
 }
 
+// Browsers receive a URL derived from the service's API URL, so it may hold
+// only a scheme, host and path.
+function isPlainAPIURL(apiURL: string): boolean {
+    let url: URL;
+    try {
+        url = new URL(apiURL);
+    } catch {
+        return false;
+    }
+    return Boolean(url.host) && !url.username && !url.password && !url.search && !url.hash;
+}
+
 export type DictationConfigErrors = {
     serviceID?: string;
     model?: string;
@@ -57,10 +69,15 @@ export function validateDictationConfig(config: DictationConfig, services: LLMSe
         return {};
     }
     const errors: DictationConfigErrors = {};
+    const service = dictationServices(services).find((s) => s.id === config.serviceID);
     if (!config.serviceID) {
         errors.serviceID = intl.formatMessage({defaultMessage: 'Select the service that transcribes dictation.'});
-    } else if (!dictationServices(services).some((s) => s.id === config.serviceID)) {
+    } else if (!service) {
         errors.serviceID = intl.formatMessage({defaultMessage: 'The selected service no longer exists or is not an OpenAI service. Select another one.'});
+    } else if (!service.apiKey) {
+        errors.serviceID = intl.formatMessage({defaultMessage: 'The selected service has no API key. Add one under AI Services.'});
+    } else if (service.apiURL && !isPlainAPIURL(service.apiURL)) {
+        errors.serviceID = intl.formatMessage({defaultMessage: 'The selected service\'s API URL must have only a scheme, host and path, with no credentials, query or fragment.'});
     }
     if (!config.model.trim()) {
         errors.model = intl.formatMessage({defaultMessage: 'Enter the transcription model.'});

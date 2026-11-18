@@ -53,7 +53,7 @@ const service = (overrides: Partial<LLMService>): LLMService => ({
 });
 
 const anthropic = service({id: 'svc-anthropic', name: 'Claude', type: 'anthropic'});
-const openai = service({id: 'svc-openai', name: 'OpenAI dictation', type: 'openai'});
+const openai = service({id: 'svc-openai', name: 'OpenAI dictation', type: 'openai', apiKey: '********************************'});
 const azure = service({id: 'svc-azure', name: 'Azure', type: 'azure'});
 const compatible = service({id: 'svc-compat', name: 'Compatible', type: 'openaicompatible'});
 const unsavedOpenAI = service({id: '', name: 'New OpenAI', type: 'openai'});
@@ -90,6 +90,18 @@ describe('validateDictationConfig', () => {
         {name: 'empty model', config: {...enabled, model: '  '}, want: {model: 'Enter the transcription model.'}},
     ])('$name', ({config, want}) => {
         expect(validateDictationConfig(config, [anthropic, openai], intl)).toEqual(want);
+    });
+
+    test.each([
+        {name: 'no API key', apiKey: '', apiURL: '', invalid: true},
+        {name: 'plain API URL', apiKey: 'sk', apiURL: 'https://proxy.example.com/openai', invalid: false},
+        {name: 'credentials in the API URL', apiKey: 'sk', apiURL: 'https://user:pass@proxy.example.com', invalid: true},
+        {name: 'query in the API URL', apiKey: 'sk', apiURL: 'https://proxy.example.com/?token=x', invalid: true},
+        {name: 'fragment in the API URL', apiKey: 'sk', apiURL: 'https://proxy.example.com/#x', invalid: true},
+        {name: 'relative API URL', apiKey: 'sk', apiURL: 'proxy.example.com', invalid: true},
+    ])('service with $name: invalid=$invalid', ({apiKey, apiURL, invalid}) => {
+        const svc = {...openai, apiKey, apiURL};
+        expect(Boolean(validateDictationConfig(enabled, [svc], intl).serviceID)).toBe(invalid);
     });
 });
 

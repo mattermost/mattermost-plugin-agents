@@ -25,7 +25,7 @@ An access policy on the transcription service applies to dictation too: users it
 | Setting | Config key | Default | Details |
 |---|---|---|---|
 | Enable dictation | `dictation.enabled` | Off | Shows the microphone button to users who can use the transcription service. Can't be turned on below Enterprise. |
-| Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing or isn't an OpenAI service. |
+| Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing, isn't an OpenAI service, has no API key, or has an **API URL** with anything but a scheme, host and path (no credentials, query or fragment). Browsers receive a URL derived from the API URL. |
 | Transcription model | `dictation.model` | `gpt-live-transcribe` | `gpt-live-transcribe` shows text while the user speaks. `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` show text after each pause and cost less. |
 | Language | `dictation.language` | Empty (detected) | An ISO-639-1 code such as `en` or `de` for the language users speak. |
 
@@ -54,9 +54,9 @@ Each user's browser or desktop app connects to OpenAI itself, so the network bet
 ## Privacy
 
 - Audio goes from the user's device directly to OpenAI and is processed under your organization's agreement with OpenAI, under the API key of the transcription service.
-- Mattermost and the plugin don't store audio or transcripts. The only text kept is what the user sends as a message.
+- Mattermost and the plugin don't store audio. Dictated text goes into the message box like typed text, so until the user sends or deletes it, it can be saved as a draft, on the server too when server-synced drafts are on (`ServiceSettings.AllowSyncedDrafts`, the default).
 - The browser key is never logged or kept in audit records or traces.
-- Starting a dictation session is recorded in the server audit log (`createDictationSession`) with the service ID and model. See [Audit logging](observability.md#audit-logging).
+- Starting a dictation session is recorded in the server audit log (`createDictationSession`) with the transcription service ID. See [Audit logging](observability.md#audit-logging).
 
 ## Cost and limits
 
@@ -65,6 +65,7 @@ OpenAI bills transcription to the transcription service's API key. Once a sessio
 - Per-user limits on keys: 10 key requests in any 60 seconds, failed ones included, and at most 2 unexpired keys at a time. Over either limit, starting dictation fails until a slot frees up. The limits bound keys, not sessions: one key can open more than one session while it is valid.
 - The browser stops dictating after 30 seconds without speech and after 10 minutes in any case.
 - OpenAI ends every session after 60 minutes. A browser that ignores the limits above, such as a modified client, can keep a session open that long.
+- A modified client holding a key can change the session's transcription model, possibly to a pricier one, and its turn detection, language and prompt. It can't change the session type, so it can't turn the session into a speech-to-speech one. Traces (the `dictation.create_session` span) record the configured model, not one a client switched to. A dedicated API key for dictation keeps its usage separate, so you can watch and limit it on its own.
 
 Dictation isn't included in [token usage logging](observability.md#token-usage-log), because the server never sees the transcription usage. Use OpenAI's usage dashboard for the service's API key, or a dedicated key for dictation.
 
