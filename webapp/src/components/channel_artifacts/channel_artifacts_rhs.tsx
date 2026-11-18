@@ -29,7 +29,7 @@ import {getChannelArtifactsEnabled} from '@/selectors';
 
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
-import {syncLibraryArtifactBookmarkTitle} from './bookmark';
+import {syncLibraryArtifactBookmarkTitle, unpinLibraryArtifactBookmark} from './bookmark';
 
 export const ChannelArtifactsRHSTitle = () => (
     <FormattedMessage defaultMessage='Channel artifacts'/>
@@ -52,6 +52,7 @@ const ChannelArtifactsRHS = () => {
     const [editTitle, setEditTitle] = useState('');
     const refreshSeq = useRef(0);
     const renamePending = useRef(false);
+    const renameCancelled = useRef(false);
 
     const refresh = useCallback(() => {
         const seq = ++refreshSeq.current;
@@ -107,6 +108,10 @@ const ChannelArtifactsRHS = () => {
     const openEntry = entries.find((e) => e.id === openId) || null;
 
     const saveRename = async (id: string) => {
+        if (renameCancelled.current) {
+            renameCancelled.current = false;
+            return;
+        }
         const next = editTitle.trim();
         if (!next) {
             setEditingId(null);
@@ -135,6 +140,17 @@ const ChannelArtifactsRHS = () => {
         }
     };
 
+    const unpinRemoved = async (id: string) => {
+        if (!channelId) {
+            return;
+        }
+        try {
+            await unpinLibraryArtifactBookmark(store.getState(), channelId, id, store.dispatch);
+        } catch {
+            // The library row is already gone; the pin is removed on the next open.
+        }
+    };
+
     const onDelete = async (entry: ChannelArtifactEntry, e: React.MouseEvent) => {
         const version = entry.version || 1;
         const purge = e.shiftKey || (e.nativeEvent as MouseEvent).altKey;
@@ -146,6 +162,7 @@ const ChannelArtifactsRHS = () => {
             }
             try {
                 await deleteChannelArtifact(entry.id, {purge: true});
+                await unpinRemoved(entry.id);
                 if (openId === entry.id) {
                     setOpenId(null);
                 }
@@ -167,6 +184,9 @@ const ChannelArtifactsRHS = () => {
 
         try {
             await deleteChannelArtifact(entry.id);
+            if (version <= 1) {
+                await unpinRemoved(entry.id);
+            }
             if (openId === entry.id) {
                 setOpenId(null);
             }
@@ -183,6 +203,7 @@ const ChannelArtifactsRHS = () => {
         }
         try {
             await deleteChannelArtifact(entry.id, {purge: true});
+            await unpinRemoved(entry.id);
             if (openId === entry.id) {
                 setOpenId(null);
             }
@@ -251,6 +272,7 @@ const ChannelArtifactsRHS = () => {
                                             saveRename(entry.id);
                                         }
                                         if (e.key === 'Escape') {
+                                            renameCancelled.current = true;
                                             setEditingId(null);
                                         }
                                     }}

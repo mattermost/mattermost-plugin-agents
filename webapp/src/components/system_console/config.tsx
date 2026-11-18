@@ -558,7 +558,7 @@ const Config = (props: Props) => {
                                 label={intl.formatMessage({defaultMessage: 'Max artifacts per channel'})}
                                 type='number'
                                 min='1'
-                                value={String(value.channelArtifactsMaxPerChannel ?? 50)}
+                                value={String(value.channelArtifactsMaxPerChannel || 50)}
                                 onChange={(e) => {
                                     const parsed = parseInt(e.target.value, 10);
                                     updateConfig({channelArtifactsMaxPerChannel: Number.isNaN(parsed) || parsed < 1 ? 50 : parsed});

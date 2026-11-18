@@ -7,11 +7,11 @@ import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {combineReducers, createStore, type Store} from 'redux';
 
-import {listChannelArtifacts, patchChannelArtifact} from '@/client';
+import {deleteChannelArtifact, listChannelArtifacts, patchChannelArtifact} from '@/client';
 import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 
-import {syncLibraryArtifactBookmarkTitle} from './bookmark';
+import {syncLibraryArtifactBookmarkTitle, unpinLibraryArtifactBookmark} from './bookmark';
 import ChannelArtifactsRHS from './channel_artifacts_rhs';
 
 jest.mock('@/client', () => ({
@@ -22,6 +22,7 @@ jest.mock('@/client', () => ({
 
 jest.mock('./bookmark', () => ({
     syncLibraryArtifactBookmarkTitle: jest.fn(),
+    unpinLibraryArtifactBookmark: jest.fn(),
 }));
 
 jest.mock('react-intl', () => {
@@ -79,6 +80,8 @@ describe('ChannelArtifactsRHS', () => {
         jest.mocked(listChannelArtifacts).mockReset();
         jest.mocked(patchChannelArtifact).mockReset();
         jest.mocked(syncLibraryArtifactBookmarkTitle).mockReset();
+        jest.mocked(deleteChannelArtifact).mockReset();
+        jest.mocked(unpinLibraryArtifactBookmark).mockReset();
     });
 
     test('clears the bookmark warning when the channel changes', async () => {
@@ -134,5 +137,84 @@ describe('ChannelArtifactsRHS', () => {
         await waitFor(() => {
             expect(screen.queryByText('Renamed the artifact, but could not update its bookmark.')).toBeNull();
         });
+    });
+
+    function libraryEntry(version: number) {
+        return {
+            id: 'artifactid012345678901234',
+            channel_id: channelID,
+            team_id: 'teamid01234567890123456789',
+            title: 'Notes',
+            source_post_id: 'postid01234567890123456789',
+            source_file_id: 'fileid01234567890123456789',
+            source_file_name: 'notes.html',
+            source_bot_user_id: 'botid012345678901234567890',
+            created_by: 'userid0123456789012345678',
+            create_at: 1,
+            update_at: 1,
+            size: 12,
+            sha256: 'abc',
+            version,
+        };
+    }
+
+    test('escape leaves the title unchanged', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [libraryEntry(1)],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+
+        renderRHS();
+        fireEvent.click(await screen.findByTestId('channel-artifact-edit-artifactid012345678901234'));
+        const input = screen.getByTestId('channel-artifact-rename-artifactid012345678901234');
+        fireEvent.change(input, {target: {value: 'Draft'}});
+        fireEvent.keyDown(input, {key: 'Escape'});
+        fireEvent.blur(input);
+
+        expect(patchChannelArtifact).not.toHaveBeenCalled();
+    });
+
+    test('removing the last version unpins its bookmark', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [libraryEntry(1)],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        jest.mocked(deleteChannelArtifact).mockResolvedValue(undefined);
+        jest.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderRHS();
+        fireEvent.click(await screen.findByTestId('channel-artifact-delete-artifactid012345678901234'));
+
+        await waitFor(() => {
+            expect(unpinLibraryArtifactBookmark).toHaveBeenCalledWith(
+                expect.anything(),
+                channelID,
+                'artifactid012345678901234',
+                expect.anything(),
+            );
+        });
+    });
+
+    test('removing one of several versions leaves the bookmark', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [libraryEntry(2)],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        jest.mocked(deleteChannelArtifact).mockResolvedValue(undefined);
+        jest.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderRHS();
+        fireEvent.click(await screen.findByTestId('channel-artifact-delete-artifactid012345678901234'));
+
+        await waitFor(() => {
+            expect(deleteChannelArtifact).toHaveBeenCalled();
+        });
+        expect(unpinLibraryArtifactBookmark).not.toHaveBeenCalled();
     });
 });
