@@ -87,7 +87,7 @@ func TestCreateTranscriptionSession(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			expiresAt := time.Now().Add(time.Minute).Unix()
+			expiresAt := time.Now().Add(10 * time.Second).Unix()
 			server, captured := fakeRealtimeProvider(t, http.StatusOK,
 				`{"value":"ek_sentinel_secret","expires_at":`+jsonInt(expiresAt)+`,"session":{"type":"transcription"}}`)
 
@@ -133,6 +133,37 @@ func TestCreateTranscriptionSession(t *testing.T) {
 			assert.Equal(t, llm.ServiceTypeOpenAI, session.Provider)
 			assert.Equal(t, tt.model, session.Model)
 			assert.Equal(t, tt.wantTurnMode, session.TurnDetection)
+		})
+	}
+}
+
+func TestCreateTranscriptionSessionClampsExpiry(t *testing.T) {
+	tests := []struct {
+		name     string
+		upstream time.Duration // 0 sends no expires_at
+		wantMax  time.Duration
+		wantMin  time.Duration
+	}{
+		{name: "later upstream expiry is clamped to the requested TTL", upstream: time.Hour, wantMin: realtimeSessionTTL - time.Second, wantMax: realtimeSessionTTL + time.Second},
+		{name: "earlier upstream expiry is kept", upstream: 5 * time.Second, wantMin: 3 * time.Second, wantMax: 6 * time.Second},
+		{name: "missing upstream expiry uses the requested TTL", wantMin: realtimeSessionTTL - time.Second, wantMax: realtimeSessionTTL + time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"value":"ek_secret"}`
+			if tt.upstream > 0 {
+				body = `{"value":"ek_secret","expires_at":` + jsonInt(time.Now().Add(tt.upstream).Unix()) + `}`
+			}
+			server, _ := fakeRealtimeProvider(t, http.StatusOK, body)
+			minter, err := NewRealtimeSessionMinter(llm.ServiceConfig{ID: "svc", Type: llm.ServiceTypeOpenAI, APIKey: testRealtimeAPIKey, APIURL: server.URL})
+			require.NoError(t, err)
+			defer minter.Shutdown()
+
+			now := time.Now()
+			session, err := minter.CreateTranscriptionSession(context.Background(), TranscriptionSessionRequest{Model: "gpt-live-transcribe"})
+			require.NoError(t, err)
+			expires := time.UnixMilli(session.ExpiresAt)
+			assert.WithinRange(t, expires, now.Add(tt.wantMin), now.Add(tt.wantMax))
 		})
 	}
 }

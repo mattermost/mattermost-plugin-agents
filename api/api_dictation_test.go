@@ -222,7 +222,10 @@ func TestCreateDictationSessionResponse(t *testing.T) {
 				[]string{"clientSecret", "expiresAt", "callsURL", "provider", "model", "turnDetection"},
 				keysOf(body))
 			assert.Equal(t, dictationSecretSentinel, body["clientSecret"])
+			// The fake provider returns an expiry a minute out; the response
+			// must not exceed the 15 s TTL the server asked for.
 			assert.Greater(t, body["expiresAt"], float64(time.Now().UnixMilli()))
+			assert.LessOrEqual(t, body["expiresAt"], float64(time.Now().Add(16*time.Second).UnixMilli()))
 			assert.Equal(t, e.config.services[1].APIURL+"/v1/realtime/calls", body["callsURL"])
 			assert.Equal(t, llm.ServiceTypeOpenAI, body["provider"])
 			assert.Equal(t, tt.model, body["model"])

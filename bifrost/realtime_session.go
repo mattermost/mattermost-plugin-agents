@@ -272,9 +272,11 @@ func (m *RealtimeSessionMinter) CreateTranscriptionSession(ctx context.Context, 
 		return fail(errors.New("realtime session provider returned no client secret"))
 	}
 
+	// An upstream expiry later than the requested TTL must not widen the
+	// window in which the key can open sessions.
 	expiresAt := time.Now().Add(realtimeSessionTTL)
-	if secret.ExpiresAt > 0 {
-		expiresAt = time.Unix(secret.ExpiresAt, 0)
+	if upstream := time.Unix(secret.ExpiresAt, 0); secret.ExpiresAt > 0 && upstream.Before(expiresAt) {
+		expiresAt = upstream
 	}
 
 	return &TranscriptionSession{
