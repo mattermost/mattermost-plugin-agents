@@ -505,6 +505,33 @@ func TestDeleteOfTheOnlyVersionKeepsAReplacementThatLandsDuringTheDelete(t *test
 	require.Equal(t, "<html>v1</html>", string(body))
 }
 
+func TestDeleteResumesAPurgeAfterTheHistoryKeyIsGone(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	store := NewStore(kv)
+	svc := NewService(store, kv, allowAllMembers{})
+	channelID := model.NewId()
+	userID := model.NewId()
+	kv.channels[channelID] = &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}
+
+	entry, err := svc.CreateFromHTML(userID, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Demo",
+	}, []byte("<html>v1</html>"), "v1.html", userID, "Author", "", model.NewId(), ContentLimits{MaxSize: 1024})
+	require.NoError(t, err)
+	require.NoError(t, store.markPurging(entry, 0))
+	require.NoError(t, kv.KVDelete(histKey(entry.ID)))
+
+	require.NoError(t, svc.Delete(userID, entry.ID, false))
+	_, err = store.Get(entry.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	idx, _, err := store.getIndex(channelID)
+	require.NoError(t, err)
+	require.NotContains(t, idx.IDs, entry.ID)
+	count, _, err := store.getSiteCount()
+	require.NoError(t, err)
+	require.Equal(t, 0, count)
+}
+
 func TestExplicitPurgeRemovesAReplacementThatLandsDuringTheDelete(t *testing.T) {
 	kv := newMemoryKV()
 	kv.permissionAll = true
