@@ -1,8 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {useEffect} from 'react';
 import {Dispatch} from 'redux';
-import {useSelector} from 'react-redux';
+import {useDispatch, useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -41,9 +42,34 @@ export async function refreshDictationAvailability(dispatch: Dispatch) {
     dispatch({type: SetDictationAvailability, availability});
 }
 
+export const AVAILABILITY_REFRESH_DEBOUNCE_MS = 250;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+// scheduleDictationAvailabilityRefresh coalesces bursts of change events:
+// every HA node publishes its own copy of each change.
+export function scheduleDictationAvailabilityRefresh(dispatch: Dispatch) {
+    if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+    }
+    refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshDictationAvailability(dispatch);
+    }, AVAILABILITY_REFRESH_DEBOUNCE_MS);
+}
+
 export const getDictationAvailabilityState = (state: GlobalState): DictationAvailability | null =>
     (state as any)[`plugins-${manifest.id}`]?.dictationAvailability ?? null;
 
+// useDictationAvailable loads availability on first use: the plugin can
+// initialize before the user is logged in, when the request would fail.
 export function useDictationAvailable(): boolean {
-    return useSelector((state: GlobalState) => getDictationAvailabilityState(state)?.available === true);
+    const dispatch = useDispatch();
+    const availability = useSelector(getDictationAvailabilityState);
+    const loaded = availability !== null;
+    useEffect(() => {
+        if (!loaded) {
+            refreshDictationAvailability(dispatch);
+        }
+    }, [loaded, dispatch]);
+    return availability?.available === true;
 }

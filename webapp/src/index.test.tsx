@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {BotsHandler} from './redux';
-import {SetDictationAvailability} from './dictation/availability';
+import {AVAILABILITY_REFRESH_DEBOUNCE_MS, SetDictationAvailability} from './dictation/availability';
 import {LLMBot} from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 
@@ -210,15 +210,12 @@ describe('dictation', () => {
         mockGetDictationAvailability.mockReset();
     });
 
-    test('registers the dictation button in every message box and loads availability', async () => {
-        mockGetDictationAvailability.mockResolvedValue(available);
-        const {registry, dispatch} = await initializePlugin();
-        await flush();
+    test('registers the dictation button in every message box', async () => {
+        const {registry} = await initializePlugin();
 
         // eslint-disable-next-line global-require
         const DictationButton = require('./components/dictation/dictation_button').default;
         expect(registry.registerPostEditorActionComponent).toHaveBeenCalledWith(DictationButton);
-        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: available});
     });
 
     test.each([
@@ -226,7 +223,6 @@ describe('dictation', () => {
         ['license_changed'],
         ['custom_mattermost-ai_bots_invalidate'],
     ])('%s refreshes availability', async (event) => {
-        mockGetDictationAvailability.mockResolvedValue(available);
         const {websocketHandlers, dispatch} = await initializePlugin();
         await flush();
         dispatch.mockClear();
@@ -238,10 +234,26 @@ describe('dictation', () => {
         expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
     });
 
-    test('a failed refresh hides the button instead of keeping a stale availability', async () => {
-        mockGetDictationAvailability.mockResolvedValue(available);
+    test('repeated availability-changed events from HA nodes refetch once', async () => {
         const {websocketHandlers, dispatch} = await initializePlugin();
+        mockGetDictationAvailability.mockResolvedValue(unlicensed);
+
+        for (let i = 0; i < 3; i++) {
+            fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
+        }
+        await new Promise((resolve) => setTimeout(resolve, AVAILABILITY_REFRESH_DEBOUNCE_MS + 50));
         await flush();
+
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
+    });
+
+    test('a failed refresh hides the button instead of keeping a stale availability', async () => {
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        mockGetDictationAvailability.mockResolvedValue(available);
+        fireWebSocketEvent(websocketHandlers, 'config_changed');
+        await flush();
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: available});
         dispatch.mockClear();
 
         mockGetDictationAvailability.mockRejectedValue(new Error('network'));
@@ -252,7 +264,6 @@ describe('dictation', () => {
     });
 
     test('a superseded response is dropped', async () => {
-        mockGetDictationAvailability.mockResolvedValue(available);
         const {websocketHandlers, dispatch} = await initializePlugin();
         await flush();
         dispatch.mockClear();

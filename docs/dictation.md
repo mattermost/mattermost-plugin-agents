@@ -62,7 +62,7 @@ Each user's browser or desktop app connects to OpenAI itself, so the network bet
 
 OpenAI bills transcription to the transcription service's API key. Once a session has started, the server can't end it, so cost is bounded by:
 
-- A per-user limit on how often sessions can be started. One key can open more than one session while it is valid, so the limit counts session starts, not open sessions.
+- Per-user limits on keys: 10 key requests in any 60 seconds, failed ones included, and at most 2 unexpired keys at a time. Over either limit, starting dictation fails until a slot frees up. The limits bound keys, not sessions: one key can open more than one session while it is valid.
 - The browser stops dictating after 30 seconds without speech and after 10 minutes in any case.
 - OpenAI ends every session after 60 minutes. A browser that ignores the limits above, such as a modified client, can keep a session open that long.
 
@@ -78,8 +78,8 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 
 | Symptom | Check |
 |---|---|
-| No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user has access to the service, and the formatting bar is shown. Users may need to reload after you turn dictation on. |
+| No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user has access to the service, and the formatting bar is shown. |
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
 | "The speech service could not be reached" | The browser can't reach OpenAI over HTTPS or WebRTC, or a `Content-Security-Policy` blocks it. See [Network requirements](#network-requirements). The server log has the reason when OpenAI refused to create the session. |
-| "Dictation was started too often" | The user hit the per-user limit on starting sessions. Wait and try again. |
+| "Dictation was started too often" | The user requested 10 keys in the last 60 seconds or already holds 2 unexpired keys. Waiting a minute clears it. |
 | "You don't have access to dictation" | The user lacks access to the transcription service, or the license is below Enterprise. |

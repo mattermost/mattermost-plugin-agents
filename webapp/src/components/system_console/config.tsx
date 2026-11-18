@@ -266,6 +266,7 @@ const Config = (props: Props) => {
     // Core's admin console only uses a save action's error to keep Save
     // enabled, so field-level errors have to be rendered here.
     const [linkDomainsError, setLinkDomainsError] = useState('');
+    const [dictationSaveError, setDictationSaveError] = useState('');
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
@@ -319,8 +320,12 @@ const Config = (props: Props) => {
                 setLocalConfig(fromServerConfig(saved));
                 setSavedConfig(fromServerConfig(saved));
                 setLinkDomainsError('');
+                setDictationSaveError('');
                 return {};
             } catch (e: any) {
+                if (e?.server_error_id === 'invalid_dictation') {
+                    setDictationSaveError(e.message || intl.formatMessage({defaultMessage: 'The Dictation settings are not valid.'}));
+                }
                 if (e?.server_error_id === 'invalid_allowed_link_domains') {
                     setLinkDomainsError(intl.formatMessage({defaultMessage: 'One or more entries are not valid domains.'}));
                 }
@@ -664,7 +669,11 @@ const Config = (props: Props) => {
                 value={dictationConfig}
                 services={value.services ?? []}
                 errors={validateDictationConfig(dictationConfig, value.services ?? [], intl)}
-                onChange={(dictation) => updateConfig({dictation})}
+                saveError={dictationSaveError}
+                onChange={(dictation) => {
+                    setDictationSaveError('');
+                    updateConfig({dictation});
+                }}
             />
             <WebSearchPanel
                 value={value.webSearch || defaultConfig.webSearch}

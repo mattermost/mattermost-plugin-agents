@@ -72,10 +72,13 @@ type Props = {
     value: DictationConfig;
     services: LLMService[];
     errors: DictationConfigErrors;
+
+    // The server's reason for refusing the last save.
+    saveError?: string;
     onChange: (config: DictationConfig) => void;
 };
 
-const DictationPanel = ({value, services, errors, onChange}: Props) => {
+const DictationPanel = ({value, services, errors, saveError, onChange}: Props) => {
     const intl = useIntl();
     const licensed = useIsLicensedFor('dictation');
     const eligible = dictationServices(services);
@@ -92,6 +95,13 @@ const DictationPanel = ({value, services, errors, onChange}: Props) => {
             headerActions={licensed ? undefined : <LicenseChip capability='dictation'/>} // eslint-disable-line no-undefined
         >
             <ItemList>
+                {saveError && (
+                    <SectionNotice
+                        type='danger'
+                        title={intl.formatMessage({defaultMessage: 'The Dictation settings were not saved'})}
+                        description={saveError}
+                    />
+                )}
                 <BooleanItem
                     label={intl.formatMessage({defaultMessage: 'Enable dictation'})}
                     value={value.enabled}

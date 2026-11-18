@@ -62,7 +62,7 @@ import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
 import DictationButton from './components/dictation/dictation_button';
-import {refreshDictationAvailability} from './dictation/availability';
+import {refreshDictationAvailability, scheduleDictationAvailabilityRefresh} from './dictation/availability';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -237,9 +237,12 @@ export default class Plugin {
             refreshDictationAvailability(store.dispatch);
         });
 
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_dictation_availability_changed', () => {
+            scheduleDictationAvailabilityRefresh(store.dispatch);
+        });
+
         if (registry.registerPostEditorActionComponent) {
             registry.registerPostEditorActionComponent(DictationButton);
-            refreshDictationAvailability(store.dispatch);
         }
 
         // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
