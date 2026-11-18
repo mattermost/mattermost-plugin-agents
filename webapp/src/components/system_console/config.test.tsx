@@ -476,6 +476,17 @@ describe('Config dictation', () => {
         expect(screen.getByText('invalid dictation configuration: transcription service "Whisper" is not configured')).toBeTruthy();
     });
 
+    it('shows the server\'s dictation error after the last service is removed', async () => {
+        const dictation = {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'};
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: [], dictation});
+        (savePluginConfig as jest.Mock).mockRejectedValue(Object.assign(new Error('invalid dictation configuration: transcription service "svc-openai" is not configured'), {server_error_id: 'invalid_dictation'}));
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('no-services');
+
+        expect((await save(registerSaveAction)).error).toBeTruthy();
+        expect(screen.getByText('invalid dictation configuration: transcription service "svc-openai" is not configured')).toBeTruthy();
+    });
+
     it('saves dictation on an OpenAI service while agents use another service', async () => {
         const dictation = {enabled: true, serviceID: 'svc-openai', model: 'gpt-4o-transcribe', language: 'de'};
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation});

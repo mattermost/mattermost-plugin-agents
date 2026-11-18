@@ -70,13 +70,13 @@ export class Segmenter {
         }
     }
 
-    // flush commits speech that has not been committed yet. Committing an
-    // empty buffer is a provider error, so nothing is sent after silence.
-    flush() {
-        if (this.inSpeech) {
-            this.inSpeech = false;
-            this.handlers.onCommit();
-        }
+    // flush reports whether speech since the last commit is still uncommitted,
+    // and forgets it. The caller commits it; committing an empty buffer is a
+    // provider error, so nothing should be sent after silence.
+    flush(): boolean {
+        const pending = this.inSpeech;
+        this.inSpeech = false;
+        return pending;
     }
 }
 

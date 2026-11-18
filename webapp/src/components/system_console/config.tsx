@@ -437,6 +437,13 @@ const Config = (props: Props) => {
         return (
             <ConfigContainer>
                 <BetaMessage/>
+                {dictationSaveError && (
+                    <SectionNotice
+                        type='danger'
+                        title={intl.formatMessage({defaultMessage: 'The Dictation settings were not saved'})}
+                        description={dictationSaveError}
+                    />
+                )}
                 <NoServicesPage onAddServicePressed={addFirstService}/>
             </ConfigContainer>
         );

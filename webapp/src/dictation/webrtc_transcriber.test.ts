@@ -25,7 +25,9 @@ class FakeTrack extends FakeTarget {
 class FakeChannel extends FakeTarget {
     readyState = 'connecting';
     sent: any[] = [];
-    close = jest.fn();
+    close = jest.fn(() => {
+        this.readyState = 'closed';
+    });
 
     send(data: string) {
         this.sent.push(JSON.parse(data));
@@ -88,13 +90,14 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
     let now = 0;
     let tick: (() => void) | null = null;
     const meterClose = jest.fn();
+    const meterAttach = jest.fn();
 
     const deps: TranscriberDeps = {
         getUserMedia: jest.fn(async () => stream),
         createSession: jest.fn(async () => session()),
         createPeerConnection: () => pc as unknown as RTCPeerConnection,
         fetch: jest.fn(async () => ({ok: true, text: async () => 'ANSWER_SDP'})) as unknown as typeof fetch,
-        createLevelMeter: () => ({level: () => level, close: meterClose}),
+        createLevelMeter: jest.fn(() => ({attach: meterAttach, level: () => level, close: meterClose})),
         now: () => now,
         setInterval: ((fn: () => void) => {
             tick = fn;
@@ -113,7 +116,7 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
         }
     };
 
-    return {deps, track, pc, advance, meterClose};
+    return {deps, track, stream, pc, advance, meterClose, meterAttach};
 }
 
 const commits = (pc: FakePeerConnection) => pc.channel.sent.filter((e) => e.type === 'input_audio_buffer.commit').length;
@@ -206,16 +209,105 @@ describe('WebRTCTranscriber', () => {
         expect(commits(pc)).toBe(2);
     });
 
-    test('never commits when the provider detects turns', async () => {
+    test('leaves commits to the provider that detects turns, except speech still in the buffer at stop', async () => {
         const {deps, pc, advance} = setup({createSession: jest.fn(async () => session({model: 'gpt-4o-transcribe', turnDetection: 'server_vad'}))});
         const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        transcriber.onTranscript(onTranscript);
         await transcriber.start();
 
         advance(0.3, 1000);
         advance(0, 800);
         advance(0.3, 500);
-        await transcriber.stop();
         expect(commits(pc)).toBe(0);
+
+        const stopped = transcriber.stop();
+        expect(commits(pc)).toBe(1);
+        await Promise.resolve();
+        expect(pc.close).not.toHaveBeenCalled();
+
+        pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'last', previous_item_id: null});
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'last', transcript: 'still talking'});
+        await stopped;
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'still talking', finalText: 'still talking'});
+        expect(pc.close).toHaveBeenCalled();
+    });
+
+    test('stop waits for a commit the provider has not acknowledged yet', async () => {
+        const {deps, pc, advance} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        transcriber.onTranscript(onTranscript);
+        await transcriber.start();
+
+        // A silence commit is sent; the user stops before any event for it arrives.
+        advance(0.3, 1000);
+        advance(0, 800);
+        expect(commits(pc)).toBe(1);
+
+        const stopped = transcriber.stop();
+        await Promise.resolve();
+        expect(pc.close).not.toHaveBeenCalled();
+
+        pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
+        await Promise.resolve();
+        expect(pc.close).not.toHaveBeenCalled();
+
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'before the pause'});
+        await stopped;
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'before the pause', finalText: 'before the pause'});
+        expect(pc.close).toHaveBeenCalled();
+    });
+
+    test('an empty-buffer error acknowledges the commit sent at stop', async () => {
+        const {deps, pc, advance} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        await transcriber.start();
+        advance(0.3, 500);
+
+        const stopped = transcriber.stop();
+        expect(commits(pc)).toBe(1);
+        pc.channel.receive({type: 'error', error: {type: 'invalid_request_error', code: 'input_audio_buffer_commit_empty'}});
+        await stopped;
+        expect(pc.close).toHaveBeenCalled();
+    });
+
+    test('creates the level meter before any await, then attaches the mic to it', async () => {
+        let resolveMic: (s: MediaStream) => void = () => { /* set below */ };
+        const {deps, stream, meterAttach} = setup();
+        (deps.getUserMedia as jest.Mock).mockImplementation(() => new Promise<MediaStream>((resolve) => {
+            resolveMic = resolve;
+        }));
+        const starting = new WebRTCTranscriber(deps).start();
+        expect(deps.createLevelMeter).toHaveBeenCalledTimes(1);
+
+        resolveMic(stream);
+        await starting;
+        expect(meterAttach).toHaveBeenCalledWith(stream);
+    });
+
+    test('a data channel the provider closes reports a lost connection', async () => {
+        const {deps, pc, track} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+
+        pc.channel.dispatch('close');
+
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason: 'connection_lost'}));
+        expect(pc.close).toHaveBeenCalled();
+        expect(track.stop).toHaveBeenCalled();
+    });
+
+    test('a data channel that closes before opening fails start without waiting for the timeout', async () => {
+        const {deps, pc} = setup();
+        pc.setRemoteDescription = jest.fn(async () => {
+            setTimeout(() => pc.channel.dispatch('close'), 0);
+        });
+
+        await expect(new WebRTCTranscriber(deps).start()).rejects.toMatchObject({reason: 'provider_unreachable'});
+        expect(pc.close).toHaveBeenCalled();
     });
 
     test('stop waits for the last segment, then closes the connection and stops every mic track', async () => {

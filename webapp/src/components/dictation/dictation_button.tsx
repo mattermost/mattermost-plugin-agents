@@ -24,8 +24,9 @@ export type DictationButtonProps = {
     getSelectedText?: () => SelectedText;
     updateText: (message: string) => void;
 
-    // Tests replace the WebRTC transport.
+    // Tests replace the WebRTC transport and shorten the session cap.
     createTransport?: () => DictationTransport;
+    maxSessionMs?: number;
 };
 
 const createWebRTCTranscriber = () => new WebRTCTranscriber();
@@ -69,10 +70,10 @@ const DictationButton = (props: DictationButtonProps) => {
     return <DictationControl {...props}/>;
 };
 
-const DictationControl = ({draft, getSelectedText, updateText, createTransport = createWebRTCTranscriber}: DictationButtonProps) => {
+const DictationControl = ({draft, getSelectedText, updateText, createTransport = createWebRTCTranscriber, maxSessionMs}: DictationButtonProps) => {
     const intl = useIntl();
     const supported = isDictationSupported();
-    const {status, errorReason, toggle, active} = useDictation({draft, getSelectedText, updateText, createTransport});
+    const {status, errorReason, toggle, active} = useDictation({draft, getSelectedText, updateText, createTransport, maxSessionMs});
 
     const errorMessage = useCallback((reason: DictationErrorReason | null) => {
         switch (reason) {

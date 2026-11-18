@@ -7,7 +7,7 @@ import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {DictationError, DictationTransport, TranscriptUpdate} from '@/dictation/types';
 
 import DictationButton from './dictation_button';
-import {EditorDraft, MAX_SESSION_MS} from './use_dictation';
+import {EditorDraft} from './use_dictation';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -75,7 +75,13 @@ type HarnessControls = {
 
 // Harness behaves like the host editor: updateText writes the draft through
 // React state, so the button sees its own writes on the next render.
-function renderButton(initial: EditorDraft, caret?: number) {
+type RenderOptions = {
+    caret?: number;
+    onEditorKeyDown?: (e: React.KeyboardEvent) => void;
+    maxSessionMs?: number;
+};
+
+function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionMs}: RenderOptions = {}) {
     const transports: FakeTransport[] = [];
     const controls: HarnessControls = {setDraft: () => { /* set on render */ }};
     const updateText = jest.fn();
@@ -84,7 +90,13 @@ function renderButton(initial: EditorDraft, caret?: number) {
         const [draft, setDraft] = useState(initial);
         controls.setDraft = setDraft;
         return (
-            <>
+            // eslint-disable-next-line agents/no-static-element-interactions -- stands in for the host editor's key handling
+            <div onKeyDown={onEditorKeyDown}>
+                <textarea
+                    aria-label='editor'
+                    readOnly={true}
+                    value={draft.message}
+                />
                 <DictationButton
                     draft={draft}
                     getSelectedText={() => ({start: caret, end: caret})}
@@ -97,9 +109,10 @@ function renderButton(initial: EditorDraft, caret?: number) {
                         transports.push(t);
                         return t;
                     }}
+                    maxSessionMs={maxSessionMs}
                 />
                 <div data-testid='draft'>{draft.message}</div>
-            </>
+            </div>
         );
     };
     const {unmount} = render(<Harness/>);
@@ -165,7 +178,7 @@ describe('DictationButton', () => {
     });
 
     test('types partials at the caret and replaces them with final text on stop', async () => {
-        const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, 5);
+        const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, {caret: 5});
         await startListening(() => transports[0]);
 
         act(() => transports[0].transcript({text: 'big', finalText: ''}));
@@ -176,22 +189,6 @@ describe('DictationButton', () => {
 
         fireEvent.click(button());
         await waitFor(() => expect(draft()).toBe('Hello big world'));
-    });
-
-    test('keeps the last phrase when stopping right after speaking', async () => {
-        const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, 5);
-        await startListening(() => transports[0]);
-        act(() => transports[0].transcript({text: 'big brave', finalText: 'big'}));
-        await waitFor(() => expect(draft()).toBe('Hello big brave world'));
-
-        // Like the WebRTC transport, stop commits the last segment and emits its final before resolving.
-        transports[0].stop.mockImplementation(async () => {
-            transports[0].transcript({text: 'big brave', finalText: 'big brave'});
-        });
-        fireEvent.click(button());
-
-        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
-        expect(draft()).toBe('Hello big brave world');
     });
 
     test('coalesces updates into one write per frame', async () => {
@@ -207,76 +204,120 @@ describe('DictationButton', () => {
         expect(updateText).toHaveBeenCalledTimes(1);
     });
 
-    test('a user edit stops dictation and keeps the edit', async () => {
-        const {transports, controls, draft} = renderButton({message: '', channelId: 'c1'});
-        await startListening(() => transports[0]);
-        act(() => transports[0].transcript({text: 'hello', finalText: ''}));
-        await waitFor(() => expect(draft()).toBe('hello'));
-
-        act(() => controls.setDraft((d) => ({...d, message: 'hello!'})));
-        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
-        expect(transports[0].stop).toHaveBeenCalled();
-
-        act(() => transports[0].transcript({text: 'hello there', finalText: ''}));
-        await new Promise((r) => setTimeout(r, 50));
-        expect(draft()).toBe('hello!');
-    });
-
-    test.each([
-        {name: 'the message is sent', change: (d: EditorDraft) => ({...d, message: ''})},
-        {name: 'the channel changes', change: (d: EditorDraft) => ({...d, channelId: 'c2'})},
-        {name: 'the thread changes', change: (d: EditorDraft) => ({...d, rootId: 'r2'})},
-    ])('stops without writing again when $name', async ({change}) => {
-        const {transports, controls, updateText} = renderButton({message: 'draft', channelId: 'c1', rootId: ''});
+    test('Esc stops dictation without reaching the editor, which would cancel a post edit', async () => {
+        const editorKeyDown = jest.fn();
+        const {transports} = renderButton({message: '', channelId: 'c1'}, {onEditorKeyDown: editorKeyDown});
         await startListening(() => transports[0]);
 
-        act(() => controls.setDraft(change));
+        fireEvent.keyDown(screen.getByLabelText('editor'), {key: 'Escape'});
         await waitFor(() => expect(transports[0].stop).toHaveBeenCalled());
+        expect(editorKeyDown).not.toHaveBeenCalled();
+
         await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
-        expect(updateText).not.toHaveBeenCalled();
+        fireEvent.keyDown(screen.getByLabelText('editor'), {key: 'Escape'});
+        expect(editorKeyDown).toHaveBeenCalledTimes(1);
     });
 
-    test('Esc stops dictation', async () => {
-        const {transports} = renderButton({message: '', channelId: 'c1'});
+    // Every way dictation ends goes through one stop. Partial text differs
+    // from the final text stop delivers, so a final write is visible.
+    const PARTIAL = 'Hello big braid world';
+    const FINAL = 'Hello big brave world';
+    const WITHOUT_LAST = 'Hello big world';
+
+    type Ctx = {transport: FakeTransport; controls: HarnessControls; unmount: () => void};
+    type Row = {
+        name: string;
+        trigger: (ctx: Ctx) => unknown;
+        duringStop?: (ctx: Ctx) => unknown;
+        maxSessionMs?: number;
+
+        // The transport already tore down (a provider error), so stop has no final to deliver.
+        stopDeliversFinal?: boolean;
+        unmounts?: boolean;
+        draft?: string;
+        status?: 'idle' | 'error';
+    };
+
+    const editor = () => screen.getByLabelText('editor');
+    const setMessage = (ctx: Ctx, message: string) => ctx.controls.setDraft((d) => ({...d, message}));
+
+    const rows: Row[] = [
+        {name: 'the button', trigger: () => fireEvent.click(button()), draft: FINAL, status: 'idle'},
+        {name: 'Esc', trigger: () => fireEvent.keyDown(editor(), {key: 'Escape'}), draft: FINAL, status: 'idle'},
+        {name: 'silence',
+            trigger: ({transport}) => {
+                transport.idle();
+            },
+            draft: FINAL,
+            status: 'idle'},
+        {name: 'the session cap', maxSessionMs: 50, trigger: () => new Promise((r) => setTimeout(r, 100)), draft: FINAL, status: 'idle'},
+        {name: 'a provider error',
+            trigger: ({transport}) => {
+                transport.error(new DictationError('provider_error'));
+            },
+            stopDeliversFinal: false,
+            draft: WITHOUT_LAST,
+            status: 'error'},
+        {name: 'typing', trigger: (ctx) => setMessage(ctx, PARTIAL + '!'), draft: PARTIAL + '!', status: 'idle'},
+        {name: 'sending', trigger: (ctx) => setMessage(ctx, ''), draft: '', status: 'idle'},
+        {name: 'a channel switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, channelId: 'c2'})), draft: PARTIAL, status: 'idle'},
+        {name: 'a thread switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, rootId: 'r2'})), draft: PARTIAL, status: 'idle'},
+        {name: 'unmounting', trigger: ({unmount}) => unmount(), unmounts: true},
+        {name: 'the button, then typing while stopping', trigger: () => fireEvent.click(button()), duringStop: (ctx) => setMessage(ctx, 'mine'), draft: 'mine', status: 'idle'},
+        {name: 'the button, then unmounting while stopping', trigger: () => fireEvent.click(button()), duringStop: ({unmount}) => unmount(), unmounts: true},
+        {name: 'the button, then a provider error while stopping',
+            trigger: () => fireEvent.click(button()),
+            duringStop: ({transport}) => {
+                transport.error(new DictationError('provider_error'));
+            },
+            draft: FINAL,
+            status: 'idle'},
+    ];
+
+    test.each(rows)('stopping by $name', async (row) => {
+        const {transports, controls, unmount, updateText, draft} = renderButton({message: 'Hello world', channelId: 'c1', rootId: ''}, {caret: 5, maxSessionMs: row.maxSessionMs});
         await startListening(() => transports[0]);
+        const transport = transports[0];
+        const ctx = {transport, controls, unmount};
 
-        fireEvent.keyDown(document, {key: 'Escape'});
-        await waitFor(() => expect(transports[0].stop).toHaveBeenCalled());
-    });
+        act(() => transport.transcript({text: 'big braid', finalText: 'big'}));
+        await waitFor(() => expect(draft()).toBe(PARTIAL));
 
-    test('unmounting stops dictation', async () => {
-        const {transports, unmount} = renderButton({message: '', channelId: 'c1'});
-        await startListening(() => transports[0]);
-        expect(transports[0].stop).not.toHaveBeenCalled();
-
-        unmount();
-        expect(transports[0].stop).toHaveBeenCalled();
-    });
-
-    test('the transport reporting silence stops dictation', async () => {
-        const {transports} = renderButton({message: '', channelId: 'c1'});
-        await startListening(() => transports[0]);
+        let finishStop: () => void = () => { /* set when stop is called */ };
+        transport.stop.mockImplementation(() => new Promise<void>((resolve) => {
+            finishStop = () => {
+                if (row.stopDeliversFinal !== false) {
+                    transport.transcript({text: 'big brave', finalText: 'big brave'});
+                }
+                resolve();
+            };
+        }));
 
         await act(async () => {
-            transports[0].idle();
+            await row.trigger(ctx);
         });
-        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
-        expect(transports[0].stop).toHaveBeenCalled();
-    });
+        await waitFor(() => expect(transport.stop).toHaveBeenCalledTimes(1));
 
-    test('stops at the session length cap', async () => {
-        jest.useFakeTimers();
-        try {
-            const {transports} = renderButton({message: '', channelId: 'c1'});
-            await startListening(() => transports[0]);
-
-            await act(async () => {
-                jest.advanceTimersByTime(MAX_SESSION_MS);
-            });
-            expect(transports[0].stop).toHaveBeenCalled();
-        } finally {
-            jest.useRealTimers();
+        if (!row.unmounts || row.duringStop) {
+            expect(button().getAttribute('data-status')).toBe('stopping');
+            expect((button() as HTMLButtonElement).disabled).toBe(true);
+            fireEvent.click(button());
+            expect(transports).toHaveLength(1);
         }
+
+        act(() => {
+            row.duringStop?.(ctx);
+        });
+        const writesBeforeStop = updateText.mock.calls.length;
+        await act(async () => finishStop());
+
+        if (row.unmounts) {
+            expect(updateText).toHaveBeenCalledTimes(writesBeforeStop);
+            return;
+        }
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe(row.status));
+        expect(draft()).toBe(row.draft);
+        expect(transport.stop).toHaveBeenCalledTimes(1);
     });
 
     test.each([
@@ -294,18 +335,5 @@ describe('DictationButton', () => {
 
         fireEvent.click(button());
         expect(transports).toHaveLength(2);
-    });
-
-    test('a provider error while listening keeps finalized text and shows the error', async () => {
-        const {transports, draft} = renderButton({message: '', channelId: 'c1'});
-        await startListening(() => transports[0]);
-        act(() => transports[0].transcript({text: 'kept partial', finalText: 'kept'}));
-        await waitFor(() => expect(draft()).toBe('kept partial'));
-
-        await act(async () => {
-            transports[0].error(new DictationError('provider_error'));
-        });
-        await waitFor(() => expect(button().getAttribute('data-status')).toBe('error'));
-        expect(draft()).toBe('kept');
     });
 });

@@ -24,9 +24,15 @@ type Options = {
     getSelectedText?: () => SelectedText;
     updateText: (message: string) => void;
     createTransport: () => DictationTransport;
+    maxSessionMs?: number;
 };
 
+// A session moves only forward through these phases. Every way dictation
+// ends goes through stopSession, which is the only move to "stopping".
+type Phase = 'starting' | 'listening' | 'stopping' | 'done';
+
 type Session = {
+    phase: Phase;
     transport: DictationTransport;
     writer: DraftWriter;
     channelId: string;
@@ -35,32 +41,33 @@ type Session = {
     pendingText: string | null;
     frame: number | null;
     capTimer: ReturnType<typeof setTimeout> | null;
+
+    // Whether the finalized text replaces the draft once the transport has
+    // stopped. A user edit, an editor switch or an unmount revokes it, even
+    // while stopping.
+    keepFinal: boolean;
+    error: DictationErrorReason | null;
 };
 
-type FinishOptions = {
-
-    // Rewrite the draft with only finalized text once the transport stops.
-    writeFinal: boolean;
+type StopOptions = {
+    keepFinal: boolean;
     error?: DictationErrorReason;
 };
 
 const isSameEditor = (session: Session, draft: EditorDraft) =>
     draft.channelId === session.channelId && (draft.rootId ?? '') === session.rootId;
 
+const isRecording = (session: Session) => session.phase === 'starting' || session.phase === 'listening';
+
 // scheduleWrite coalesces transcript updates into one draft write per frame.
-const scheduleWrite = (
-    session: Session,
-    text: string,
-    isCurrent: () => boolean,
-    write: (message: string) => void,
-) => {
+const scheduleWrite = (session: Session, text: string, write: (message: string) => void) => {
     session.pendingText = text;
     if (session.frame !== null) {
         return;
     }
     session.frame = requestAnimationFrame(() => {
         session.frame = null;
-        if (!isCurrent() || session.pendingText === null) {
+        if (!isRecording(session) || session.pendingText === null) {
             return;
         }
         const message = session.writer.render(session.pendingText);
@@ -69,9 +76,12 @@ const scheduleWrite = (
     });
 };
 
-export function useDictation({draft, getSelectedText, updateText, createTransport}: Options) {
+export function useDictation({draft, getSelectedText, updateText, createTransport, maxSessionMs = MAX_SESSION_MS}: Options) {
     const [status, setStatus] = useState<DictationStatus>('idle');
     const [errorReason, setErrorReason] = useState<DictationErrorReason | null>(null);
+
+    // The session from start until it is done, stopping included, so a new
+    // one can't start while the previous transport tears down.
     const sessionRef = useRef<Session | null>(null);
 
     // The host's updateText spreads the draft it captured at render time, so
@@ -85,11 +95,16 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         getSelectedTextRef.current = getSelectedText;
     });
 
-    const finish = useCallback(async (session: Session, {writeFinal, error}: FinishOptions) => {
-        if (sessionRef.current !== session) {
+    const stopSession = useCallback(async (session: Session, {keepFinal, error}: StopOptions) => {
+        if (!isRecording(session)) {
+            if (!keepFinal) {
+                session.keepFinal = false;
+            }
             return;
         }
-        sessionRef.current = null;
+        session.phase = 'stopping';
+        session.keepFinal = keepFinal;
+        session.error = error ?? null;
         if (session.frame !== null) {
             cancelAnimationFrame(session.frame);
             session.frame = null;
@@ -97,19 +112,20 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         if (session.capTimer !== null) {
             clearTimeout(session.capTimer);
         }
+        setStatus('stopping');
 
-        if (writeFinal) {
-            setStatus('stopping');
-        }
+        // Stop delivers the last segment's final text through onTranscript.
         await session.transport.stop();
 
-        // The draft may have moved on while the last segment was finalized.
-        if (writeFinal && isSameEditor(session, draftRef.current) && session.writer.isOwnWrite(draftRef.current.message ?? '')) {
+        const current = draftRef.current;
+        if (session.keepFinal && isSameEditor(session, current) && session.writer.isOwnWrite(current.message ?? '')) {
             updateTextRef.current(session.writer.render(session.latest.finalText));
         }
-        if (sessionRef.current === null) {
-            setStatus(error ? 'error' : 'idle');
-            setErrorReason(error ?? null);
+        session.phase = 'done';
+        if (sessionRef.current === session) {
+            sessionRef.current = null;
+            setStatus(session.error ? 'error' : 'idle');
+            setErrorReason(session.error);
         }
     }, []);
 
@@ -118,6 +134,7 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         const caret = getSelectedTextRef.current?.()?.start;
         const transport = createTransport();
         const session: Session = {
+            phase: 'starting',
             transport,
             writer: new DraftWriter(current.message ?? '', caret),
             channelId: current.channelId,
@@ -126,99 +143,99 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
             pendingText: null,
             frame: null,
             capTimer: null,
+            keepFinal: true,
+            error: null,
         };
         sessionRef.current = session;
         setErrorReason(null);
         setStatus('requesting_permission');
 
-        // Recorded even while stopping: stop delivers the last segment's final
-        // text, which finish then writes.
         transport.onTranscript((update: TranscriptUpdate) => {
             session.latest = update;
-            if (sessionRef.current !== session) {
-                return;
+            if (isRecording(session)) {
+                scheduleWrite(session, update.text, (message) => updateTextRef.current(message));
             }
-            scheduleWrite(
-                session,
-                update.text,
-                () => sessionRef.current === session,
-                (message) => updateTextRef.current(message),
-            );
         });
         transport.onConnecting(() => {
-            if (sessionRef.current === session) {
+            if (session.phase === 'starting') {
                 setStatus('connecting');
             }
         });
-        transport.onError((err) => finish(session, {writeFinal: true, error: err.reason}));
-        transport.onIdle(() => finish(session, {writeFinal: true}));
+        transport.onError((err) => stopSession(session, {keepFinal: true, error: err.reason}));
+        transport.onIdle(() => stopSession(session, {keepFinal: true}));
 
         try {
             await transport.start();
         } catch (err) {
-            if (sessionRef.current !== session) {
+            if (session.phase !== 'starting') {
                 return;
             }
+            session.phase = 'done';
             sessionRef.current = null;
             setStatus('error');
             setErrorReason((err as {reason?: DictationErrorReason})?.reason ?? 'provider_unreachable');
             return;
         }
-        if (sessionRef.current !== session) {
+        if (session.phase !== 'starting') {
             return;
         }
-        session.capTimer = setTimeout(() => finish(session, {writeFinal: true}), MAX_SESSION_MS);
+        session.phase = 'listening';
+        session.capTimer = setTimeout(() => stopSession(session, {keepFinal: true}), maxSessionMs);
         setStatus('listening');
-    }, [createTransport, finish]);
+    }, [createTransport, stopSession, maxSessionMs]);
 
     const stop = useCallback(() => {
         const session = sessionRef.current;
         if (session) {
-            finish(session, {writeFinal: true});
+            stopSession(session, {keepFinal: true});
         }
-    }, [finish]);
+    }, [stopSession]);
 
     const toggle = useCallback(() => {
-        if (sessionRef.current) {
-            stop();
-        } else {
+        const session = sessionRef.current;
+        if (!session) {
             start();
+        } else if (isRecording(session)) {
+            stop();
         }
     }, [start, stop]);
 
     // A draft change dictation didn't write is the user typing, sending (the
-    // draft is cleared) or switching to another channel or thread: stop
-    // without writing again.
+    // draft is cleared) or switching to another channel or thread: stop, or
+    // keep stopping, without writing again.
     useEffect(() => {
         const session = sessionRef.current;
-        if (!session) {
+        if (!session || (isSameEditor(session, draft) && session.writer.isOwnWrite(draft.message ?? ''))) {
             return;
         }
-        if (!isSameEditor(session, draft) || !session.writer.isOwnWrite(draft.message ?? '')) {
-            finish(session, {writeFinal: false});
-        }
-    }, [draft, finish]);
+        stopSession(session, {keepFinal: false});
+    }, [draft, stopSession]);
 
     const active = status === 'requesting_permission' || status === 'connecting' || status === 'listening';
     useEffect(() => {
         if (!active) {
             return undefined; // eslint-disable-line no-undefined
         }
+
+        // Captured on window so the editor never sees this Escape: while
+        // editing a post, Escape would also cancel the edit.
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
                 stop();
             }
         };
-        document.addEventListener('keydown', onKeyDown);
-        return () => document.removeEventListener('keydown', onKeyDown);
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
     }, [active, stop]);
 
     useEffect(() => () => {
         const session = sessionRef.current;
         if (session) {
-            finish(session, {writeFinal: false});
+            stopSession(session, {keepFinal: false});
         }
-    }, [finish]);
+    }, [stopSession]);
 
     return {status, errorReason, toggle, active};
 }

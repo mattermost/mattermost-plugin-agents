@@ -8,7 +8,7 @@ import {render, screen, waitFor} from '@testing-library/react';
 
 import manifest from '@/manifest';
 
-import {SetDictationAvailability, dictationAvailability, refreshDictationAvailability, useDictationAvailable} from './availability';
+import {AVAILABILITY_RETRY_DELAYS_MS, SetDictationAvailability, dictationAvailability, refreshDictationAvailability, useDictationAvailable} from './availability';
 
 const mockGetDictationAvailability = jest.fn();
 jest.mock('@/client', () => ({
@@ -37,7 +37,7 @@ describe('useDictationAvailable', () => {
     test.each([
         {name: 'available', response: () => Promise.resolve({enabled: true, available: true, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc'}), want: 'true'},
         {name: 'unlicensed', response: () => Promise.resolve({enabled: true, available: false, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc', reason: 'license'}), want: 'false'},
-        {name: 'request fails', response: () => Promise.reject(new Error('401')), want: 'false'},
+        {name: 'request fails', response: () => Promise.reject(Object.assign(new Error('401'), {status_code: 401})), want: 'false'},
     ])('loads availability on first use: $name', async ({response, want}) => {
         mockGetDictationAvailability.mockImplementation(response);
         renderProbe();
@@ -72,5 +72,56 @@ describe('refreshDictationAvailability', () => {
         await first;
 
         expect(dispatch.mock.calls).toEqual([[{type: SetDictationAvailability, availability: fresh}]]);
+    });
+});
+
+describe('refreshDictationAvailability retries', () => {
+    const available = {enabled: true, available: true, provider: 'openai', model: 'm', transport: 'webrtc'};
+    const fail = (status?: number) => Promise.reject(Object.assign(new Error('failed'), {status_code: status}));
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        mockGetDictationAvailability.mockReset();
+    });
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('a transient failure is retried with backoff until it recovers', async () => {
+        mockGetDictationAvailability.mockImplementationOnce(() => fail(503)).mockImplementationOnce(() => fail()).mockResolvedValueOnce(available);
+        const dispatch = jest.fn();
+
+        await refreshDictationAvailability(dispatch);
+        expect(dispatch).toHaveBeenLastCalledWith({type: SetDictationAvailability, availability: null});
+
+        await jest.advanceTimersByTimeAsync(AVAILABILITY_RETRY_DELAYS_MS[0]);
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(2);
+
+        await jest.advanceTimersByTimeAsync(AVAILABILITY_RETRY_DELAYS_MS[1]);
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(3);
+        expect(dispatch).toHaveBeenLastCalledWith({type: SetDictationAvailability, availability: available});
+    });
+
+    test('gives up after the last retry', async () => {
+        mockGetDictationAvailability.mockImplementation(() => fail(500));
+        await refreshDictationAvailability(jest.fn());
+        await jest.advanceTimersByTimeAsync(AVAILABILITY_RETRY_DELAYS_MS.reduce((a, b) => a + b) * 2);
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(AVAILABILITY_RETRY_DELAYS_MS.length + 1);
+    });
+
+    test.each([401, 403, 404])('a %s is not retried', async (status) => {
+        mockGetDictationAvailability.mockImplementation(() => fail(status));
+        await refreshDictationAvailability(jest.fn());
+        await jest.advanceTimersByTimeAsync(60000);
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(1);
+    });
+
+    test('a newer request cancels a pending retry', async () => {
+        mockGetDictationAvailability.mockImplementationOnce(() => fail(503)).mockResolvedValue(available);
+        const dispatch = jest.fn();
+        await refreshDictationAvailability(dispatch);
+        await refreshDictationAvailability(dispatch);
+        await jest.advanceTimersByTimeAsync(60000);
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(2);
     });
 });

@@ -24,22 +24,40 @@ export function dictationAvailability(state: DictationAvailability | null = null
 }
 
 let latestRequest = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+// A failed load hides the button; these retries bring it back after a
+// transient server or network error without waiting for an event.
+export const AVAILABILITY_RETRY_DELAYS_MS = [5000, 30000];
+
+const isRetryable = (err: unknown) => {
+    const status = (err as {status_code?: number})?.status_code;
+    return status !== 401 && status !== 403 && status !== 404;
+};
 
 // refreshDictationAvailability refetches whether the current user can
 // dictate. A failed request hides the button rather than keeping a stale
 // "available", and a superseded response is dropped.
-export async function refreshDictationAvailability(dispatch: Dispatch) {
+export async function refreshDictationAvailability(dispatch: Dispatch, attempt = 0) {
+    if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+    }
     const request = ++latestRequest;
     let availability: DictationAvailability | null = null;
+    let retry = false;
     try {
         availability = await getDictationAvailability();
-    } catch {
-        availability = null;
+    } catch (err) {
+        retry = isRetryable(err) && attempt < AVAILABILITY_RETRY_DELAYS_MS.length;
     }
     if (request !== latestRequest) {
         return;
     }
     dispatch({type: SetDictationAvailability, availability});
+    if (retry) {
+        retryTimer = setTimeout(() => refreshDictationAvailability(dispatch, attempt + 1), AVAILABILITY_RETRY_DELAYS_MS[attempt]);
+    }
 }
 
 export const AVAILABILITY_REFRESH_DEBOUNCE_MS = 250;

@@ -107,6 +107,13 @@ async function loginAsUser(page: Page, mattermost: MattermostContainer) {
     const mmPage = new MattermostPage(page);
     await mmPage.login(mattermost.url(), username, password, { channelViewTimeoutMs: 90000 });
     await expect(mmPage.postTextbox).toBeVisible({ timeout: 30000 });
+
+    // Browsers expose the microphone only to secure origins. Testcontainers
+    // can report the Docker gateway IP as the host, which isn't one.
+    expect(
+        await page.evaluate(() => window.isSecureContext),
+        `${mattermost.url()} is not a secure context; set TESTCONTAINERS_HOST_OVERRIDE=localhost when running e2e inside a container`,
+    ).toBe(true);
     return mmPage;
 }
 
@@ -129,7 +136,7 @@ test.describe('Dictation', () => {
 
         const serviceSelect = page.getByRole('combobox', { name: 'Transcription service', exact: true });
         await serviceSelect.click();
-        const options = page.getByRole('listbox').getByRole('option');
+        const options = page.getByRole('listbox', { name: 'Transcription service' }).getByRole('option');
         await expect(options).toHaveText([DICTATION_SERVICE_NAME]);
         await page.keyboard.press('Escape');
         await chooseCompassOption(serviceSelect, DICTATION_SERVICE_NAME);

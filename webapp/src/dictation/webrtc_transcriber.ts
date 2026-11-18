@@ -18,8 +18,11 @@ const CHANNEL_OPEN_TIMEOUT_MS = 15000;
 const FINAL_TRANSCRIPT_WAIT_MS = 1500;
 const LEVEL_SAMPLE_INTERVAL_MS = 50;
 
-// LevelMeter reports the microphone's current RMS level (0 to 1).
+// LevelMeter reports the microphone's current RMS level (0 to 1). It is
+// created before any await in start, inside the click that started
+// dictation: browsers start an AudioContext made later suspended.
 export type LevelMeter = {
+    attach(stream: MediaStream): void;
     level(): number;
     close(): void;
 };
@@ -29,20 +32,23 @@ export type TranscriberDeps = {
     createSession: () => Promise<DictationSession>;
     createPeerConnection: () => RTCPeerConnection;
     fetch: typeof fetch;
-    createLevelMeter: (stream: MediaStream) => LevelMeter;
+    createLevelMeter: () => LevelMeter;
     now: () => number;
     setInterval: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
     clearInterval: (id: ReturnType<typeof setInterval>) => void;
 };
 
-function createAnalyserLevelMeter(stream: MediaStream): LevelMeter {
+function createAnalyserLevelMeter(): LevelMeter {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     const context: AudioContext = new AudioContextClass();
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
-    context.createMediaStreamSource(stream).connect(analyser);
     const samples = new Float32Array(analyser.fftSize);
     return {
+        attach: (stream) => {
+            context.createMediaStreamSource(stream).connect(analyser);
+            context.resume().catch(() => { /* levels stay at 0; the idle cap stops dictation */ });
+        },
         level: () => {
             analyser.getFloatTimeDomainData(samples);
             return rmsLevel(samples);
@@ -115,6 +121,10 @@ export class WebRTCTranscriber implements DictationTransport {
     private stopping: Promise<void> | null = null;
     private finalWaiter: (() => void) | null = null;
 
+    // Commits sent and not yet acknowledged. Their segments aren't in the
+    // transcript yet, so stop waits for them too.
+    private outstandingCommits = 0;
+
     constructor(deps: TranscriberDeps = browserTranscriberDeps()) {
         this.deps = deps;
     }
@@ -148,6 +158,8 @@ export class WebRTCTranscriber implements DictationTransport {
     }
 
     private async connect() {
+        this.meter = this.deps.createLevelMeter();
+
         // The microphone is requested before minting so a permission prompt
         // the user dismisses doesn't spend a token.
         try {
@@ -176,6 +188,7 @@ export class WebRTCTranscriber implements DictationTransport {
         const channel = pc.createDataChannel('oai-events');
         this.channel = channel;
         channel.addEventListener('message', (e: MessageEvent) => this.handleEvent(e.data));
+        channel.addEventListener('close', () => this.fail(new DictationError('connection_lost')));
         pc.addEventListener('connectionstatechange', () => {
             if (pc.connectionState === 'failed') {
                 this.fail(new DictationError('connection_lost'));
@@ -186,6 +199,7 @@ export class WebRTCTranscriber implements DictationTransport {
         const opened = new Promise<void>((resolve, reject) => {
             openTimer = setTimeout(() => reject(new DictationError('provider_unreachable')), CHANNEL_OPEN_TIMEOUT_MS);
             channel.addEventListener('open', () => resolve());
+            channel.addEventListener('close', () => reject(new DictationError('provider_unreachable')));
         });
 
         // A failure before the channel opens is thrown below; this keeps the
@@ -238,15 +252,15 @@ export class WebRTCTranscriber implements DictationTransport {
     }
 
     private startSampling() {
-        if (!this.stream) {
+        const meter = this.meter;
+        if (!this.stream || !meter) {
             return;
         }
-        const meter = this.deps.createLevelMeter(this.stream);
-        this.meter = meter;
+        meter.attach(this.stream);
         this.segmenter = new Segmenter({
             onCommit: () => {
                 if (this.clientCommits) {
-                    this.send({type: 'input_audio_buffer.commit'});
+                    this.commit();
                 }
             },
             onIdle: () => this.idleHandler(),
@@ -256,10 +270,16 @@ export class WebRTCTranscriber implements DictationTransport {
         }, LEVEL_SAMPLE_INTERVAL_MS);
     }
 
-    private send(event: Record<string, unknown>) {
+    private commit() {
         if (this.channel?.readyState === 'open') {
-            this.channel.send(JSON.stringify(event));
+            this.channel.send(JSON.stringify({type: 'input_audio_buffer.commit'}));
+            this.outstandingCommits++;
         }
+    }
+
+    private acknowledgeCommit() {
+        this.outstandingCommits = Math.max(0, this.outstandingCommits - 1);
+        this.settleIfDone();
     }
 
     private handleEvent(data: unknown) {
@@ -278,6 +298,7 @@ export class WebRTCTranscriber implements DictationTransport {
             if (itemId) {
                 this.transcript.committed(itemId, event.previous_item_id);
             }
+            this.acknowledgeCommit();
             return;
         case 'conversation.item.input_audio_transcription.delta':
             if (itemId && event.delta) {
@@ -300,7 +321,11 @@ export class WebRTCTranscriber implements DictationTransport {
         case 'error':
             // Once stopping, teardown is already under way; an error must not
             // cut off the last segment's transcript.
-            if (this.stopping || event.error?.code === COMMIT_EMPTY_ERROR) {
+            if (event.error?.code === COMMIT_EMPTY_ERROR) {
+                this.acknowledgeCommit();
+                return;
+            }
+            if (this.stopping) {
                 return;
             }
             this.fail(new DictationError('provider_error'));
@@ -312,7 +337,15 @@ export class WebRTCTranscriber implements DictationTransport {
 
     private emitFinal() {
         this.transcriptHandler(this.transcript.snapshot());
-        if (this.finalWaiter && !this.transcript.hasPending()) {
+        this.settleIfDone();
+    }
+
+    private hasOutstandingWork(): boolean {
+        return this.outstandingCommits > 0 || this.transcript.hasPending();
+    }
+
+    private settleIfDone() {
+        if (this.finalWaiter && !this.hasOutstandingWork()) {
             this.finalWaiter();
         }
     }
@@ -349,10 +382,13 @@ export class WebRTCTranscriber implements DictationTransport {
             this.deps.clearInterval(this.sampler);
             this.sampler = null;
         }
-        if (this.clientCommits) {
-            this.segmenter?.flush();
+
+        // Server VAD commits only after it hears the speech end, so speech
+        // still in the buffer is committed here for every model.
+        if (this.segmenter?.flush()) {
+            this.commit();
         }
-        if (this.transcript.hasPending()) {
+        if (this.hasOutstandingWork()) {
             await new Promise<void>((resolve) => {
                 const timer = setTimeout(resolve, FINAL_TRANSCRIPT_WAIT_MS);
                 this.finalWaiter = () => {

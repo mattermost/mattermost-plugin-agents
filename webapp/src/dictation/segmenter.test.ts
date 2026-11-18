@@ -45,7 +45,7 @@ describe('Segmenter', () => {
     test('silence without speech never commits an empty buffer', () => {
         const {segmenter, onCommit} = setup();
         drive(segmenter, SILENCE, 0, 5000);
-        segmenter.flush();
+        expect(segmenter.flush()).toBe(false);
         expect(onCommit).not.toHaveBeenCalled();
     });
 
@@ -58,14 +58,12 @@ describe('Segmenter', () => {
         expect(onCommit).toHaveBeenCalledTimes(2);
     });
 
-    test('flush commits speech that has not been committed', () => {
+    test('flush reports speech that has not been committed, once', () => {
         const {segmenter, onCommit} = setup();
         drive(segmenter, SPEECH, 0, 500);
-        segmenter.flush();
-        expect(onCommit).toHaveBeenCalledTimes(1);
-
-        segmenter.flush();
-        expect(onCommit).toHaveBeenCalledTimes(1);
+        expect(segmenter.flush()).toBe(true);
+        expect(segmenter.flush()).toBe(false);
+        expect(onCommit).not.toHaveBeenCalled();
     });
 
     test('reports idle once after 30 s without speech', () => {
