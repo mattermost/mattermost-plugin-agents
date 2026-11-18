@@ -7,6 +7,7 @@ import {containerTest, type Own} from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
+import {SECRET_PLACEHOLDER} from 'helpers/bot-config';
 import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
 import RunSystemConsoleContainer, {adminUsername, adminPassword, type MCPServerConfig} from 'helpers/system-console-container';
 import {
@@ -292,7 +293,8 @@ editTest.describe('MCP server editing', () => {
 
         await expect.poll(async () => (await savedServer(page, PLAIN_SERVER_NAME))?.description).toBe('Search the product documentation.');
         const saved = await savedServer(page, PLAIN_SERVER_NAME);
-        expect(saved?.serviceAccountHeaders).toEqual({Authorization: 'Bearer service-token'});
+        // GET /admin/config returns the mask, never the stored header value.
+        expect(saved?.serviceAccountHeaders).toEqual({Authorization: SECRET_PLACEHOLDER});
         expect(await savedToolConfigs(page, PLAIN_SERVER_NAME)).toEqual(reviewedTools);
 
         // Renaming ends users' sign-ins: the admin is warned, then signs in
