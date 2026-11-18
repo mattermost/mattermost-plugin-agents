@@ -41,9 +41,13 @@ jest.mock('react-intl', () => ({
     useIntl: () => ({formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage}),
 }));
 
+const mockChatPageProps = jest.fn();
 jest.mock('./agent_chat_page', () => ({
     __esModule: true,
-    default: () => <div data-testid='chat-page'/>,
+    default: (props: unknown) => {
+        mockChatPageProps(props);
+        return <div data-testid='chat-page'/>;
+    },
 }));
 
 const makeBot = (id: string) => ({id, displayName: `Agent ${id}`, username: `${id}-name`, dmChannelID: ''});
@@ -187,6 +191,20 @@ describe('AgentDMSidebarChats', () => {
                 listeners.forEach((listener) => listener(history.location, 'REPLACE'));
             });
             expect(lastSection().activeRootId).toBe('root1');
+        });
+
+        test('stops highlighting after a new chat although the URL is already bare', () => {
+            history.location.pathname = '/team1/messages/@agent1-name/reply1';
+            renderBoth('reply1');
+            act(() => {
+                history.location.pathname = '/team1/messages/@agent1-name';
+                listeners.forEach((listener) => listener(history.location, 'REPLACE'));
+            });
+            expect(lastSection().activeRootId).toBe('root1');
+
+            const chatPage = mockChatPageProps.mock.calls[mockChatPageProps.mock.calls.length - 1][0];
+            act(() => chatPage.toChat('agent1'));
+            expect(lastSection().activeRootId).toBe('');
         });
 
         test('follows a chat opened from the sidebar', () => {
