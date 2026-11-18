@@ -29,26 +29,14 @@ interface Props {
 const HTMLArtifacts = ({postId, files: metadataFiles}: Props) => {
     const enabled = useSelector(getHTMLArtifactsEnabled);
 
-    // Prefer post.file_ids (authoritative after edits). metadata.files can lag
-    // when a streamed UpdatePost swaps attachments; fileIdsByPostId only updates
-    // when metadata.files is present on the received post.
-    const channelId = useSelector<GlobalState, string>((state) => {
-        const post = state.entities.posts.posts[postId];
-        return post?.channel_id || '';
-    });
-    const files = useSelector<GlobalState, FileInfoLike[]>((state) => {
-        const postIds = state.entities.posts?.posts?.[postId]?.file_ids ?? [];
-        const byId = state.entities.files?.files ?? {};
-        const fromPost = postIds.map((id: string) => byId[id]).filter(Boolean);
-        if (fromPost.length > 0) {
-            return fromPost;
-        }
-        if (Array.isArray(metadataFiles) && metadataFiles.length > 0) {
-            return metadataFiles;
-        }
+    // A streamed post gains file_ids through a websocket edit that carries no
+    // metadata.files; core then loads the infos into entities.files.
+    const storeFiles = useSelector<GlobalState, FileInfoLike[]>((state) => {
         const ids = state.entities.files?.fileIdsByPostId?.[postId] ?? [];
-        return ids.map((id: string) => byId[id]).filter(Boolean);
+        return ids.map((id) => state.entities.files.files[id]).filter(Boolean);
     }, shallowEqual);
+    const channelId = useSelector<GlobalState, string>((state) => state.entities.posts.posts[postId]?.channel_id || '');
+    const files = Array.isArray(metadataFiles) && metadataFiles.length > 0 ? metadataFiles : storeFiles;
     if (!enabled || files.length === 0) {
         return null;
     }

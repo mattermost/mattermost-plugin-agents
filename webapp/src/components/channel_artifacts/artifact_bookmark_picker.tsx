@@ -12,8 +12,8 @@ import {FileCodeOutlineIcon} from '@mattermost/compass-icons/components';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 
-import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
-import {getChannelArtifactsEnabled} from '@/selectors';
+import {ChannelArtifactEntry} from '@/client';
+import {getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
 import {AnimatedModalShell} from '../animated_modal_shell';
 
@@ -22,6 +22,7 @@ import {
     findLibraryArtifactBookmark,
     pinLibraryArtifactBookmark,
 } from './bookmark';
+import {loadChannelLibrary} from './library';
 
 type OpenRequest = {channelId: string; nonce: number};
 
@@ -86,13 +87,16 @@ const ArtifactBookmarkPicker = () => {
         setLoading(true);
         setError('');
         setEntries([]);
-        listChannelArtifacts(request.channelId).then((list) => {
+        const cached = getChannelLibrary(store.getState() as never, request.channelId);
+        const library = cached?.status === 'ready' ? Promise.resolve() : loadChannelLibrary(store.dispatch as never, request.channelId);
+        library.then(() => {
             if (cancelled) {
                 return;
             }
-            setEntries(list.entries || []);
-        }, () => {
-            if (!cancelled) {
+            const loaded = getChannelLibrary(store.getState() as never, request.channelId);
+            if (loaded?.status === 'ready') {
+                setEntries(loaded.entries);
+            } else {
                 setError(intl.formatMessage({defaultMessage: 'Could not load channel artifacts.'}));
                 setEntries([]);
             }

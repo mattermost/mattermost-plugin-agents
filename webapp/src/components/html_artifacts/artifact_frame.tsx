@@ -105,9 +105,6 @@ interface Props {
     // Library-only: render a specific content version via ?version=N.
     version?: number;
 
-    // Library downloads can be turned off. File artifacts keep the button.
-    downloadEnabled?: boolean;
-
     // True while the frame is covered (the inline card under the fullscreen
     // viewer): it must not show a consent prompt the viewer cannot see.
     obscured?: boolean;
@@ -135,7 +132,6 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     onEscape,
     artifactKind = 'file',
     version,
-    downloadEnabled = true,
     obscured = false,
     startedByClick = false,
 }, ref) => {
@@ -190,6 +186,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     const currentUser = useSelector<GlobalState, any>((state) => state.entities.users.profiles[state.entities.users.currentUserId]);
     const [load, setLoad] = useState<FrameLoad | null>(null);
     const [tokenFailed, setTokenFailed] = useState(false);
+    const [unavailable, setUnavailable] = useState(false);
 
     // The server would refuse to serve the artifact: it exceeds the render
     // size limit, so it is never loaded.
@@ -232,6 +229,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         let cancelled = false;
         setLoad(null);
         setTokenFailed(false);
+        setUnavailable(false);
         setTooLarge(false);
         setStatus('loading');
         if (!currentUserId) {
@@ -248,8 +246,13 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             } else {
                 setLoad({fileId, nonce, token: info.token});
             }
-        }, () => {
-            if (!cancelled) {
+        }, (err: {status_code?: number}) => {
+            if (cancelled) {
+                return;
+            }
+            if (err?.status_code === 410) {
+                setUnavailable(true);
+            } else {
                 setTokenFailed(true);
             }
         });
@@ -686,7 +689,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     }, [title, engaged]);
 
     const shownStatus: Status = tokenFailed ? 'error' : status;
-    const showStatus = !stopReason && !tooLarge;
+    const showStatus = !stopReason && !tooLarge && !unavailable;
     const visible = showStatus && Boolean(load) && shownStatus === 'ready' && !unresponsive;
 
     // A hidden frame cannot take focus, so the hand-off waits for it to show.
@@ -794,6 +797,17 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                     </ErrorBox>
                 </Overlay>
             )}
+            {unavailable && (
+                <Overlay data-testid='html-artifact-unavailable'>
+                    <ErrorBox role='alert'>
+                        <Icon
+                            size='20'
+                            glyph={<AlertCircleOutlineIcon/>}
+                        />
+                        <FormattedMessage defaultMessage='This artifact is unavailable. The message or file it came from was deleted.'/>
+                    </ErrorBox>
+                </Overlay>
+            )}
             {tooLarge && (
                 <Overlay data-testid='html-artifact-too-large'>
                     <ErrorBox role='alert'>
@@ -801,21 +815,15 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                             size='20'
                             glyph={<AlertCircleOutlineIcon/>}
                         />
-                        {downloadEnabled ? (
-                            <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
-                        ) : (
-                            <FormattedMessage defaultMessage='This artifact is too large to preview.'/>
-                        )}
-                        {downloadEnabled && (
-                            <Button
-                                emphasis='tertiary'
-                                size='x-small'
-                                leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
-                                onClick={() => downloadArtifact(fileId, artifactKind, version)}
-                            >
-                                <FormattedMessage defaultMessage='Download'/>
-                            </Button>
-                        )}
+                        <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
+                            leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
+                            onClick={() => downloadArtifact(fileId, artifactKind, version)}
+                        >
+                            <FormattedMessage defaultMessage='Download'/>
+                        </Button>
                     </ErrorBox>
                 </Overlay>
             )}

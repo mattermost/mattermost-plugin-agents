@@ -4,6 +4,7 @@
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from './manifest';
+import type {ChannelArtifactLibrary, ChannelLibraryState} from './redux';
 import {CustomPrompt} from './types';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
@@ -17,8 +18,7 @@ interface PluginState {
     channelArtifactsEnabled?: boolean;
     channelArtifactsLoaded?: boolean;
     channelArtifactsLoadFailed?: boolean;
-    channelArtifactDownloadEnabled?: boolean;
-    channelArtifactRenderingEnabled?: boolean;
+    channelArtifactLibrary?: ChannelArtifactLibrary;
 }
 
 type AppState = GlobalState & {
@@ -60,8 +60,5 @@ export const getChannelArtifactsLoaded = (state: AppState): boolean =>
 export const getChannelArtifactsLoadFailed = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsLoadFailed);
 
-export const getChannelArtifactDownloadEnabled = (state: AppState): boolean =>
-    state[`plugins-${manifest.id}`]?.channelArtifactDownloadEnabled !== false;
-
-export const getChannelArtifactRenderingEnabled = (state: AppState): boolean =>
-    state[`plugins-${manifest.id}`]?.channelArtifactRenderingEnabled !== false;
+export const getChannelLibrary = (state: AppState, channelId: string): ChannelLibraryState | undefined =>
+    state[`plugins-${manifest.id}`]?.channelArtifactLibrary?.[channelId];

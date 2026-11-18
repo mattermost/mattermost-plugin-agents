@@ -9,12 +9,13 @@ import styled from 'styled-components';
 import {GlobalState} from '@mattermost/types/store';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
-import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
+import {ChannelArtifactEntry, getChannelArtifact} from '@/client';
 import {getChannelArtifactsEnabled, getChannelArtifactsLoadFailed, getChannelArtifactsLoaded} from '@/selectors';
 
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
 import {historyPathWithoutBasename, libraryUrlAwaitingChannelSwitch, parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
+import {useChannelLibrary} from './library';
 
 type NoticeKind = 'disabled' | 'unavailable' | null;
 
@@ -51,9 +52,7 @@ const LibraryArtifactDeepLink = () => {
     const channelIdRef = useRef(channelId);
     channelIdRef.current = channelId;
     const [entry, setEntry] = useState<ChannelArtifactEntry | null>(null);
-    const [canManage, setCanManage] = useState(false);
-    const [downloadEnabled, setDownloadEnabled] = useState(true);
-    const [renderEnabled, setRenderEnabled] = useState(true);
+    const library = useChannelLibrary(channelId);
     const [notice, setNotice] = useState<NoticeKind>(null);
     const openingRef = useRef<string | null>(null);
     const openedIdsRef = useRef<Set<string>>(new Set());
@@ -108,7 +107,7 @@ const LibraryArtifactDeepLink = () => {
         }
 
         try {
-            const list = await listChannelArtifacts(channelId);
+            const match = await getChannelArtifact(artifactId);
             if (seq !== openSeq.current) {
                 return;
             }
@@ -117,8 +116,7 @@ const LibraryArtifactDeepLink = () => {
                 openingRef.current = null;
                 return;
             }
-            const match = (list.entries || []).find((e) => e.id === artifactId);
-            if (!match || match.channel_id !== channelId) {
+            if (match.channel_id !== channelId) {
                 openedIdsRef.current.delete(artifactId);
                 openingRef.current = null;
                 if (libraryUrlAwaitingChannelSwitch(window.location.pathname, teamName, channelName)) {
@@ -128,9 +126,6 @@ const LibraryArtifactDeepLink = () => {
                 stripQuery();
                 return;
             }
-            setCanManage(Boolean(list.can_manage));
-            setDownloadEnabled(list.download_enabled !== false);
-            setRenderEnabled(list.render_enabled !== false);
             setNotice(null);
             setEntry(match);
             stripQuery();
@@ -211,10 +206,9 @@ const LibraryArtifactDeepLink = () => {
                     fileName={entry.title}
                     artifactKind='library'
                     startedByClick={true}
-                    canManage={canManage}
-                    downloadEnabled={downloadEnabled}
-                    renderEnabled={renderEnabled}
-                    headVersion={entry.version || 1}
+                    canEdit={library.canEdit}
+                    canDelete={library.canDelete}
+                    headVersion={entry.version}
                     onClose={() => {
                         setEntry(null);
                         openingRef.current = null;
