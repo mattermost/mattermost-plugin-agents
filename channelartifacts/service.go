@@ -182,11 +182,18 @@ func (s *Service) VersionOf(entry *Entry, version int) (*VersionRecord, error) {
 		return &VersionRecord{
 			Version: entry.Version, SHA256: entry.SHA256, Size: entry.Size,
 			SourcePostID: entry.SourcePostID, SourceFileID: entry.SourceFileID,
-			SourceBotUserID: entry.SourceBotUserID, CreatedBy: entry.CreatedBy,
+			SourceBotUserID: entry.SourceBotUserID, SourceAgentDisplayName: entry.SourceAgentDisplayName, CreatedBy: entry.CreatedBy,
 			Head: true, Available: entry.Available,
 		}, nil
 	}
-	return s.store.Version(entry.ID, version)
+	rec, err := s.store.Version(entry.ID, version)
+	if err != nil {
+		return nil, err
+	}
+	if s.bots != nil {
+		rec.SourceAgentDisplayName = s.bots.AgentDisplayName(rec.SourceBotUserID)
+	}
+	return rec, nil
 }
 
 // IsHTMLFile reports whether the file is an HTML document by extension.
