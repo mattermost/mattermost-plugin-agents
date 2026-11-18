@@ -22,6 +22,7 @@ const LEVEL_SAMPLE_INTERVAL_MS = 50;
 // created before any await in start, inside the click that started
 // dictation: browsers start an AudioContext made later suspended.
 export type LevelMeter = {
+
     // Resolves whether audio processing runs; a suspended context reads silence.
     attach(stream: MediaStream): Promise<boolean>;
     level(): number;
