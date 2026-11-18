@@ -183,7 +183,7 @@ describe('ChannelArtifactsRHS', () => {
             download_enabled: true,
             render_enabled: true,
         });
-        jest.mocked(deleteChannelArtifact).mockResolvedValue(undefined);
+        jest.mocked(deleteChannelArtifact).mockResolvedValue();
         jest.spyOn(window, 'confirm').mockReturnValue(true);
 
         renderRHS();
@@ -206,7 +206,7 @@ describe('ChannelArtifactsRHS', () => {
             download_enabled: true,
             render_enabled: true,
         });
-        jest.mocked(deleteChannelArtifact).mockResolvedValue(undefined);
+        jest.mocked(deleteChannelArtifact).mockResolvedValue();
         jest.spyOn(window, 'confirm').mockReturnValue(true);
 
         renderRHS();
@@ -216,5 +216,59 @@ describe('ChannelArtifactsRHS', () => {
             expect(deleteChannelArtifact).toHaveBeenCalled();
         });
         expect(unpinLibraryArtifactBookmark).not.toHaveBeenCalled();
+    });
+
+    test('enter saves the title once when the input then blurs', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [libraryEntry(1)],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        jest.mocked(patchChannelArtifact).mockResolvedValue({...libraryEntry(1), title: 'Renamed'});
+        jest.mocked(syncLibraryArtifactBookmarkTitle).mockResolvedValue(true);
+
+        renderRHS();
+        fireEvent.click(await screen.findByTestId('channel-artifact-edit-artifactid012345678901234'));
+        const input = screen.getByTestId('channel-artifact-rename-artifactid012345678901234');
+        fireEvent.change(input, {target: {value: 'Renamed'}});
+        fireEvent.keyDown(input, {key: 'Enter'});
+        fireEvent.blur(input);
+
+        await waitFor(() => {
+            expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalled();
+        });
+        expect(patchChannelArtifact).toHaveBeenCalledTimes(1);
+    });
+
+    test('shows an error when removing an artifact fails', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [libraryEntry(1)],
+            can_manage: true,
+            download_enabled: true,
+            render_enabled: true,
+        });
+        jest.mocked(deleteChannelArtifact).mockRejectedValue(new Error('boom'));
+        jest.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderRHS();
+        fireEvent.click(await screen.findByTestId('channel-artifact-delete-artifactid012345678901234'));
+
+        expect(await screen.findByText('Could not remove the artifact.')).toBeTruthy();
+        expect(unpinLibraryArtifactBookmark).not.toHaveBeenCalled();
+    });
+
+    test('does not label a person-authored entry as an agent', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue({
+            entries: [{...libraryEntry(1), source_bot_user_id: ''}],
+            can_manage: false,
+            download_enabled: true,
+            render_enabled: true,
+        });
+
+        renderRHS();
+
+        await screen.findByTestId('channel-artifact-artifactid012345678901234');
+        expect(screen.queryByText(/Agent/)).toBeNull();
     });
 });

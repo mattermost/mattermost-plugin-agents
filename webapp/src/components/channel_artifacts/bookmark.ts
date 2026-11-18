@@ -260,8 +260,12 @@ export async function unpinLibraryArtifactBookmark(
         return false;
     }
     const fromState = state.entities?.channelBookmarks?.byChannelId?.[channelId];
-    const existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
-    const found = findLibraryArtifactBookmark(existing, artifactId);
+    let existing = fromState ? Object.values(fromState) : await Client4.getChannelBookmarks(channelId);
+    let found = findLibraryArtifactBookmark(existing, artifactId);
+    if (!found && fromState) {
+        existing = await Client4.getChannelBookmarks(channelId);
+        found = findLibraryArtifactBookmark(existing, artifactId);
+    }
     if (!found) {
         return false;
     }

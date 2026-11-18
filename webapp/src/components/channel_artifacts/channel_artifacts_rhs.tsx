@@ -47,12 +47,13 @@ const ChannelArtifactsRHS = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
     const [bookmarkWarning, setBookmarkWarning] = useState(false);
+    const [deleteError, setDeleteError] = useState(false);
     const [openId, setOpenId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
     const refreshSeq = useRef(0);
     const renamePending = useRef(false);
-    const renameCancelled = useRef(false);
+    const skipRenameBlur = useRef(false);
 
     const refresh = useCallback(() => {
         const seq = ++refreshSeq.current;
@@ -89,6 +90,7 @@ const ChannelArtifactsRHS = () => {
 
     useEffect(() => {
         setBookmarkWarning(false);
+        setDeleteError(false);
     }, [channelId]);
 
     useEffect(() => {
@@ -107,11 +109,13 @@ const ChannelArtifactsRHS = () => {
 
     const openEntry = entries.find((e) => e.id === openId) || null;
 
+    const startRename = (entry: ChannelArtifactEntry) => {
+        skipRenameBlur.current = false;
+        setEditingId(entry.id);
+        setEditTitle(entry.title);
+    };
+
     const saveRename = async (id: string) => {
-        if (renameCancelled.current) {
-            renameCancelled.current = false;
-            return;
-        }
         const next = editTitle.trim();
         if (!next) {
             setEditingId(null);
@@ -160,6 +164,7 @@ const ChannelArtifactsRHS = () => {
             if (!window.confirm(intl.formatMessage({defaultMessage: 'Permanently delete this artifact and all versions? This cannot be undone.'}))) { // eslint-disable-line no-alert
                 return;
             }
+            setDeleteError(false);
             try {
                 await deleteChannelArtifact(entry.id, {purge: true});
                 await unpinRemoved(entry.id);
@@ -168,7 +173,7 @@ const ChannelArtifactsRHS = () => {
                 }
                 refresh();
             } catch {
-                // best effort
+                setDeleteError(true);
             }
             return;
         }
@@ -182,6 +187,7 @@ const ChannelArtifactsRHS = () => {
             return;
         }
 
+        setDeleteError(false);
         try {
             await deleteChannelArtifact(entry.id);
             if (version <= 1) {
@@ -192,7 +198,7 @@ const ChannelArtifactsRHS = () => {
             }
             refresh();
         } catch {
-            // best effort
+            setDeleteError(true);
         }
     };
 
@@ -201,6 +207,7 @@ const ChannelArtifactsRHS = () => {
         if (!window.confirm(intl.formatMessage({defaultMessage: 'Permanently delete this artifact and all versions? This cannot be undone.'}))) { // eslint-disable-line no-alert
             return;
         }
+        setDeleteError(false);
         try {
             await deleteChannelArtifact(entry.id, {purge: true});
             await unpinRemoved(entry.id);
@@ -209,7 +216,7 @@ const ChannelArtifactsRHS = () => {
             }
             refresh();
         } catch {
-            // best effort
+            setDeleteError(true);
         }
     };
 
@@ -236,6 +243,11 @@ const ChannelArtifactsRHS = () => {
             {bookmarkWarning && (
                 <Warning>
                     <FormattedMessage defaultMessage='Renamed the artifact, but could not update its bookmark.'/>
+                </Warning>
+            )}
+            {deleteError && (
+                <Warning>
+                    <FormattedMessage defaultMessage='Could not remove the artifact.'/>
                 </Warning>
             )}
             {loading && (
@@ -266,13 +278,20 @@ const ChannelArtifactsRHS = () => {
                                     maxLength={64}
                                     autoFocus={true}
                                     onChange={(e) => setEditTitle(e.target.value)}
-                                    onBlur={() => saveRename(entry.id)}
+                                    onBlur={() => {
+                                        if (skipRenameBlur.current) {
+                                            skipRenameBlur.current = false;
+                                            return;
+                                        }
+                                        saveRename(entry.id);
+                                    }}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
+                                            skipRenameBlur.current = true;
                                             saveRename(entry.id);
                                         }
                                         if (e.key === 'Escape') {
-                                            renameCancelled.current = true;
+                                            skipRenameBlur.current = true;
                                             setEditingId(null);
                                         }
                                     }}
@@ -282,19 +301,16 @@ const ChannelArtifactsRHS = () => {
                                 <Title
                                     title={entry.title}
                                     onDoubleClick={() => {
-                                        if (!canManage) {
-                                            return;
+                                        if (canManage) {
+                                            startRename(entry);
                                         }
-                                        setEditingId(entry.id);
-                                        setEditTitle(entry.title);
                                     }}
                                 >
                                     {entry.title}
                                 </Title>
                             )}
                             <Sub>
-                                {entry.source_agent_display_name || 'Agent'}
-                                {' · '}
+                                {entry.source_agent_display_name ? `${entry.source_agent_display_name} · ` : ''}
                                 {new Date(entry.update_at || entry.create_at).toLocaleString()}
                                 {entry.version && entry.version > 1 ? ` · v${entry.version}` : ''}
                             </Sub>
@@ -320,10 +336,7 @@ const ChannelArtifactsRHS = () => {
                                         size='x-small'
                                         icon={<Icon glyph={<PencilOutlineIcon/>}/>}
                                         aria-label={intl.formatMessage({defaultMessage: 'Rename'})}
-                                        onClick={() => {
-                                            setEditingId(entry.id);
-                                            setEditTitle(entry.title);
-                                        }}
+                                        onClick={() => startRename(entry)}
                                         data-testid={`channel-artifact-edit-${entry.id}`}
                                     />
                                     <IconButton

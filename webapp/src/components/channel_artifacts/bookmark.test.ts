@@ -14,6 +14,7 @@ import {
     pinLibraryArtifactBookmark,
     stripLibraryArtifactQuery,
     syncLibraryArtifactBookmarkTitle,
+    unpinLibraryArtifactBookmark,
 } from './bookmark';
 
 jest.mock('@/client', () => ({
@@ -206,6 +207,37 @@ describe('channel artifact bookmark helpers', () => {
         mockGetBookmarks.mockRejectedValue(new Error('bookmarks unavailable'));
 
         await expect(syncLibraryArtifactBookmarkTitle({} as any, 'ch1', 'art1', 'Title')).rejects.toThrow('bookmarks unavailable');
+    });
+
+    test('unpinLibraryArtifactBookmark fetches the server when the cache misses the artifact', async () => {
+        const link = 'http://localhost:8065/test/channels/town?mm_ai_library_artifact=art1';
+        const cached = {id: 'other', type: 'link', channel_id: 'ch1', display_name: 'Other', link_url: link.replace('art1', 'other')};
+        const server = {id: 'bm1', type: 'link', channel_id: 'ch1', display_name: 'A', link_url: link};
+        mockGetBookmarks.mockResolvedValue([server]);
+        mockDeleteBookmark.mockResolvedValue({});
+        const state = {
+            entities: {
+                general: {license: {IsLicensed: 'true'}},
+                users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}},
+                roles: {roles: {channel_user: {permissions: ['delete_bookmark_public_channel']}}},
+                teams: {teams: {team1: {name: 'test'}}, myMembers: {}},
+                channels: {
+                    channels: {ch1: {id: 'ch1', name: 'town', type: 'O', delete_at: 0, team_id: 'team1'}},
+                    myMembers: {},
+                    roles: {ch1: new Set(['channel_user'])},
+                },
+                channelBookmarks: {byChannelId: {ch1: {other: cached}}},
+            },
+            websocket: {connectionId: 'conn1'},
+        } as any;
+        const dispatch = jest.fn();
+
+        const removed = await unpinLibraryArtifactBookmark(state, 'ch1', 'art1', dispatch);
+
+        expect(removed).toBe(true);
+        expect(mockGetBookmarks).toHaveBeenCalledWith('ch1');
+        expect(mockDeleteBookmark).toHaveBeenCalledWith('ch1', 'bm1', 'conn1');
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({type: 'BOOKMARK_DELETED'}));
     });
 
     test('pinLibraryArtifactBookmark keeps the earliest bookmark when a race creates two', async () => {
