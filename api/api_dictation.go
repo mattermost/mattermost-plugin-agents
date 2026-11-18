@@ -37,13 +37,7 @@ func (a *API) handleGetDictationAvailability(c *gin.Context) {
 		return
 	}
 	userID := c.GetHeader("Mattermost-User-Id")
-	availability, err := a.dictationService.Availability(c.Request.Context(), userID)
-	if err != nil {
-		a.pluginAPI.Log.Error("Failed to check dictation availability", "error", err.Error())
-		abortDictation(c, http.StatusInternalServerError, errDictationUnavailable)
-		return
-	}
-	c.JSON(http.StatusOK, availability)
+	c.JSON(http.StatusOK, a.dictationService.Availability(c.Request.Context(), userID))
 }
 
 // POST /dictation/session
@@ -56,7 +50,6 @@ func (a *API) handleCreateDictationSession(c *gin.Context) {
 
 	if d := a.config.Dictation(); d.Enabled {
 		audit.AddParam(auditRec(c), audit.KeyServiceID, d.ServiceID)
-		audit.AddParam(auditRec(c), audit.KeyModel, d.Model)
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")

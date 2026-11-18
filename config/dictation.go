@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -17,28 +18,52 @@ import (
 // are verified over WebRTC.
 var DictationServiceTypes = []string{llm.ServiceTypeOpenAI}
 
-// ErrInvalidDictationConfig is wrapped by every ValidateDictation error.
-var ErrInvalidDictationConfig = errors.New("invalid dictation configuration")
+var (
+	// ErrDictationDisabled is returned by DictationService when dictation is off.
+	ErrDictationDisabled = errors.New("dictation is disabled")
+	// ErrInvalidDictationConfig is wrapped by every other DictationService error.
+	ErrInvalidDictationConfig = errors.New("invalid dictation configuration")
+)
 
-// ValidateDictation checks that an enabled dictation setting names a
-// configured service of a supported type and a model.
-func (c *Config) ValidateDictation() error {
+// DictationService returns the service dictation mints sessions with. Save
+// validation and every runtime request use it, so a setting that saves is
+// one that works.
+func (c *Config) DictationService() (llm.ServiceConfig, error) {
 	d := c.Dictation
 	if !d.Enabled {
-		return nil
+		return llm.ServiceConfig{}, ErrDictationDisabled
 	}
 	if d.ServiceID == "" {
-		return fmt.Errorf("%w: select a transcription service", ErrInvalidDictationConfig)
+		return llm.ServiceConfig{}, fmt.Errorf("%w: select a transcription service", ErrInvalidDictationConfig)
 	}
 	svc, ok := c.GetServiceByID(d.ServiceID)
 	if !ok {
-		return fmt.Errorf("%w: transcription service %q is not configured", ErrInvalidDictationConfig, d.ServiceID)
+		return llm.ServiceConfig{}, fmt.Errorf("%w: transcription service %q is not configured", ErrInvalidDictationConfig, d.ServiceID)
 	}
 	if !slices.Contains(DictationServiceTypes, svc.Type) {
-		return fmt.Errorf("%w: service %q has type %q; dictation supports %s", ErrInvalidDictationConfig, svc.Name, svc.Type, strings.Join(DictationServiceTypes, ", "))
+		return llm.ServiceConfig{}, fmt.Errorf("%w: service %q has type %q; dictation supports %s", ErrInvalidDictationConfig, svc.Name, svc.Type, strings.Join(DictationServiceTypes, ", "))
+	}
+	if svc.APIKey == "" {
+		return llm.ServiceConfig{}, fmt.Errorf("%w: service %q has no API key", ErrInvalidDictationConfig, svc.Name)
+	}
+	// Browsers receive a URL derived from the API URL, so it must not carry
+	// credentials or anything but a scheme, host and path.
+	if svc.APIURL != "" {
+		u, err := url.Parse(svc.APIURL)
+		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
+			return llm.ServiceConfig{}, fmt.Errorf("%w: service %q needs an API URL with only a scheme, host and path", ErrInvalidDictationConfig, svc.Name)
+		}
 	}
 	if strings.TrimSpace(d.Model) == "" {
-		return fmt.Errorf("%w: a transcription model is required", ErrInvalidDictationConfig)
+		return llm.ServiceConfig{}, fmt.Errorf("%w: a transcription model is required", ErrInvalidDictationConfig)
+	}
+	return svc, nil
+}
+
+// ValidateDictation checks that an enabled dictation setting can be used.
+func (c *Config) ValidateDictation() error {
+	if _, err := c.DictationService(); err != nil && !errors.Is(err, ErrDictationDisabled) {
+		return err
 	}
 	return nil
 }

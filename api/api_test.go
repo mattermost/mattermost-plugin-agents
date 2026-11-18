@@ -85,13 +85,8 @@ func (tc *testConfigImpl) Dictation() config.DictationConfig {
 	return tc.dictation
 }
 
-func (tc *testConfigImpl) GetServiceByID(id string) (llm.ServiceConfig, bool) {
-	for _, svc := range tc.services {
-		if svc.ID == id {
-			return svc, true
-		}
-	}
-	return llm.ServiceConfig{}, false
+func (tc *testConfigImpl) Config() *config.Config {
+	return &config.Config{Services: slices.Clone(tc.services), Dictation: tc.dictation}
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ const (
 	dictationAPIKey         = "sk-dictation-test-key-0123456789"
 	dictationSecretSentinel = "ek_SENTINEL_CLIENT_SECRET"
 	upstreamBodySentinel    = "UPSTREAM_BODY_SENTINEL"
+	urlCredentialSentinel   = "URLSECRETSENTINEL"
 )
 
 type fakeRealtimeProvider struct {
@@ -138,6 +140,22 @@ func TestCreateDictationSessionOutcomes(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
+			name:  "service without an API key",
+			level: enterprise.LevelEnterprise,
+			setup: func(e *TestEnvironment, _ *fakeRealtimeProvider) {
+				e.config.services[1].APIKey = ""
+			},
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:  "service API URL carries credentials",
+			level: enterprise.LevelEnterprise,
+			setup: func(e *TestEnvironment, _ *fakeRealtimeProvider) {
+				e.config.services[1].APIURL = strings.Replace(e.config.services[1].APIURL, "http://", "http://user:"+urlCredentialSentinel+"@", 1)
+			},
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
 			name:       "service access denied",
 			level:      enterprise.LevelEnterprise,
 			setup:      func(e *TestEnvironment, _ *fakeRealtimeProvider) { e.denyDictationService() },
@@ -166,6 +184,7 @@ func TestCreateDictationSessionOutcomes(t *testing.T) {
 			assert.Equal(t, tt.wantProviders, provider.requests.Load())
 			assert.NotContains(t, recorder.Body.String(), upstreamBodySentinel)
 			assert.NotContains(t, recorder.Body.String(), dictationAPIKey)
+			assert.NotContains(t, recorder.Body.String(), urlCredentialSentinel)
 			if tt.wantStatus == http.StatusForbidden && tt.level < enterprise.LevelEnterprise {
 				requireLicenseDenied(t, recorder.Result(), enterprise.CapDictation)
 			}
@@ -272,6 +291,7 @@ func TestCreateDictationSessionAudit(t *testing.T) {
 	e, _ := setupDictationEnv(t, enterprise.LevelEnterprise)
 	defer e.Cleanup(t)
 	e.config.dictation.Language = "xx-LANGUAGE-SENTINEL"
+	e.config.dictation.Model = "MODEL-SENTINEL-transcribe"
 	records := e.CaptureAuditRecords()
 
 	recorder := e.doDictationRequest(http.MethodPost, "/dictation/session")
@@ -284,13 +304,13 @@ func TestCreateDictationSessionAudit(t *testing.T) {
 	assert.Equal(t, model.AuditStatusSuccess, rec.Status)
 	assert.Equal(t, testUserID, rec.Actor.UserId)
 	assert.Equal(t, dictationServiceID, rec.EventData.Parameters[audit.KeyServiceID])
-	assert.Equal(t, "gpt-live-transcribe", rec.EventData.Parameters[audit.KeyModel])
 
 	raw, err := json.Marshal(rec)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), dictationSecretSentinel)
 	assert.NotContains(t, string(raw), dictationAPIKey)
 	assert.NotContains(t, string(raw), "LANGUAGE-SENTINEL")
+	assert.NotContains(t, string(raw), "MODEL-SENTINEL", "audit records hold identifiers, not config values")
 }
 
 func TestGetDictationAvailability(t *testing.T) {

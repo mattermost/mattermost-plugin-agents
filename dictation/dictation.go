@@ -11,8 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
-	"strings"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
@@ -42,8 +40,7 @@ var (
 
 // Config is the configuration the service reads on every call.
 type Config interface {
-	Dictation() config.DictationConfig
-	GetServiceByID(id string) (llm.ServiceConfig, bool)
+	Config() *config.Config
 }
 
 // LicenseChecker reports whether a capability is licensed.
@@ -118,7 +115,7 @@ func New(cfg Config, license LicenseChecker, access AccessChecker, log Logger) *
 		limiter:   newRateLimiter(),
 		newMinter: newBifrostMinter,
 	}
-	s.siteState = s.siteAvailability()
+	s.siteState = availabilityFor(s.resolve())
 	return s
 }
 
@@ -131,9 +128,9 @@ func (s *Service) OnAvailabilityChange(f func()) {
 	s.onAvailabilityChange = f
 }
 
-// siteAvailability is Availability without the per-user access check.
-func (s *Service) siteAvailability() Availability {
-	r, err := s.resolve()
+// availabilityFor reports a resolve or access check result, failing closed
+// on an unexpected error.
+func availabilityFor(r resolved, err error) Availability {
 	avail := Availability{Enabled: r.dictation.Enabled, Transport: TransportWebRTC}
 	if err != nil {
 		reason, ok := reasonFor(err)
@@ -166,21 +163,20 @@ func (s *Service) checkLicense() error {
 // resolve fails closed: a missing service or one of the wrong type is a
 // configuration error, never a reason to use another service.
 func (s *Service) resolve() (resolved, error) {
-	d := s.config.Dictation()
-	if !d.Enabled {
-		return resolved{dictation: d}, ErrDisabled
+	cfg := s.config.Config()
+	r := resolved{dictation: cfg.Dictation}
+	if !r.dictation.Enabled {
+		return r, ErrDisabled
 	}
 	if err := s.checkLicense(); err != nil {
-		return resolved{dictation: d}, err
+		return r, err
 	}
-	if d.ServiceID == "" || strings.TrimSpace(d.Model) == "" {
-		return resolved{dictation: d}, ErrMisconfigured
+	svc, err := cfg.DictationService()
+	if err != nil {
+		return r, fmt.Errorf("%w: %w", ErrMisconfigured, err)
 	}
-	svc, ok := s.config.GetServiceByID(d.ServiceID)
-	if !ok || !slices.Contains(config.DictationServiceTypes, svc.Type) || svc.APIKey == "" {
-		return resolved{dictation: d}, ErrMisconfigured
-	}
-	return resolved{dictation: d, service: svc}, nil
+	r.service = svc
+	return r, nil
 }
 
 func (s *Service) checkAccess(ctx context.Context, userID, serviceID string) error {
@@ -194,27 +190,12 @@ func (s *Service) checkAccess(ctx context.Context, userID, serviceID string) err
 }
 
 // Availability reports whether userID can dictate right now.
-func (s *Service) Availability(ctx context.Context, userID string) (Availability, error) {
+func (s *Service) Availability(ctx context.Context, userID string) Availability {
 	r, err := s.resolve()
-	avail := Availability{
-		Enabled:   r.dictation.Enabled,
-		Transport: TransportWebRTC,
-	}
 	if err == nil {
 		err = s.checkAccess(ctx, userID, r.service.ID)
 	}
-	if err != nil {
-		reason, ok := reasonFor(err)
-		if !ok {
-			return Availability{}, err
-		}
-		avail.Reason = reason
-		return avail, nil
-	}
-	avail.Available = true
-	avail.Provider = r.service.Type
-	avail.Model = r.dictation.Model
-	return avail, nil
+	return availabilityFor(r, err)
 }
 
 func reasonFor(err error) (string, bool) {
@@ -293,7 +274,7 @@ func (s *Service) acquireMinter(svc llm.ServiceConfig) (*minterEntry, error) {
 // config and license changes, on every node.
 func (s *Service) Reconcile() {
 	r, err := s.resolve()
-	state := s.siteAvailability()
+	state := availabilityFor(r, err)
 
 	s.mu.Lock()
 	if s.current != nil && (err != nil || !reflect.DeepEqual(s.current.svc, r.service)) {

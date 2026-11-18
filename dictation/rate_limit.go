@@ -4,6 +4,7 @@
 package dictation
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -29,8 +30,12 @@ const (
 
 type userMints struct {
 	attempts []time.Time
-	// expiries holds the expiry of each unexpired key or in-flight mint.
-	expiries []time.Time
+	keys     []*keyReservation
+}
+
+// keyReservation is an unexpired key, or a mint still in flight.
+type keyReservation struct {
+	expires time.Time
 }
 
 type rateLimiter struct {
@@ -57,52 +62,34 @@ func (l *rateLimiter) reserve(userID string) (release func(*bifrost.Transcriptio
 		u = &userMints{}
 		l.users[userID] = u
 	}
-	if len(u.attempts) >= mintsPerWindow || len(u.expiries) >= maxUnexpiredKeys {
+	if len(u.attempts) >= mintsPerWindow || len(u.keys) >= maxUnexpiredKeys {
 		return nil, false
 	}
 
-	pending := now.Add(pendingKeyTTL)
+	key := &keyReservation{expires: now.Add(pendingKeyTTL)}
 	u.attempts = append(u.attempts, now)
-	u.expiries = append(u.expiries, pending)
+	u.keys = append(u.keys, key)
 
 	return func(session *bifrost.TranscriptionSession) {
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		u := l.users[userID]
-		if u == nil {
+		if session == nil {
+			key.expires = time.Time{}
 			return
 		}
-		for i, exp := range u.expiries {
-			if !exp.Equal(pending) {
-				continue
-			}
-			if session == nil {
-				u.expiries = append(u.expiries[:i], u.expiries[i+1:]...)
-			} else {
-				u.expiries[i] = time.UnixMilli(session.ExpiresAt)
-			}
-			break
-		}
+		key.expires = time.UnixMilli(session.ExpiresAt)
 	}, true
 }
 
-// pruneLocked drops users with no recent activity. mu must be held.
+// pruneLocked drops expired entries and users with no recent activity. mu
+// must be held.
 func (l *rateLimiter) pruneLocked(now time.Time) {
+	windowStart := now.Add(-mintWindow)
 	for id, u := range l.users {
-		u.attempts = keepAfter(u.attempts, now.Add(-mintWindow))
-		u.expiries = keepAfter(u.expiries, now)
-		if len(u.attempts) == 0 && len(u.expiries) == 0 {
+		u.attempts = slices.DeleteFunc(u.attempts, func(t time.Time) bool { return !t.After(windowStart) })
+		u.keys = slices.DeleteFunc(u.keys, func(k *keyReservation) bool { return !k.expires.After(now) })
+		if len(u.attempts) == 0 && len(u.keys) == 0 {
 			delete(l.users, id)
 		}
 	}
-}
-
-func keepAfter(times []time.Time, cutoff time.Time) []time.Time {
-	kept := times[:0]
-	for _, t := range times {
-		if t.After(cutoff) {
-			kept = append(kept, t)
-		}
-	}
-	return kept
 }

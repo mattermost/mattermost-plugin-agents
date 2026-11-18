@@ -229,6 +229,9 @@ func TestRealtimeCallsURL(t *testing.T) {
 		{name: "openai custom base", provider: schemas.OpenAI, apiURL: "https://proxy.example.com/", want: "https://proxy.example.com/v1/realtime/calls"},
 		{name: "azure endpoint", provider: schemas.Azure, apiURL: "https://res.openai.azure.com/", want: "https://res.openai.azure.com/openai/v1/realtime/calls"},
 		{name: "azure without endpoint", provider: schemas.Azure, wantErr: true},
+		{name: "credentials in URL", provider: schemas.OpenAI, apiURL: "https://user:secret@proxy.example.com", wantErr: true},
+		{name: "query in URL", provider: schemas.OpenAI, apiURL: "https://proxy.example.com/?key=secret", wantErr: true},
+		{name: "fragment in URL", provider: schemas.Azure, apiURL: "https://res.openai.azure.com/#secret", wantErr: true},
 		{name: "unsupported provider", provider: schemas.Anthropic, wantErr: true},
 	}
 	for _, tt := range tests {

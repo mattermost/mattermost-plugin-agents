@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -112,8 +113,16 @@ func NewRealtimeSessionMinter(service llm.ServiceConfig) (*RealtimeSessionMinter
 	}, nil
 }
 
+// realtimeCallsURL is sent to browsers, so a base URL carrying credentials,
+// a query or a fragment is refused rather than passed on.
 func realtimeCallsURL(provider schemas.ModelProvider, apiURL string) (string, error) {
 	base := strings.TrimRight(strings.TrimSpace(apiURL), "/")
+	if base != "" {
+		u, err := url.Parse(base)
+		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
+			return "", errors.New("the service API URL must hold only a scheme, host and path for realtime sessions")
+		}
+	}
 	switch provider {
 	case schemas.OpenAI:
 		if base == "" {
@@ -201,7 +210,11 @@ func buildTranscriptionSessionBody(req TranscriptionSessionRequest) ([]byte, str
 }
 
 // CreateTranscriptionSession mints a transcription-only session. The whole
-// session configuration is built here; nothing comes from the browser.
+// session configuration is built here; nothing comes from the browser. The
+// provider locks the session type, but a modified client holding the key can
+// still switch to another, possibly pricier, transcription model (and change
+// VAD, language and prompt) with session.update, so Model is what was
+// configured, not necessarily what is billed.
 func (m *RealtimeSessionMinter) CreateTranscriptionSession(ctx context.Context, req TranscriptionSessionRequest) (*TranscriptionSession, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "dictation.create_session", trace.WithAttributes(
 		telemetry.LLMProvider.String(m.serviceType),

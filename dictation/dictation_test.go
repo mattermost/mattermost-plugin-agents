@@ -22,34 +22,8 @@ import (
 
 const testUserID = "user12345678901234567890ab"
 
-type fakeConfig struct {
-	mu        sync.Mutex
-	dictation config.DictationConfig
-	services  []llm.ServiceConfig
-}
-
-func (c *fakeConfig) Dictation() config.DictationConfig {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.dictation
-}
-
-func (c *fakeConfig) GetServiceByID(id string) (llm.ServiceConfig, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, svc := range c.services {
-		if svc.ID == id {
-			return svc, true
-		}
-	}
-	return llm.ServiceConfig{}, false
-}
-
-func (c *fakeConfig) set(d config.DictationConfig, services ...llm.ServiceConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.dictation = d
-	c.services = services
+func setConfig(c *config.Container, d config.DictationConfig, services ...llm.ServiceConfig) {
+	c.Update(&config.Config{Services: services, Dictation: d})
 }
 
 type levelChecker struct{ level atomic.Int32 }
@@ -123,131 +97,48 @@ func enabled(serviceID string) config.DictationConfig {
 	return config.DictationConfig{Enabled: true, ServiceID: serviceID, Model: "gpt-live-transcribe"}
 }
 
-func newTestService(cfg *fakeConfig, license LicenseChecker, access AccessChecker) (*Service, *minterFactory) {
+func newTestService(cfg *config.Container, license LicenseChecker, access AccessChecker) (*Service, *minterFactory) {
 	factory := &minterFactory{}
 	svc := New(cfg, license, access, nopLogger{})
 	svc.newMinter = factory.build
 	return svc, factory
 }
 
-func TestAvailabilityAndCreateSessionOutcomes(t *testing.T) {
-	denyAll := accessFunc(func(context.Context, string, string) error { return errors.New("denied by policy") })
-
+// The outcomes reachable through the API are covered there; these are the
+// nil-dependency cases the server never wires.
+func TestNilCheckersFailClosed(t *testing.T) {
 	tests := []struct {
 		name       string
-		dictation  config.DictationConfig
-		services   []llm.ServiceConfig
-		level      enterprise.Level
+		license    LicenseChecker
 		access     AccessChecker
-		noLicense  bool
 		wantReason string
 		wantErr    error
 	}{
-		{
-			name:       "disabled",
-			dictation:  config.DictationConfig{ServiceID: "openai1", Model: "gpt-live-transcribe"},
-			services:   []llm.ServiceConfig{openAIService("openai1", "k")},
-			level:      enterprise.LevelEnterprise,
-			access:     allowAll,
-			wantReason: ReasonDisabled,
-			wantErr:    ErrDisabled,
-		},
-		{
-			name:       "professional license",
-			dictation:  enabled("openai1"),
-			services:   []llm.ServiceConfig{openAIService("openai1", "k")},
-			level:      enterprise.LevelProfessional,
-			access:     allowAll,
-			wantReason: ReasonLicense,
-			wantErr:    enterprise.ErrNotLicensed,
-		},
-		{
-			name:       "nil license checker fails closed",
-			dictation:  enabled("openai1"),
-			services:   []llm.ServiceConfig{openAIService("openai1", "k")},
-			access:     allowAll,
-			noLicense:  true,
-			wantReason: ReasonLicense,
-			wantErr:    enterprise.ErrNotLicensed,
-		},
-		{
-			name:       "service deleted",
-			dictation:  enabled("openai1"),
-			level:      enterprise.LevelEnterprise,
-			access:     allowAll,
-			wantReason: ReasonMisconfigured,
-			wantErr:    ErrMisconfigured,
-		},
-		{
-			name:       "service of the wrong type",
-			dictation:  enabled("anthropic1"),
-			services:   []llm.ServiceConfig{{ID: "anthropic1", Type: llm.ServiceTypeAnthropic, APIKey: "k"}},
-			level:      enterprise.LevelEnterprise,
-			access:     allowAll,
-			wantReason: ReasonMisconfigured,
-			wantErr:    ErrMisconfigured,
-		},
-		{
-			name:       "access denied",
-			dictation:  enabled("openai1"),
-			services:   []llm.ServiceConfig{openAIService("openai1", "k")},
-			level:      enterprise.LevelEnterprise,
-			access:     denyAll,
-			wantReason: ReasonAccessDenied,
-			wantErr:    ErrAccessDenied,
-		},
-		{
-			name:       "nil access checker fails closed",
-			dictation:  enabled("openai1"),
-			services:   []llm.ServiceConfig{openAIService("openai1", "k")},
-			level:      enterprise.LevelEnterprise,
-			wantReason: ReasonAccessDenied,
-			wantErr:    ErrAccessDenied,
-		},
-		{
-			name:      "available at enterprise advanced",
-			dictation: enabled("openai1"),
-			services:  []llm.ServiceConfig{openAIService("openai1", "k")},
-			level:     enterprise.LevelEnterpriseAdvanced,
-			access:    allowAll,
-		},
+		{name: "nil license checker", access: allowAll, wantReason: ReasonLicense, wantErr: enterprise.ErrNotLicensed},
+		{name: "nil access checker", license: newLevelChecker(enterprise.LevelEnterprise), wantReason: ReasonAccessDenied, wantErr: ErrAccessDenied},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &fakeConfig{}
-			cfg.set(tt.dictation, tt.services...)
-			var license LicenseChecker
-			if !tt.noLicense {
-				license = newLevelChecker(tt.level)
-			}
-			svc, factory := newTestService(cfg, license, tt.access)
+			cfg := &config.Container{}
+			setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
+			svc, factory := newTestService(cfg, tt.license, tt.access)
 
-			avail, err := svc.Availability(context.Background(), testUserID)
-			require.NoError(t, err)
-			assert.Equal(t, tt.dictation.Enabled, avail.Enabled)
-			assert.Equal(t, TransportWebRTC, avail.Transport)
+			avail := svc.Availability(context.Background(), testUserID)
+			assert.False(t, avail.Available)
 			assert.Equal(t, tt.wantReason, avail.Reason)
-			assert.Equal(t, tt.wantReason == "", avail.Available)
 
 			session, err := svc.CreateSession(context.Background(), testUserID)
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-				assert.Nil(t, session)
-				assert.Empty(t, factory.built, "no provider client is built for a denied request")
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, llm.ServiceTypeOpenAI, avail.Provider)
-			assert.Equal(t, "gpt-live-transcribe", avail.Model)
-			assert.Equal(t, "ek_openai1", session.ClientSecret)
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.Nil(t, session)
+			assert.Empty(t, factory.built, "no provider client is built for a denied request")
 		})
 	}
 }
 
 func TestLicenseDowngradeAppliesImmediately(t *testing.T) {
-	cfg := &fakeConfig{}
-	cfg.set(enabled("openai1"), openAIService("openai1", "k"))
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
 	license := newLevelChecker(enterprise.LevelEnterprise)
 	svc, factory := newTestService(cfg, license, allowAll)
 
@@ -257,8 +148,7 @@ func TestLicenseDowngradeAppliesImmediately(t *testing.T) {
 	license.level.Store(int32(enterprise.LevelProfessional))
 	svc.Reconcile()
 
-	avail, err := svc.Availability(context.Background(), testUserID)
-	require.NoError(t, err)
+	avail := svc.Availability(context.Background(), testUserID)
 	assert.False(t, avail.Available)
 	assert.Equal(t, ReasonLicense, avail.Reason)
 
@@ -270,8 +160,8 @@ func TestLicenseDowngradeAppliesImmediately(t *testing.T) {
 }
 
 func TestMinterRebuiltOnServiceChange(t *testing.T) {
-	cfg := &fakeConfig{}
-	cfg.set(enabled("openai1"), openAIService("openai1", "key-1"))
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-1"))
 	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
 
 	_, err := svc.CreateSession(context.Background(), testUserID)
@@ -284,7 +174,7 @@ func TestMinterRebuiltOnServiceChange(t *testing.T) {
 	require.Len(t, factory.built, 1)
 	assertNotShutdown(t, factory.built[0])
 
-	cfg.set(enabled("openai1"), openAIService("openai1", "key-2"))
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-2"))
 	svc.Reconcile()
 	assertShutdown(t, factory.built[0])
 
@@ -294,14 +184,14 @@ func TestMinterRebuiltOnServiceChange(t *testing.T) {
 	assert.Equal(t, "key-2", factory.built[1].svc.APIKey)
 	assert.Equal(t, "ek_openai1", session.ClientSecret)
 
-	cfg.set(config.DictationConfig{}, openAIService("openai1", "key-2"))
+	setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "key-2"))
 	svc.Reconcile()
 	assertShutdown(t, factory.built[1])
 }
 
 func TestCreateSessionProviderFailure(t *testing.T) {
-	cfg := &fakeConfig{}
-	cfg.set(enabled("openai1"), openAIService("openai1", "k"))
+	cfg := &config.Container{}
+	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
 	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
 	factory.mintErr = errors.New("upstream 500")
 
