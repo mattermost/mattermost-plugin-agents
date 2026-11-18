@@ -191,17 +191,18 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 // anchoredPostTextLookup returns a lookup for the current message of a post a
 // turn is anchored to, resolving each post ID at most once per request. ok is
 // true only for a live post in channelID, the channel the conversation the
-// turn belongs to is bound to.
-func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (message string, ok bool) {
+// turn belongs to is bound to. A lookup failing for any reason other than the
+// post not existing is returned as an error.
+func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (message string, ok bool, err error) {
 	type anchoredPost struct {
 		message string
 		ok      bool
 	}
 	resolved := make(map[string]anchoredPost)
 
-	return func(postID string) (string, bool) {
+	return func(postID string) (string, bool, error) {
 		if cached, seen := resolved[postID]; seen {
-			return cached.message, cached.ok
+			return cached.message, cached.ok, nil
 		}
 
 		var anchor anchoredPost
@@ -209,15 +210,14 @@ func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (mes
 		switch {
 		case err != nil:
 			if !errors.Is(err, pluginapi.ErrNotFound) {
-				a.pluginAPI.Log.Warn("Failed to read the post a conversation turn is anchored to",
-					"error", err, "post_id", postID)
+				return "", false, fmt.Errorf("failed to read the post a conversation turn is anchored to: %w", err)
 			}
 		case post != nil && post.DeleteAt == 0 && channelID != nil && post.ChannelId == *channelID:
 			anchor = anchoredPost{message: post.Message, ok: true}
 		}
 
 		resolved[postID] = anchor
-		return anchor.message, anchor.ok
+		return anchor.message, anchor.ok, nil
 	}
 }
 
@@ -230,7 +230,7 @@ func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (mes
 func turnsToResponse(
 	turns []store.Turn,
 	filterForNonRequester bool,
-	anchoredPostText func(postID string) (string, bool),
+	anchoredPostText func(postID string) (string, bool, error),
 ) ([]TurnResponse, bool, error) {
 	result := make([]TurnResponse, len(turns))
 	openingTextChanged := false
@@ -242,13 +242,16 @@ func turnsToResponse(
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
 			if stored := conversation.TextContent(blocks); turn.PostID != nil && stored != "" {
-				message, ok := anchoredPostText(*turn.PostID)
+				message, ok, err := anchoredPostText(*turn.PostID)
+				if err != nil {
+					return nil, false, err
+				}
 				if !ok {
 					message = ""
 				}
 				if message != stored {
 					blocks = conversation.WithTextContent(blocks, message)
-					if i == 0 && message != withoutLeadingMention(stored) {
+					if i == 0 && strings.TrimSpace(message) != strings.TrimSpace(withoutLeadingMention(stored)) {
 						openingTextChanged = true
 					}
 				}

@@ -1563,6 +1563,66 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			wantTitle: "",
 		},
 		{
+			conversationID: "conv-lookup-fails",
+			name:           "failed post lookup fails the request instead of serving a blanked turn",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredUserPostID).Return(nil, &model.AppError{
+					Id:         "app.post.get.app_error",
+					StatusCode: http.StatusInternalServerError,
+				}).Maybe()
+				anchoredThread(t, e, "conv-lookup-fails", "Lookup", nil, nil)
+				postID := anchoredUserPostID
+				e.conversationStore.turns["conv-lookup-fails"] = []store.Turn{{
+					ID: "turn-lookup", ConversationID: "conv-lookup-fails", PostID: &postID, Role: "user", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: threadRootMessage}}),
+				}}
+			},
+			status: http.StatusInternalServerError,
+			absent: []string{threadRootMessage},
+		},
+		{
+			conversationID: "conv-annotated",
+			name:           "web search results of a replaced answer are absent from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: editedReplacement,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-annotated", "Annotated", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-annotated"] = []store.Turn{{
+					ID: "turn-annotated", ConversationID: "conv-annotated", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeAnnotations, WebSearchContext: &conversation.WebSearchContext{
+							Results: json.RawMessage(`[{"cited_text":"` + secretDeletedReply + `"}]`),
+							Count:   1,
+						}},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-padded-auto-reply",
+			name:           "auto-reply thread whose post has surrounding whitespace keeps its title",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-padded-auto-reply", "Padded title", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", "  "+threadRootMessage+"\n")})
+			},
+			status:    http.StatusOK,
+			texts:     []string{"  " + threadRootMessage + "\n"},
+			wantTitle: "Padded title",
+		},
+		{
 			name:           "non-member gets 403 and no turn text",
 			conversationID: "conv-nonmember",
 			userID:         testOtherUserID,
