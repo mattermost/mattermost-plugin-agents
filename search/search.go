@@ -192,7 +192,7 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 		if s.mmclient != nil {
 			settings = s.mmclient
 		}
-		readable := scopedsession.ContentChannels(scope, scopedsession.OpenTeamGrantDisabled(settings))
+		readable := scopedsession.ContentChannels(scope, scopedsession.ServerLimits(settings))
 		searchOpts.Scope = &readable
 	}
 

@@ -26,25 +26,27 @@ func TestAllowsChannelContent(t *testing.T) {
 		Resources:   model.SessionScopeResources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true},
 	}
 
+	noJoin := model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}
+
 	tests := []struct {
-		name                  string
-		scope                 *model.SessionScope
-		channel               *model.Channel
-		team                  *model.Team
-		openTeamGrantDisabled bool
-		allowed               bool
+		name    string
+		scope   *model.SessionScope
+		channel *model.Channel
+		team    *model.Team
+		limits  model.SessionScopeLimits
+		allowed bool
 	}{
 		{name: "listed private channel the bot is not in", scope: scope, channel: listed, allowed: true},
 		{name: "public channel on an open team", scope: scope, channel: openPublic, team: openTeam, allowed: true},
-		{name: "public channel on an open team with the grant off", scope: scope, channel: openPublic, team: openTeam, openTeamGrantDisabled: true},
-		{name: "listed channel with the open-team grant off", scope: scope, channel: listed, openTeamGrantDisabled: true, allowed: true},
+		{name: "public channel on an open team with the grant off", scope: scope, channel: openPublic, team: openTeam, limits: noJoin},
+		{name: "listed channel with the open-team grant off", scope: scope, channel: listed, limits: noJoin, allowed: true},
 		{name: "scope without the content permission", scope: &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources}, channel: listed},
 		{name: "empty scope from a malformed prop", scope: &model.SessionScope{}, channel: listed},
 		{name: "no scope", channel: listed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.allowed, AllowsChannelContent(tt.scope, tt.channel, tt.team, tt.openTeamGrantDisabled))
+			assert.Equal(t, tt.allowed, AllowsChannelContent(tt.scope, tt.channel, tt.team, tt.limits))
 		})
 	}
 }
@@ -52,18 +54,18 @@ func TestAllowsChannelContent(t *testing.T) {
 func TestContentChannels(t *testing.T) {
 	resources := model.SessionScopeResources{ChannelIDs: []string{"a", "b"}, OpenTeamPublicChannels: true}
 	tests := []struct {
-		name                  string
-		scope                 *model.SessionScope
-		openTeamGrantDisabled bool
-		expected              model.SessionScopeResources
+		name     string
+		scope    *model.SessionScope
+		limits   model.SessionScopeLimits
+		expected model.SessionScopeResources
 	}{
 		{name: "full scope", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, expected: resources},
-		{name: "open-team grant off drops open teams", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, openTeamGrantDisabled: true, expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}}},
+		{name: "open-team grant off drops open teams", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}, expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}}},
 		{name: "no content permission reads nothing", scope: &model.SessionScope{Resources: resources}, expected: model.SessionScopeResources{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, ContentChannels(tt.scope, tt.openTeamGrantDisabled))
+			assert.Equal(t, tt.expected, ContentChannels(tt.scope, tt.limits))
 		})
 	}
 }
@@ -155,27 +157,28 @@ func (f fakeSettings) RolesGrantPermission(roles []string, permissionID string) 
 	return f.join && len(roles) == 1 && roles[0] == model.SystemUserRoleId && permissionID == model.PermissionJoinPublicTeams.Id
 }
 
-func TestOpenTeamGrantDisabled(t *testing.T) {
+func TestServerLimits(t *testing.T) {
 	cfg := func(compliance *bool) *model.Config {
 		return &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: compliance}}
 	}
 	off, on := false, true
+	failClosed := model.SessionScopeLimits{ComplianceMode: true, UsersCannotJoinOpenTeams: true}
 
 	tests := []struct {
 		name     string
 		settings ServerSettings
-		disabled bool
+		limits   model.SessionScopeLimits
 	}{
-		{name: "open when compliance is off and system_user can join", settings: fakeSettings{cfg: cfg(&off), join: true}},
-		{name: "compliance mode", settings: fakeSettings{cfg: cfg(&on), join: true}, disabled: true},
-		{name: "system_user cannot join public teams", settings: fakeSettings{cfg: cfg(&off)}, disabled: true},
-		{name: "compliance setting missing", settings: fakeSettings{cfg: cfg(nil), join: true}, disabled: true},
-		{name: "config missing", settings: fakeSettings{join: true}, disabled: true},
-		{name: "no settings", disabled: true},
+		{name: "no limits when compliance is off and system_user can join", settings: fakeSettings{cfg: cfg(&off), join: true}},
+		{name: "compliance mode", settings: fakeSettings{cfg: cfg(&on), join: true}, limits: model.SessionScopeLimits{ComplianceMode: true}},
+		{name: "system_user cannot join public teams", settings: fakeSettings{cfg: cfg(&off)}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}},
+		{name: "compliance setting missing means compliance is off", settings: fakeSettings{cfg: cfg(nil), join: true}},
+		{name: "config missing", settings: fakeSettings{join: true}, limits: failClosed},
+		{name: "no settings", limits: failClosed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.disabled, OpenTeamGrantDisabled(tt.settings))
+			assert.Equal(t, tt.limits, ServerLimits(tt.settings))
 		})
 	}
 }

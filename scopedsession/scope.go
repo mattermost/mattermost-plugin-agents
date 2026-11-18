@@ -9,8 +9,6 @@
 package scopedsession
 
 import (
-	"slices"
-
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -20,41 +18,47 @@ func readsContent(scope *model.SessionScope) bool {
 
 // ContentChannels is the channel set whose content scope can read, for stores
 // that filter in their own queries. A scope that cannot read content yields
-// an empty set, which matches nothing. See OpenTeamGrantDisabled for when the
-// open-team grant is off.
-func ContentChannels(scope *model.SessionScope, openTeamGrantDisabled bool) model.SessionScopeResources {
+// an empty set, which matches nothing. limits turn the public-channel grants
+// off; see ServerLimits.
+func ContentChannels(scope *model.SessionScope, limits model.SessionScopeLimits) model.SessionScopeResources {
 	if !readsContent(scope) {
 		return model.SessionScopeResources{}
 	}
-	return model.SessionScopeResources{
-		ChannelIDs:             slices.Clone(scope.Resources.ChannelIDs),
-		OpenTeamPublicChannels: scope.Resources.OpenTeamPublicChannels && !openTeamGrantDisabled,
-	}
+	return scope.Resources.WithLimits(limits)
 }
 
 // AllowsChannelContent reports whether scope can read channel's posts and
 // files. team is channel's team, or nil when it has none.
-func AllowsChannelContent(scope *model.SessionScope, channel *model.Channel, team *model.Team, openTeamGrantDisabled bool) bool {
-	return readsContent(scope) && model.SessionScopeAllowsChannel(scope, channel, team, openTeamGrantDisabled)
+func AllowsChannelContent(scope *model.SessionScope, channel *model.Channel, team *model.Team, limits model.SessionScopeLimits) bool {
+	return readsContent(scope) && model.SessionScopeAllowsChannel(scope, channel, team, limits)
 }
 
 // ServerSettings is the part of the Mattermost API that decides whether the
-// open-team grant applies.
+// public-channel grants apply.
 type ServerSettings interface {
 	GetConfig() *model.Config
 	RolesGrantPermission(roleNames []string, permissionID string) bool
 }
 
-// OpenTeamGrantDisabled mirrors the server: the open-team grant is off in
-// compliance mode and when the system_user role lacks join_public_teams.
-// Without settings it is off, so open-team reads fail closed.
-func OpenTeamGrantDisabled(settings ServerSettings) bool {
+// ServerLimits mirrors the server: compliance mode turns both public-channel
+// grants off, and a system_user role without join_public_teams turns the
+// open-team grant off. Without a readable config both are off, so public
+// reads fail closed.
+func ServerLimits(settings ServerSettings) model.SessionScopeLimits {
+	failClosed := model.SessionScopeLimits{ComplianceMode: true, UsersCannotJoinOpenTeams: true}
 	if settings == nil {
-		return true
+		return failClosed
 	}
 	cfg := settings.GetConfig()
-	if cfg == nil || cfg.ComplianceSettings.Enable == nil || *cfg.ComplianceSettings.Enable {
-		return true
+	if cfg == nil {
+		return failClosed
 	}
-	return !settings.RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id)
+	// The plugin RPC transmits a false pointer as nil, so a missing setting is
+	// compliance mode off, the default.
+	if cfg.ComplianceSettings.Enable != nil && *cfg.ComplianceSettings.Enable {
+		return model.SessionScopeLimits{ComplianceMode: true}
+	}
+	return model.SessionScopeLimits{
+		UsersCannotJoinOpenTeams: !settings.RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id),
+	}
 }

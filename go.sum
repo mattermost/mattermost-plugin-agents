@@ -323,8 +323,8 @@ github.com/mattermost/ldap v3.0.4+incompatible h1:SOeNnz+JNR+foQ3yHkYqijb9MLPhXN
 github.com/mattermost/ldap v3.0.4+incompatible/go.mod h1:b4reDCcGpBxJ4WX0f224KFY+OR0npin7or7EFpeIko4=
 github.com/mattermost/logr/v2 v2.0.25 h1:p/FXdVyZnC8ttUBB7/RD11aghQEzU1zMRxFPPB114Fk=
 github.com/mattermost/logr/v2 v2.0.25/go.mod h1:0sUKpO+XNMZApeumaid7PYaUZPBIydfuWZ0dqixXo+s=
-github.com/mattermost/mattermost/server/public v0.6.1-0.20261101071008-e639400063e3 h1:euAero2RePj2FgyO6viKJbuzSNamXSE9+MM3qC9RTPI=
-github.com/mattermost/mattermost/server/public v0.6.1-0.20261101071008-e639400063e3/go.mod h1:EkuWnmIHUliZVwIej1NGpzDwX5QXsDDsJhdZ0VFG5D8=
+github.com/mattermost/mattermost/server/public v0.6.2-0.20261118161406-f41f95dce3a4 h1:Rpdy1N+7mds8+USqt31AAD4lv8Bk0isKzhxvH7Sj0YY=
+github.com/mattermost/mattermost/server/public v0.6.2-0.20261118161406-f41f95dce3a4/go.mod h1:uSssXp9OP2ffdxBIa3pg48lV5h720tE7eBnGNvw6syo=
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b h1:6u1c1jRNWu9M8WWU805gFSYnunlbAswxqx9O62nZRHs=
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b/go.mod h1:RGV7xzsCHZZYz+9ohTNzmZyRJlhCSt0gcqDiJUOjgT4=
 github.com/mattermost/morph v1.1.0 h1:Q9vrJbeM3s2jfweGheq12EFIzdNp9a/6IovcbvOQ6Cw=
@@ -444,8 +444,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qq
 github.com/rivo/uniseg v0.1.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
 github.com/rogpeppe/go-internal v1.6.1/go.mod h1:xXDCJY+GAPziupqXw64V24skbSoqbTEfhy4qGm1nDQc=
 github.com/rogpeppe/go-internal v1.8.0/go.mod h1:WmiCO8CzOY8rg0OYDC4/i/2WRWAB6poM+XZ2dLUbcbE=
-github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
-github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
+github.com/rogpeppe/go-internal v1.16.0 h1:O9DK+vNMDVGLr2BeZqmpLeMjiMNkuXfcqntWbZV6S5g=
+github.com/rogpeppe/go-internal v1.16.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52ZOxX7yM1VHvnxs=
 github.com/rs/zerolog v1.35.1 h1:m7xQeoiLIiV0BCEY4Hs+j2NG4Gp2o2KPKmhnnLiazKI=
 github.com/rs/zerolog v1.35.1/go.mod h1:EjML9kdfa/RMA7h/6z6pYmq1ykOuA8/mjWaEvGI+jcw=
 github.com/russellhaering/goxmldsig v1.2.0/go.mod h1:gM4MDENBQf7M+V824SGfyIUVFWydB7n0KkEubVJl+Tw=
