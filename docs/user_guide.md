@@ -57,6 +57,21 @@ If your admin allows it, you can create agents of your own, such as a release-no
 
 Every save creates a version. Open the version history and select **Restore this version** to roll back. You can edit or delete the agents you created, and the **Agents** page marks agents you can't edit as **Read only**.
 
+## Dictate a message
+
+If your System Admin turned on dictation, a microphone button appears in the formatting bar of every message box: channels, threads, the Agents pane, and when you edit a message. You don't need to be talking to an agent.
+
+1. Place the cursor where the text should go and select the microphone button. The first time, your browser asks for microphone access.
+2. Speak. Your words appear at the cursor as you talk and are corrected as each phrase is finalized.
+3. Select the button again or press Esc to stop. The text stays in the message box for you to edit and send.
+
+Dictation also stops when you type in the message box, send the message, switch to another channel or thread, after 30 seconds without speech, and after 10 minutes. If you type while dictating, what you typed is kept.
+
+- Your audio goes from your device to the speech service your organization uses, not through Mattermost. Mattermost keeps only the messages you send.
+- If you hid the formatting bar, show it again to see the microphone.
+- Mobile apps don't have dictation.
+- If the button shows an error, point to it to read why. A blocked microphone is fixed in your browser's site settings. For other errors, ask your System Admin.
+
 ## Attach files and images
 
 You can attach files in the Agents pane, in direct messages, and when you @mention an agent in a channel.

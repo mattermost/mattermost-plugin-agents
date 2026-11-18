@@ -46,6 +46,7 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 | Control tools, auto-reply, and web search in channels | [Control agents in channels](channel_settings.md) |
 | Let external AI clients use Mattermost | [External client endpoint](mcp_integrations.md#external-client-endpoint) |
 | Give agents web search | [Web search](web_search.md) |
+| Let users dictate messages | [Set up dictation](dictation.md) |
 | Turn on semantic search | [Set up semantic search](embedding_search.md) |
 | Control links and HTML in AI output | [Secure AI-generated links and HTML](ai_output_security.md) |
 | Know what is sent to the LLM and what is stored | [Data handling](data_handling.md) |
@@ -75,6 +76,7 @@ Everything is under **System Console > Plugins > Agents**. The plugin stores its
 | Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
 | Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |
 | Embedding Search (experimental) | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
+| Dictation | Enable dictation, Transcription service, Transcription model, Language | `dictation` | Off, model `gpt-live-transcribe` | [Set up dictation](dictation.md) |
 | Web Search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
 | Model Context Protocol (MCP) | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
 
@@ -102,6 +104,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Semantic search and AI search | No | No | Yes | Yes |
 | Meeting summaries | No | No | Yes | Yes |
 | Shared skills | No | No | Yes | Yes |
+| Dictation | No | No | Yes | Yes |
 | Channel auto-reply | No | No | No | Yes |
 | Attribute-based access control | No | No | No | Yes |
 
