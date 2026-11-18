@@ -60,12 +60,14 @@ Each user's browser or desktop app connects to OpenAI itself, so the network bet
 
 ## Cost and limits
 
-OpenAI bills transcription to the transcription service's API key. Once a session has started, the server can't end it, so cost is bounded by:
+OpenAI bills transcription to the transcription service's API key. The browser receives a provider key, not one locked session, and the server can't end a session once the key is issued:
 
-- Per-user limits on keys: 10 key requests in any 60 seconds, failed ones included, and at most 2 unexpired keys at a time. Over either limit, starting dictation fails until a slot frees up. The limits bound keys, not sessions: one key can open more than one session while it is valid.
-- The browser stops dictating after 30 seconds without speech and after 10 minutes in any case.
-- OpenAI ends every session after 60 minutes. A browser that ignores the limits above, such as a modified client, can keep a session open that long.
-- A modified client holding a key can change the session's transcription model, possibly to a pricier one, and its turn detection, language and prompt. It can't change the session type, so it can't turn the session into a speech-to-speech one. Traces (the `dictation.create_session` span) record the configured model, not one a client switched to. A dedicated API key for dictation keeps its usage separate, so you can watch and limit it on its own.
+- Within its 15-second connect window, one key can open any number of concurrent sessions, and each keeps running for up to OpenAI's 60-minute maximum after the key expires.
+- A modified client holding a key can change the session's transcription model, possibly to a pricier one, and its turn detection, language and prompt. It can't change the session type, so it can't turn the session into a speech-to-speech one.
+- The plugin limits each user to 10 key requests in any 60 seconds, failed ones included, and at most 2 unexpired keys at a time. Over either limit, starting dictation fails until a slot frees up. The limits are kept in memory on each server, so a high-availability cluster multiplies them by its node count. They count keys, not sessions or audio minutes.
+- The browser stops dictating after 30 seconds without speech and after 10 minutes in any case. A modified client can ignore these caps.
+
+So an authenticated, licensed user who scripts key requests can run far more transcription than one dictation session, billed to your API key. Bounding audio minutes needs a server relay that holds the key, which this version doesn't have. Use a dedicated API key for dictation with a tight spending limit at OpenAI. Each issued key is audited (`createDictationSession`), and the server log records each one with the user, the service and the configured model, which may not be the model a modified client is billed for.
 
 Dictation isn't included in [token usage logging](observability.md#token-usage-log), because the server never sees the transcription usage. Use OpenAI's usage dashboard for the service's API key, or a dedicated key for dictation.
 
