@@ -771,3 +771,30 @@ func TestListByTeamDoesNotHideChannelLookupFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteHeadStampsTheDeletingUser(t *testing.T) {
+	kv := newMemoryKV()
+	kv.permissionAll = true
+	svc := NewService(NewStore(kv), kv, allowAllMembers{})
+	creator := model.NewId()
+	remover := model.NewId()
+	channelID := model.NewId()
+	limits := ContentLimits{MaxSize: 1024}
+
+	entry, err := svc.CreateFromHTML(creator, CreateRequest{
+		ChannelID: channelID, PostID: model.NewId(), FileID: model.NewId(), Title: "Notes",
+	}, []byte("<html>one</html>"), "one.html", creator, "Author", "", model.NewId(), limits)
+	require.NoError(t, err)
+	_, err = svc.ReplaceContent(creator, entry.ID, ReplaceRequest{PostID: model.NewId(), FileID: model.NewId()},
+		[]byte("<html>two</html>"), "two.html", creator, "Author", model.NewId(), limits)
+	require.NoError(t, err)
+
+	before := model.GetMillis()
+	require.NoError(t, svc.Delete(remover, entry.ID, false))
+
+	got, err := svc.GetReadable(remover, entry.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, got.Version)
+	require.Equal(t, remover, got.UpdatedBy)
+	require.GreaterOrEqual(t, got.UpdateAt, before)
+}

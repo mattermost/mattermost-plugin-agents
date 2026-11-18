@@ -327,6 +327,11 @@ func (s *Service) Patch(userID, id string, req PatchRequest) (*Entry, error) {
 	})
 }
 
+func stampUpdate(entry *Entry, userID string) {
+	entry.UpdatedBy = userID
+	entry.UpdateAt = model.GetMillis()
+}
+
 func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
 	entry, err := s.store.Get(id)
 	if err != nil {
@@ -335,8 +340,7 @@ func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
 	if !s.CanManage(userID, entry.ChannelID) {
 		return nil, ErrNotFound
 	}
-	entry.UpdatedBy = userID
-	entry.UpdateAt = model.GetMillis()
+	stampUpdate(entry, userID)
 	if err := s.store.Rollback(entry, toVersion); err != nil {
 		return nil, err
 	}
@@ -357,6 +361,7 @@ func (s *Service) Delete(userID, id string, purge bool) error {
 	if purge || entry.Purging {
 		return s.store.Purge(entry)
 	}
+	stampUpdate(entry, userID)
 	versions, err := s.store.ListVersions(entry.ID)
 	if err != nil {
 		return err
@@ -371,6 +376,7 @@ func (s *Service) Delete(userID, id string, purge bool) error {
 			if current.Purging || current.Version == entry.Version {
 				return s.store.Purge(current)
 			}
+			stampUpdate(current, userID)
 			return s.store.DeleteHead(current)
 		}
 		return purgeErr
