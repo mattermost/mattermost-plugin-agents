@@ -87,6 +87,27 @@ describe('channel artifact library cache', () => {
         expect(listChannelArtifacts).toHaveBeenCalledTimes(2);
     });
 
+    test('a server that keeps failing is asked once per consumer, not in a loop', async () => {
+        jest.mocked(listChannelArtifacts).mockRejectedValue(new Error('down'));
+        const store = setup();
+        await waitFor(() => expect(screen.getByTestId('consumer-0').textContent).toMatch(/^error/));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+        expect(listChannelArtifacts).toHaveBeenCalledTimes(1);
+
+        render(
+            <Provider store={store}>
+                <Consumer testId='late'/>
+            </Provider>,
+        );
+        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledTimes(2));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+        expect(listChannelArtifacts).toHaveBeenCalledTimes(2);
+    });
+
     test('websocket events update every consumer without another request', async () => {
         jest.mocked(listChannelArtifacts).mockResolvedValue(list([entry('a1', 'One')]));
         const store = setup(2);

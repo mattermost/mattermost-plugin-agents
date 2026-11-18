@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {useCallback, useEffect} from 'react';
+import {useCallback, useEffect, useRef} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -26,14 +26,14 @@ export function loadChannelLibrary(dispatch: LibraryDispatch, channelId: string)
     dispatch({type: 'CHANNEL_ARTIFACTS_LOADING', channelId});
     const request = listChannelArtifacts(channelId).then(
         (list) => {
+            inflight.delete(channelId);
             dispatch({type: 'CHANNEL_ARTIFACTS_LOADED', channelId, list});
         },
         () => {
+            inflight.delete(channelId);
             dispatch({type: 'CHANNEL_ARTIFACTS_FAILED', channelId});
         },
-    ).finally(() => {
-        inflight.delete(channelId);
-    });
+    );
     inflight.set(channelId, request);
     return request;
 }
@@ -57,13 +57,27 @@ export function useChannelLibrary(channelId: string): ChannelLibrary {
     const dispatch = useDispatch();
     const enabled = useSelector(getChannelArtifactsEnabled);
     const cached = useSelector((state: GlobalState) => getChannelLibrary(state as never, channelId));
-    const needsLoad = enabled && Boolean(channelId) && (!cached || cached.status === 'error');
+    const status = cached?.status;
+
+    // The channel this consumer has already asked the server for. A failed load
+    // changes the status again, so without this a server that keeps failing
+    // would be asked in a loop; each consumer retries a failure once.
+    const requestedFor = useRef('');
 
     useEffect(() => {
-        if (needsLoad) {
-            loadChannelLibrary(dispatch as LibraryDispatch, channelId);
+        if (!enabled || !channelId) {
+            requestedFor.current = '';
+            return;
         }
-    }, [needsLoad, channelId, dispatch]);
+        if (status === 'loading' || status === 'ready') {
+            return;
+        }
+        if (status === 'error' && requestedFor.current === channelId) {
+            return;
+        }
+        requestedFor.current = channelId;
+        loadChannelLibrary(dispatch as LibraryDispatch, channelId);
+    }, [enabled, channelId, status, dispatch]);
 
     const reload = useCallback(() => {
         if (!channelId) {
