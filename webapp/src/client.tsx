@@ -951,6 +951,11 @@ export type FetchModelsOptions = {
     vertexProjectID?: string;
     vertexProjectNumber?: string;
     vertexAuthCredentials?: string;
+
+    // serviceID lets the server read the credentials of a saved service instead
+    // of receiving them here. A service that has not been saved yet has no
+    // stored counterpart and its credentials are sent inline.
+    serviceID?: string;
 }
 
 export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, options: FetchModelsOptions = {}) {
@@ -959,6 +964,7 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
         method: 'POST',
         body: JSON.stringify({
             serviceType,
+            serviceID: options.serviceID || '',
             apiKey,
             apiURL,
             orgID,
