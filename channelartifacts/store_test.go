@@ -231,3 +231,61 @@ func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	require.NoError(t, db.Get(&files, `SELECT COUNT(*) FROM FileInfo WHERE Id = $1`, dropVersion.FileID))
 	assert.Equal(t, 1, files, "the library never touches source files")
 }
+
+func TestStoreAddVersionRenamesInTheSameTransaction(t *testing.T) {
+	db := testDB(t)
+	s := channelartifacts.NewStore(db)
+	id := model.NewId()
+	require.NoError(t, s.Create(id, model.NewId(), "Old", newVersion(t, db, sha(1)), 5))
+
+	renamed := newVersion(t, db, sha(2))
+	renamed.Title = "New"
+	require.NoError(t, s.AddVersion(id, renamed, 5))
+	entry, err := s.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, "New", entry.Title)
+	assert.Equal(t, 2, entry.Version)
+
+	untitled := newVersion(t, db, sha(3))
+	require.NoError(t, s.AddVersion(id, untitled, 5))
+	entry, err = s.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, "New", entry.Title, "a version without a title keeps the current one")
+
+	duplicate := newVersion(t, db, sha(3))
+	duplicate.Title = "Never applied"
+	require.Error(t, s.AddVersion(id, duplicate, 5))
+	entry, err = s.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, "New", entry.Title, "a refused version does not rename")
+}
+
+func TestStoreAddVersionRacingPurgeLeavesNoOrphanRows(t *testing.T) {
+	db := testDB(t)
+	s := channelartifacts.NewStore(db)
+
+	for i := range 20 {
+		id := model.NewId()
+		require.NoError(t, s.Create(id, model.NewId(), "T", newVersion(t, db, sha(1000+i*2)), 5))
+		next := newVersion(t, db, sha(1001+i*2))
+
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			if err := s.AddVersion(id, next, 5); err != nil {
+				assert.ErrorIs(t, err, channelartifacts.ErrNotFound)
+			}
+		})
+		wg.Go(func() {
+			if err := s.Purge(id); err != nil {
+				assert.ErrorIs(t, err, channelartifacts.ErrNotFound)
+			}
+		})
+		wg.Wait()
+	}
+
+	var orphans int
+	require.NoError(t, db.Get(&orphans, `
+		SELECT COUNT(*) FROM Agents_ChannelArtifactVersions v
+		WHERE NOT EXISTS (SELECT 1 FROM Agents_ChannelArtifacts a WHERE a.ID = v.ArtifactID)`))
+	assert.Zero(t, orphans)
+}
