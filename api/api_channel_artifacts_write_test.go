@@ -200,3 +200,69 @@ func TestChannelArtifactMutationsRejectOversizedBodies(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPChannelArtifactsServeToolsInProcess(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	enableLibrary(e)
+	kv := newArtifactTokenKV()
+	svc := libraryService(kv)
+	channelID := model.NewId()
+	entry := saveLibraryEntry(t, svc, channelID, "Sprint notes", "<html>sprint</html>")
+
+	tests := []struct {
+		name    string
+		enabled bool
+		run     func(t *testing.T, m *MCPChannelArtifacts) error
+		wantErr error
+	}{
+		{
+			name: "list", enabled: true,
+			run: func(t *testing.T, m *MCPChannelArtifacts) error {
+				entries, err := m.List(t.Context(), testUserID, channelID)
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				assert.Equal(t, entry.ID, entries[0].ID)
+				return nil
+			},
+		},
+		{
+			name: "get truncates the content", enabled: true,
+			run: func(t *testing.T, m *MCPChannelArtifacts) error {
+				got, err := m.Get(t.Context(), testUserID, entry.ID, true, 4)
+				require.NoError(t, err)
+				assert.Equal(t, "<htm", got.Content)
+				assert.True(t, got.HasMore)
+				return nil
+			},
+		},
+		{
+			name: "get with an unknown id", enabled: true,
+			run: func(t *testing.T, m *MCPChannelArtifacts) error {
+				_, err := m.Get(t.Context(), testUserID, model.NewId(), false, 0)
+				return err
+			},
+			wantErr: channelartifacts.ErrNotFound,
+		},
+		{
+			name: "list while the feature is off",
+			run: func(t *testing.T, m *MCPChannelArtifacts) error {
+				_, err := m.List(t.Context(), testUserID, channelID)
+				return err
+			},
+			wantErr: errChannelArtifactsUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e.config.enableChannelArtifacts = tt.enabled
+			m := NewMCPChannelArtifacts(svc, kv, e.config, e.bots)
+			err := tt.run(t, m)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

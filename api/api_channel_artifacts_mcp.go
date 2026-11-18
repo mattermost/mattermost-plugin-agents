@@ -6,20 +6,11 @@ package api
 import (
 	"errors"
 	"net/http"
-	"slices"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
-)
-
-const (
-	defaultMCPArtifactContentLimit = 8000
-	maxMCPArtifactContentLimit     = 20000
 )
 
 // MCPListChannelArtifactsRequest is the body for POST /channel-artifacts/mcp/list.
@@ -97,21 +88,6 @@ func mcpEntryFrom(e *channelartifacts.Entry) MCPChannelArtifactEntry {
 	}
 }
 
-func truncateUTF8(s string, limit int) (text string, total, returned int, hasMore bool) {
-	total = utf8.RuneCountInString(s)
-	if limit <= 0 {
-		limit = defaultMCPArtifactContentLimit
-	}
-	if limit > maxMCPArtifactContentLimit {
-		limit = maxMCPArtifactContentLimit
-	}
-	if total <= limit {
-		return s, total, total, false
-	}
-	runes := []rune(s)
-	return string(runes[:limit]), total, limit, true
-}
-
 // handleMCPListChannelArtifacts handles POST /channel-artifacts/mcp/list.
 // Used by MCP servers (embedded and external) to list channel library artifacts.
 func (a *API) handleMCPListChannelArtifacts(c *gin.Context) {
@@ -134,14 +110,14 @@ func (a *API) handleMCPListChannelArtifacts(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.channelArtifacts.List(userID, req.ChannelID)
+	list, err := a.mcpChannelArtifacts().List(c.Request.Context(), userID, req.ChannelID)
 	if err != nil {
 		a.writeMCPChannelArtifactError(c, err)
 		return
 	}
 
-	entries := make([]MCPChannelArtifactEntry, 0, len(resp.Entries))
-	for _, e := range resp.Entries {
+	entries := make([]MCPChannelArtifactEntry, 0, len(list))
+	for _, e := range list {
 		entries = append(entries, mcpEntryFrom(e))
 	}
 	c.JSON(http.StatusOK, MCPListChannelArtifactsResponse{Entries: entries})
@@ -174,32 +150,19 @@ func (a *API) handleMCPGetChannelArtifact(c *gin.Context) {
 		includeContent = *req.IncludeContent
 	}
 
-	entry, err := a.channelArtifacts.GetReadable(userID, req.ArtifactID)
+	got, err := a.mcpChannelArtifacts().Get(c.Request.Context(), userID, req.ArtifactID, includeContent, req.ContentLimit)
 	if err != nil {
 		a.writeMCPChannelArtifactError(c, err)
 		return
 	}
-
-	out := MCPGetChannelArtifactResponse{
-		Entry:           mcpEntryFrom(entry),
-		ContentIncluded: false,
-	}
-
-	if includeContent {
-		body, readErr := a.channelArtifacts.ReadContent(entry)
-		if readErr != nil {
-			a.writeMCPChannelArtifactError(c, readErr)
-			return
-		}
-		text, total, returned, hasMore := truncateUTF8(string(body), req.ContentLimit)
-		out.ContentIncluded = true
-		out.Content = text
-		out.TotalRunes = total
-		out.Returned = returned
-		out.HasMore = hasMore
-	}
-
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, MCPGetChannelArtifactResponse{
+		Entry:           mcpEntryFrom(got.Entry),
+		ContentIncluded: got.ContentIncluded,
+		Content:         got.Content,
+		TotalRunes:      got.TotalRunes,
+		Returned:        got.Returned,
+		HasMore:         got.HasMore,
+	})
 }
 
 // MCPCanSaveChannelArtifactRequest is the body for POST /channel-artifacts/mcp/can-save.
@@ -227,42 +190,21 @@ func (a *API) handleMCPCanSaveChannelArtifact(c *gin.Context) {
 		return
 	}
 
-	client := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
-	info, err := client.GetFileInfo(req.FileID)
-	if err != nil || info == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	post, err := client.GetPost(req.PostID)
-	if err != nil || post == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	if !client.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	if !isArtifactExtension(info) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file is not an HTML artifact"})
-		return
-	}
-	if info.PostId == "" || info.PostId != req.PostID || !slices.Contains(post.FileIds, req.FileID) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file is not attached to the post"})
-		return
-	}
-	if a.config.DisableHumanChannelArtifacts() && (a.bots == nil || !a.bots.IsAnyBot(post.UserId)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "channel artifacts only accept files posted by agents"})
-		return
-	}
-	if info.Size > artifactRenderLimit(a.mmClient.GetConfig()) {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "artifact too large"})
+	if err := a.mcpChannelArtifacts().CanSave(c.Request.Context(), userID, req.PostID, req.FileID); err != nil {
+		a.writeMCPChannelArtifactError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (a *API) writeMCPChannelArtifactError(c *gin.Context, err error) {
+	if statusErr, ok := errors.AsType[*mcpStatusError](err); ok {
+		c.JSON(statusErr.status, gin.H{"error": statusErr.message})
+		return
+	}
 	switch {
+	case errors.Is(err, errChannelArtifactsUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 	case errors.Is(err, channelartifacts.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "channel artifact not found"})
 	case errors.Is(err, channelartifacts.ErrInvalidInput):

@@ -777,9 +777,12 @@ func (s *Store) DeleteHead(entry *Entry) error {
 	}
 	oldSHA := entry.SHA256
 	oldVersion := entry.Version
+	updatedBy, updateAt := entry.UpdatedBy, entry.UpdateAt
 	applyVersionToEntry(entry, previous)
+	entry.UpdatedBy, entry.UpdateAt = updatedBy, updateAt
 	if err := s.casHead(oldVersion, oldSHA, entry); err != nil {
 		applyVersionToEntry(entry, head)
+		entry.UpdatedBy, entry.UpdateAt = updatedBy, updateAt
 		if reserved {
 			live, _, loadErr := s.loadMetaRaw(entry.ID)
 			if loadErr == nil && live.SHA256 == previous.SHA256 {

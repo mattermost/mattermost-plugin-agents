@@ -31,8 +31,9 @@ type ChannelArtifactContent struct {
 }
 
 // ChannelArtifactsService lists and reads channel library artifacts on behalf of
-// a user. HTTPChannelArtifactsService implements it via plugin HTTP callbacks so
-// both embedded and external MCP servers share one permission path.
+// a user. The plugin passes an in-process implementation to the servers it
+// hosts; HTTPChannelArtifactsService reaches the same checks through plugin
+// HTTP callbacks for external MCP servers.
 type ChannelArtifactsService interface {
 	List(ctx context.Context, userID, channelID string) ([]*channelartifacts.Entry, error)
 	Get(ctx context.Context, userID, artifactID string, includeContent bool, contentLimit int) (ChannelArtifactContent, error)
