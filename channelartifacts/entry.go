@@ -3,159 +3,123 @@
 
 package channelartifacts
 
+import (
+	"errors"
+	"fmt"
+)
+
 const (
 	// DefaultMaxPerChannel caps how many artifacts a channel may keep when
 	// the site config leaves the limit unset (0).
 	DefaultMaxPerChannel = 50
 
-	// MaxPerChannel is the historical name for DefaultMaxPerChannel.
-	MaxPerChannel = DefaultMaxPerChannel
+	// DefaultVersionsToKeep is how many versions of one artifact are kept when
+	// the site config leaves the setting unset (0).
+	DefaultVersionsToKeep = 20
 
 	// MaxTitleRunes matches core channel bookmark display name limits.
 	MaxTitleRunes = 64
-
-	// MaxDescriptionRunes caps the optional description field.
-	MaxDescriptionRunes = 256
-
-	// MaxChunkBytes is the uncompressed write size of one KV blob chunk
-	// before gzip. Compressed chunks stay well under Mattermost KV limits.
-	MaxChunkBytes = 512 * 1024
-
-	schemaVersion = 1
 )
 
-// VersionSnapshot is the content head shared by the catalog entry and a version
-// record: the bytes, where they came from, and the title captured with that write.
-// A later rename changes the entry only. Rollback copies the record's snapshot back.
-type VersionSnapshot struct {
-	Title                  string `json:"title"`
-	Description            string `json:"description,omitempty"`
-	SourcePostID           string `json:"source_post_id"`
-	SourceFileID           string `json:"source_file_id"`
-	SourceFileName         string `json:"source_file_name"`
-	SourceBotUserID        string `json:"source_bot_user_id"`
-	SourceAgentDisplayName string `json:"source_agent_display_name,omitempty"`
-	// SourceRootPostID is the thread root (post.RootId, or post.Id when the
-	// source post is itself a root). Used for lineage matching across edits.
-	SourceRootPostID string `json:"source_root_post_id,omitempty"`
-	UpdateAt         int64  `json:"update_at"`
-	UpdatedBy        string `json:"updated_by,omitempty"`
-	Size             int64  `json:"size"`
-	SHA256           string `json:"sha256"`
-	ChunkCount       int    `json:"chunk_count"`
-	// Version is the content version. It increments when the HTML body is
-	// replaced; rename and description patches leave it alone.
-	Version int `json:"version"`
+var (
+	ErrNotFound     = errors.New("channel artifact not found")
+	ErrForbidden    = errors.New("not allowed to manage channel artifacts in this channel")
+	ErrLimitReached = errors.New("channel artifact limit reached")
+	ErrInvalidInput = errors.New("invalid channel artifact input")
+	ErrTooLarge     = errors.New("channel artifact too large")
+	// ErrUnavailable means the source post or file of a version is gone, or its
+	// bytes no longer match what was recorded when it was saved.
+	ErrUnavailable = errors.New("channel artifact source is unavailable")
+	// ErrIneligible means the file cannot be saved: not an HTML file attached
+	// to an agent's post in the channel.
+	ErrIneligible = errors.New("file cannot be saved as a channel artifact")
+	// ErrDuplicate is wrapped by DuplicateError.
+	ErrDuplicate = errors.New("identical artifact already saved")
+)
+
+// DuplicateError reports the artifact whose current version already has the
+// content being saved.
+type DuplicateError struct {
+	ArtifactID string
 }
 
-// Entry is the catalog metadata for one channel-saved HTML artifact.
-// VersionSnapshot always describes the current head content version.
+func (e *DuplicateError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrDuplicate, e.ArtifactID)
+}
+
+func (e *DuplicateError) Is(target error) bool { return target == ErrDuplicate }
+
+// Entry is one saved artifact together with its current version. The library
+// stores references to the source post and file, never a copy of the content.
 type Entry struct {
-	ID            string `json:"id"`
-	ChannelID     string `json:"channel_id"`
-	TeamID        string `json:"team_id"`
-	CreatedBy     string `json:"created_by"`
-	CreateAt      int64  `json:"create_at"`
-	Encoding      string `json:"encoding"`
-	SchemaVersion int    `json:"schema_version"`
-	// Purging hides the entry from listings while a failed purge is retried.
-	// Content and the SHA lookup stay until that cleanup finishes.
-	Purging bool `json:"purging,omitempty"`
-	VersionSnapshot
+	ID        string `json:"id" db:"id"`
+	ChannelID string `json:"channel_id" db:"channelid"`
+	Title     string `json:"title" db:"title"`
+	// Version is the current (head) version number.
+	Version                int    `json:"version" db:"version"`
+	SHA256                 string `json:"sha256" db:"sha256"`
+	Size                   int64  `json:"size" db:"size"`
+	SourcePostID           string `json:"source_post_id" db:"sourcepostid"`
+	SourceFileID           string `json:"source_file_id" db:"sourcefileid"`
+	SourceBotUserID        string `json:"source_bot_user_id" db:"sourcebotuserid"`
+	SourceAgentDisplayName string `json:"source_agent_display_name,omitempty" db:"-"`
+	CreatedBy              string `json:"created_by" db:"createdby"`
+	CreateAt               int64  `json:"create_at" db:"createat"`
+	UpdatedBy              string `json:"updated_by" db:"updatedby"`
+	UpdateAt               int64  `json:"update_at" db:"updateat"`
+	// Available is false when the current version's source post or file was
+	// deleted. The entry stays listed so the loss is visible.
+	Available bool `json:"available" db:"available"`
 }
 
-// VersionRecord is one content snapshot for an artifact.
-// Bodies are stored separately under versioned blob keys.
+// VersionRecord is one saved version of an artifact.
 type VersionRecord struct {
-	VersionSnapshot
-	// LegacyUnversionedBlobs means chunks live at cart_blob_{id}_{n} rather
-	// than cart_blob_{id}_v{version}_{n}. Set when migrating pre-versioned rows.
-	LegacyUnversionedBlobs bool `json:"legacy_unversioned_blobs,omitempty"`
+	Version                int    `json:"version" db:"version"`
+	SHA256                 string `json:"sha256" db:"sha256"`
+	Size                   int64  `json:"size" db:"size"`
+	SourcePostID           string `json:"source_post_id" db:"sourcepostid"`
+	SourceFileID           string `json:"source_file_id" db:"sourcefileid"`
+	SourceBotUserID        string `json:"source_bot_user_id" db:"sourcebotuserid"`
+	SourceAgentDisplayName string `json:"source_agent_display_name,omitempty" db:"-"`
+	CreatedBy              string `json:"created_by" db:"createdby"`
+	CreateAt               int64  `json:"create_at" db:"createat"`
+	Head                   bool   `json:"head" db:"head"`
+	Available              bool   `json:"available" db:"available"`
 }
 
-// VersionHistory is the ordered list of content versions for one artifact.
-type VersionHistory struct {
-	Versions []VersionRecord `json:"versions"`
-	// NextVersion is one past the highest number ever issued. Pruning does not
-	// lower it, so a later save cannot reuse a number whose blobs were deleted.
-	NextVersion int `json:"next_version,omitempty"`
-	// HeadVersion is the version a rollback has selected. Prune keeps it even
-	// when the metadata write has not landed yet.
-	HeadVersion int `json:"head_version,omitempty"`
-	// PendingDelete lists versions removed from Versions whose blobs may still exist.
-	PendingDelete []VersionRecord `json:"pending_delete,omitempty"`
-}
-
-// ChannelIndex is the ordered list of artifact IDs for one channel.
-type ChannelIndex struct {
-	Version int      `json:"version"`
-	IDs     []string `json:"ids"`
-}
-
-// ListResponse is returned by the list API.
+// ListResponse is the channel library plus what the caller may do with it.
 type ListResponse struct {
-	Entries         []*Entry `json:"entries"`
-	CanManage       bool     `json:"can_manage"`
-	MaxPerChannel   int      `json:"max_per_channel"`
-	DownloadEnabled bool     `json:"download_enabled"`
-	RenderEnabled   bool     `json:"render_enabled"`
+	Entries       []*Entry `json:"entries"`
+	CanAdd        bool     `json:"can_add"`
+	CanEdit       bool     `json:"can_edit"`
+	CanDelete     bool     `json:"can_delete"`
+	MaxPerChannel int      `json:"max_per_channel"`
 }
 
-// ContentLimits carries size and retention caps into store writes.
-type ContentLimits struct {
+// Limits carries the size and retention caps into writes.
+type Limits struct {
+	// MaxSize caps the HTML size in bytes.
 	MaxSize        int64
 	MaxPerChannel  int
-	MaxSitewide    int
 	VersionsToKeep int
 }
 
-// CreateRequest is the body for saving a post artifact into the channel library.
-type CreateRequest struct {
-	ChannelID   string `json:"channel_id"`
-	PostID      string `json:"post_id"`
-	FileID      string `json:"file_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	// ReplaceID, when set, replaces that library entry's HTML instead of creating a new one.
-	ReplaceID string `json:"replace_id,omitempty"`
+// SaveRequest registers a source file as a new artifact, or as a new version of
+// ArtifactID when it is set.
+type SaveRequest struct {
+	ChannelID  string `json:"channel_id"`
+	PostID     string `json:"post_id"`
+	FileID     string `json:"file_id"`
+	Title      string `json:"title"`
+	ArtifactID string `json:"replace_id,omitempty"`
 }
 
 // PatchRequest is the body for renaming a saved artifact.
 type PatchRequest struct {
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
+	Title string `json:"title"`
 }
 
-// ReplaceRequest is the body for replacing a library entry's HTML from a bot post file.
-type ReplaceRequest struct {
-	PostID string `json:"post_id"`
-	FileID string `json:"file_id"`
-}
-
-// RollbackRequest selects which content version becomes head.
+// RollbackRequest selects which version becomes current.
 type RollbackRequest struct {
 	Version int `json:"version"`
-}
-
-// OrderRequest is the body for reordering a channel's artifacts.
-type OrderRequest struct {
-	ChannelID string   `json:"channel_id"`
-	IDs       []string `json:"ids"`
-}
-
-// ExportEntry is one artifact in a system-admin channel export.
-type ExportEntry struct {
-	Meta                   *Entry            `json:"meta"`
-	Versions               []VersionRecord   `json:"versions"`
-	ContentBase64ByVersion map[string]string `json:"content_base64_by_version"`
-}
-
-// ExportResponse is returned by the channel-artifacts export API.
-type ExportResponse struct {
-	Entries []ExportEntry `json:"entries"`
-}
-
-// TeamListResponse is returned by the team-scoped artifact catalog API.
-type TeamListResponse struct {
-	Entries []*Entry `json:"entries"`
 }
