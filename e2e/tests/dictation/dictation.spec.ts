@@ -86,6 +86,12 @@ async function adminConfig(mattermost: MattermostContainer) {
     return mattermostAIAdminConfigApiFromClient(await mattermost.getAdminClient(), mattermost.url());
 }
 
+async function setDictationEnabled(mattermost: MattermostContainer, enabled: boolean) {
+    await (await adminConfig(mattermost)).patch({
+        dictation: { enabled, serviceID: enabled ? DICTATION_SERVICE_ID : '', model: 'gpt-live-transcribe', language: '' },
+    });
+}
+
 const centerComposer = (page: Page) => page.getByTestId('channel_view');
 const dictationButton = (scope: Locator) => scope.getByTestId('dictation-button');
 
@@ -118,12 +124,18 @@ async function loginAsUser(page: Page, mattermost: MattermostContainer) {
 }
 
 test.describe('Dictation', () => {
-    test.describe.configure({ mode: 'serial' });
+    // Each test starts from dictation enabled on the OpenAI service and a
+    // provider that mints successfully, whatever ran before it.
+    test.beforeEach(async ({ containers: { mattermost, realtime } }) => {
+        await setDictationEnabled(mattermost, true);
+        await realtime.setMode('ok');
+    });
 
     test.skip(({ browserName }) => browserName !== 'chromium', 'Fake media devices are Chromium flags');
 
     test('admin enables dictation on an OpenAI service while the agent uses another service', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(120000);
+        await setDictationEnabled(mattermost, false);
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
 

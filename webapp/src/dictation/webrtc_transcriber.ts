@@ -40,21 +40,20 @@ export type TranscriberDeps = {
     clearInterval: (id: ReturnType<typeof setInterval>) => void;
 };
 
-function createAnalyserLevelMeter(): LevelMeter {
+export function createAnalyserLevelMeter(): LevelMeter {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     const context: AudioContext = new AudioContextClass();
+
+    // Resumed here, inside the click: Safari refuses a resume once the
+    // gesture is gone.
+    const resumed = context.resume().then(() => true, () => false);
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
     const samples = new Float32Array(analyser.fftSize);
     return {
         attach: async (stream) => {
             context.createMediaStreamSource(stream).connect(analyser);
-            try {
-                await context.resume();
-            } catch {
-                return false;
-            }
-            return context.state === 'running';
+            return await resumed && context.state === 'running';
         },
         level: () => {
             analyser.getFloatTimeDomainData(samples);

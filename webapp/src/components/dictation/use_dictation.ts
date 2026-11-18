@@ -60,14 +60,16 @@ const isSameEditor = (session: Session, draft: EditorDraft) =>
 const isRecording = (session: Session) => session.phase === 'starting' || session.phase === 'listening';
 
 // scheduleWrite coalesces transcript updates into one draft write per frame.
-const scheduleWrite = (session: Session, text: string, write: (message: string) => void) => {
+// canWrite is checked when the frame runs: a frame can land after the editor
+// switched but before the switch stops the session.
+const scheduleWrite = (session: Session, text: string, canWrite: () => boolean, write: (message: string) => void) => {
     session.pendingText = text;
     if (session.frame !== null) {
         return;
     }
     session.frame = requestAnimationFrame(() => {
         session.frame = null;
-        if (!isRecording(session) || session.pendingText === null) {
+        if (!canWrite() || session.pendingText === null) {
             return;
         }
         const message = session.writer.render(session.pendingText);
@@ -115,11 +117,12 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         setStatus('stopping');
 
         // Stop delivers the last segment's final text through onTranscript.
+        // A segment that didn't finalize in time keeps its streamed text.
         await session.transport.stop();
 
         const current = draftRef.current;
         if (session.keepFinal && isSameEditor(session, current) && session.writer.isOwnWrite(current.message ?? '')) {
-            updateTextRef.current(session.writer.render(session.latest.finalText));
+            updateTextRef.current(session.writer.render(session.latest.text));
         }
         session.phase = 'done';
         if (sessionRef.current === session) {
@@ -139,7 +142,7 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
             writer: new DraftWriter(current.message ?? '', caret),
             channelId: current.channelId,
             rootId: current.rootId ?? '',
-            latest: {text: '', finalText: ''},
+            latest: {text: ''},
             pendingText: null,
             frame: null,
             capTimer: null,
@@ -153,7 +156,12 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         transport.onTranscript((update: TranscriptUpdate) => {
             session.latest = update;
             if (isRecording(session)) {
-                scheduleWrite(session, update.text, (message) => updateTextRef.current(message));
+                scheduleWrite(
+                    session,
+                    update.text,
+                    () => isRecording(session) && isSameEditor(session, draftRef.current),
+                    (message) => updateTextRef.current(message),
+                );
             }
         });
         transport.onConnecting(() => {

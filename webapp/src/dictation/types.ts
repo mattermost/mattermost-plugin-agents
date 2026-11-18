@@ -66,11 +66,10 @@ export class DictationError extends Error {
     }
 }
 
-// The transcript so far in speaking order. text includes in-flight partials;
-// finalText only holds segments the provider has finalized.
+// The transcript so far in speaking order: finalized segments, and streamed
+// text for segments not finalized yet.
 export type TranscriptUpdate = {
     text: string;
-    finalText: string;
 };
 
 // A live speech-to-text connection. WebRTC is the only implementation today;

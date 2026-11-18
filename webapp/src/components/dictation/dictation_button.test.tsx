@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useLayoutEffect, useState} from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import {DictationError, DictationTransport, TranscriptUpdate} from '@/dictation/types';
@@ -75,13 +75,31 @@ type HarnessControls = {
 
 // Harness behaves like the host editor: updateText writes the draft through
 // React state, so the button sees its own writes on the next render.
+// Frames queued with requestAnimationFrame, run on demand.
+let queuedFrames: FrameRequestCallback[] = [];
+const runQueuedFrames = () => {
+    const frames = queuedFrames;
+    queuedFrames = [];
+    frames.forEach((frame) => frame(0));
+};
+
+// Runs queued frames in the layout phase after a channel switch, the way a
+// browser frame can land between React's layout and passive effects.
+const FrameBetweenEffects = ({channelId}: {channelId: string}) => {
+    useLayoutEffect(() => {
+        runQueuedFrames();
+    }, [channelId]);
+    return null;
+};
+
 type RenderOptions = {
     caret?: number;
+    frameBetweenEffects?: boolean;
     onEditorKeyDown?: (e: React.KeyboardEvent) => void;
     maxSessionMs?: number;
 };
 
-function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionMs}: RenderOptions = {}) {
+function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionMs, frameBetweenEffects}: RenderOptions = {}) {
     const transports: FakeTransport[] = [];
     const controls: HarnessControls = {setDraft: () => { /* set on render */ }};
     const updateText = jest.fn();
@@ -111,6 +129,7 @@ function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionM
                     }}
                     maxSessionMs={maxSessionMs}
                 />
+                {frameBetweenEffects && <FrameBetweenEffects channelId={draft.channelId}/>}
                 <div data-testid='draft'>{draft.message}</div>
             </div>
         );
@@ -177,18 +196,38 @@ describe('DictationButton', () => {
         expect(button().getAttribute('aria-label')).toBe('Start dictation');
     });
 
-    test('types partials at the caret and replaces them with final text on stop', async () => {
+    test('types the transcript at the caret as it grows', async () => {
         const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, {caret: 5});
         await startListening(() => transports[0]);
 
-        act(() => transports[0].transcript({text: 'big', finalText: ''}));
+        act(() => transports[0].transcript({text: 'big'}));
         await waitFor(() => expect(draft()).toBe('Hello big world'));
 
-        act(() => transports[0].transcript({text: 'big brave', finalText: 'big'}));
+        act(() => transports[0].transcript({text: 'big brave'}));
         await waitFor(() => expect(draft()).toBe('Hello big brave world'));
+    });
 
-        fireEvent.click(button());
-        await waitFor(() => expect(draft()).toBe('Hello big world'));
+    test('a frame queued before a channel switch never writes into the new editor', async () => {
+        const raf = jest.spyOn(window, 'requestAnimationFrame').mockImplementation((frame) => {
+            queuedFrames.push(frame);
+            return queuedFrames.length;
+        });
+        try {
+            const {transports, controls, updateText, draft} = renderButton({message: 'old channel', channelId: 'c1'}, {frameBetweenEffects: true});
+            await startListening(() => transports[0]);
+
+            act(() => {
+                transports[0].transcript({text: 'spoken'});
+                controls.setDraft(() => ({message: 'new channel draft', channelId: 'c2'}));
+            });
+
+            await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+            expect(updateText).not.toHaveBeenCalled();
+            expect(draft()).toBe('new channel draft');
+        } finally {
+            raf.mockRestore();
+            queuedFrames = [];
+        }
     });
 
     test('coalesces updates into one write per frame', async () => {
@@ -196,9 +235,9 @@ describe('DictationButton', () => {
         await startListening(() => transports[0]);
 
         act(() => {
-            transports[0].transcript({text: 'a', finalText: ''});
-            transports[0].transcript({text: 'a b', finalText: ''});
-            transports[0].transcript({text: 'a b c', finalText: ''});
+            transports[0].transcript({text: 'a'});
+            transports[0].transcript({text: 'a b'});
+            transports[0].transcript({text: 'a b c'});
         });
         await waitFor(() => expect(draft()).toBe('a b c'));
         expect(updateText).toHaveBeenCalledTimes(1);
@@ -218,11 +257,10 @@ describe('DictationButton', () => {
         expect(editorKeyDown).toHaveBeenCalledTimes(1);
     });
 
-    // Every way dictation ends goes through one stop. Partial text differs
+    // Every way dictation ends goes through one stop. Streamed text differs
     // from the final text stop delivers, so a final write is visible.
     const PARTIAL = 'Hello big braid world';
     const FINAL = 'Hello big brave world';
-    const WITHOUT_LAST = 'Hello big world';
 
     type Ctx = {transport: FakeTransport; controls: HarnessControls; unmount: () => void};
     type Row = {
@@ -243,6 +281,7 @@ describe('DictationButton', () => {
 
     const rows: Row[] = [
         {name: 'the button', trigger: () => fireEvent.click(button()), draft: FINAL, status: 'idle'},
+        {name: 'the button, with no final before the grace period ends', trigger: () => fireEvent.click(button()), stopDeliversFinal: false, draft: PARTIAL, status: 'idle'},
         {name: 'Esc', trigger: () => fireEvent.keyDown(editor(), {key: 'Escape'}), draft: FINAL, status: 'idle'},
         {name: 'silence',
             trigger: ({transport}) => {
@@ -256,7 +295,7 @@ describe('DictationButton', () => {
                 transport.error(new DictationError('provider_error'));
             },
             stopDeliversFinal: false,
-            draft: WITHOUT_LAST,
+            draft: PARTIAL,
             status: 'error'},
         {name: 'typing', trigger: (ctx) => setMessage(ctx, PARTIAL + '!'), draft: PARTIAL + '!', status: 'idle'},
         {name: 'sending', trigger: (ctx) => setMessage(ctx, ''), draft: '', status: 'idle'},
@@ -280,14 +319,14 @@ describe('DictationButton', () => {
         const transport = transports[0];
         const ctx = {transport, controls, unmount};
 
-        act(() => transport.transcript({text: 'big braid', finalText: 'big'}));
+        act(() => transport.transcript({text: 'big braid'}));
         await waitFor(() => expect(draft()).toBe(PARTIAL));
 
         let finishStop: () => void = () => { /* set when stop is called */ };
         transport.stop.mockImplementation(() => new Promise<void>((resolve) => {
             finishStop = () => {
                 if (row.stopDeliversFinal !== false) {
-                    transport.transcript({text: 'big brave', finalText: 'big brave'});
+                    transport.transcript({text: 'big brave'});
                 }
                 resolve();
             };

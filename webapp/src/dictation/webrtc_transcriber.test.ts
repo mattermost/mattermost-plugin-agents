@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {DictationError, DictationSession} from './types';
-import {TranscriberDeps, WebRTCTranscriber} from './webrtc_transcriber';
+import {TranscriberDeps, WebRTCTranscriber, createAnalyserLevelMeter} from './webrtc_transcriber';
 
 jest.mock('@/client', () => ({createDictationSession: jest.fn()}));
 
@@ -186,13 +186,13 @@ describe('WebRTCTranscriber', () => {
         await transcriber.start();
 
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'Hello'});
-        expect(onTranscript).toHaveBeenLastCalledWith({text: 'Hello', finalText: ''});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'Hello'});
 
         pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
         pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'b', previous_item_id: 'a'});
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'b', transcript: 'world.'});
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'Hello'});
-        expect(onTranscript).toHaveBeenLastCalledWith({text: 'Hello world.', finalText: 'Hello world.'});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'Hello world.'});
     });
 
     test('commits segments on silence and on stop when the provider does no turn detection', async () => {
@@ -229,7 +229,7 @@ describe('WebRTCTranscriber', () => {
         pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'last', previous_item_id: null});
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'last', transcript: 'still talking'});
         await stopped;
-        expect(onTranscript).toHaveBeenLastCalledWith({text: 'still talking', finalText: 'still talking'});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'still talking'});
         expect(pc.close).toHaveBeenCalled();
     });
 
@@ -255,7 +255,7 @@ describe('WebRTCTranscriber', () => {
 
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'before the pause'});
         await stopped;
-        expect(onTranscript).toHaveBeenLastCalledWith({text: 'before the pause', finalText: 'before the pause'});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'before the pause'});
         expect(pc.close).toHaveBeenCalled();
     });
 
@@ -301,6 +301,44 @@ describe('WebRTCTranscriber', () => {
         }
     });
 
+    test('the browser level meter resumes its audio context inside the click, before any await', async () => {
+        const calls: string[] = [];
+        class FakeAudioContext {
+            state = 'suspended';
+            resume = jest.fn(async () => {
+                calls.push('resume');
+                this.state = 'running';
+            });
+            close = jest.fn(async () => { /* closed */ });
+            createAnalyser() {
+                return {fftSize: 0, getFloatTimeDomainData: jest.fn()};
+            }
+            createMediaStreamSource() {
+                return {connect: jest.fn()};
+            }
+        }
+        const original = window.AudioContext;
+        (window as any).AudioContext = FakeAudioContext;
+        try {
+            let resolveMic: (s: MediaStream) => void = () => { /* set below */ };
+            const {deps, stream} = setup({createLevelMeter: createAnalyserLevelMeter});
+            (deps.getUserMedia as jest.Mock).mockImplementation(() => {
+                calls.push('getUserMedia');
+                return new Promise<MediaStream>((resolve) => {
+                    resolveMic = resolve;
+                });
+            });
+
+            const starting = new WebRTCTranscriber(deps).start();
+            expect(calls).toEqual(['resume', 'getUserMedia']);
+
+            resolveMic(stream);
+            await expect(starting).resolves.toBeUndefined();
+        } finally {
+            (window as any).AudioContext = original;
+        }
+    });
+
     test('a data channel the provider closes reports a lost connection', async () => {
         const {deps, pc, track} = setup();
         const transcriber = new WebRTCTranscriber(deps);
@@ -340,7 +378,7 @@ describe('WebRTCTranscriber', () => {
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'last words'});
         await stopped;
 
-        expect(final).toHaveBeenLastCalledWith({text: 'last words', finalText: 'last words'});
+        expect(final).toHaveBeenLastCalledWith({text: 'last words'});
         expect(pc.channel.close).toHaveBeenCalled();
         expect(pc.close).toHaveBeenCalled();
         expect(track.stop).toHaveBeenCalled();
@@ -365,7 +403,7 @@ describe('WebRTCTranscriber', () => {
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'last words'});
         await stopped;
 
-        expect(onTranscript).toHaveBeenLastCalledWith({text: 'last words', finalText: 'last words'});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'last words'});
         expect(onError).not.toHaveBeenCalled();
         expect(pc.close).toHaveBeenCalled();
     });

@@ -8,10 +8,10 @@ describe('Transcript', () => {
         const t = new Transcript();
         t.delta('a', 'Hel');
         t.delta('a', 'lo wor');
-        expect(t.snapshot()).toEqual({text: 'Hello wor', finalText: ''});
+        expect(t.snapshot()).toEqual({text: 'Hello wor'});
 
         t.completed('a', 'Hello world.');
-        expect(t.snapshot()).toEqual({text: 'Hello world.', finalText: 'Hello world.'});
+        expect(t.snapshot()).toEqual({text: 'Hello world.'});
         expect(t.hasPending()).toBe(false);
     });
 
@@ -22,11 +22,11 @@ describe('Transcript', () => {
         t.committed('c', 'b');
         t.completed('c', 'three');
         t.completed('a', 'one');
-        expect(t.snapshot().finalText).toBe('one three');
+        expect(t.snapshot().text).toBe('one three');
         expect(t.hasPending()).toBe(true);
 
         t.completed('b', 'two');
-        expect(t.snapshot()).toEqual({text: 'one two three', finalText: 'one two three'});
+        expect(t.snapshot()).toEqual({text: 'one two three'});
     });
 
     test('a segment seen first through a delta moves to its committed place', () => {
@@ -42,7 +42,7 @@ describe('Transcript', () => {
         const t = new Transcript();
         t.delta('a', 'partial words');
         t.failed('a');
-        expect(t.snapshot().finalText).toBe('partial words');
+        expect(t.snapshot().text).toBe('partial words');
         expect(t.hasPending()).toBe(false);
     });
 

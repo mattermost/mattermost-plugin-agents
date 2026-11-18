@@ -62,18 +62,13 @@ export class Transcript {
 
     snapshot(): TranscriptUpdate {
         const all: string[] = [];
-        const finals: string[] = [];
         for (const id of this.order) {
             const segment = this.segments.get(id)!;
             const text = (segment.final ?? segment.partial).trim();
             if (text) {
                 all.push(text);
             }
-            const finalText = segment.final?.trim();
-            if (finalText) {
-                finals.push(finalText);
-            }
         }
-        return {text: all.join(' '), finalText: finals.join(' ')};
+        return {text: all.join(' ')};
     }
 }
