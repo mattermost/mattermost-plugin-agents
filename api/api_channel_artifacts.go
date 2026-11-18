@@ -138,7 +138,7 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		req,
 		read.body,
 		read.info.Name,
-		read.post.UserId,
+		read.botUserID,
 		read.authorDisplay,
 		read.teamID,
 		channelartifacts.RootPostID(read.post),
@@ -201,7 +201,7 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 		req,
 		read.body,
 		read.info.Name,
-		read.post.UserId,
+		read.botUserID,
 		read.authorDisplay,
 		channelartifacts.RootPostID(read.post),
 		limits,
@@ -224,6 +224,7 @@ type postArtifactBody struct {
 	body          []byte
 	info          *model.FileInfo
 	post          *model.Post
+	botUserID     string
 	authorDisplay string
 	teamID        string
 	limit         int64
@@ -259,15 +260,11 @@ func (a *API) readPostArtifactBody(c *gin.Context, userID, fileID, postID, chann
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
 		return postArtifactBody{}, false
 	}
-	var authorDisplay string
+	var botUserID, authorDisplay string
 	if a.bots != nil {
 		if bot := a.bots.GetBotByIDOrUsername(post.UserId, ""); bot != nil {
+			botUserID = post.UserId
 			authorDisplay = bot.GetMMBot().DisplayName
-		}
-	}
-	if authorDisplay == "" {
-		if user, userErr := client.GetUser(post.UserId); userErr == nil && user != nil {
-			authorDisplay = user.GetDisplayName(model.ShowNicknameFullName)
 		}
 	}
 	var teamID string
@@ -278,6 +275,7 @@ func (a *API) readPostArtifactBody(c *gin.Context, userID, fileID, postID, chann
 		body:          body,
 		info:          info,
 		post:          post,
+		botUserID:     botUserID,
 		authorDisplay: authorDisplay,
 		teamID:        teamID,
 		limit:         limit,
