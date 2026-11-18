@@ -386,7 +386,7 @@ func (s *Store) markPurging(entry *Entry, expectedVersion int) error {
 			return ErrConflict
 		}
 		if stored.Purging {
-			entry.Purging = true
+			*entry = *stored
 			return nil
 		}
 		stored.Purging = true
@@ -396,7 +396,7 @@ func (s *Store) markPurging(entry *Entry, expectedVersion int) error {
 			}
 			return err
 		}
-		entry.Purging = true
+		*entry = *stored
 		return nil
 	}
 	return ErrConflict

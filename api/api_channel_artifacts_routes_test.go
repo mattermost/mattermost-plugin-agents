@@ -454,7 +454,6 @@ func TestChannelArtifactAuditRecordsNameTheObjects(t *testing.T) {
 		m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
 		m.EXPECT().GetConfig().Return(&model.Config{})
 		m.EXPECT().GetFile(fileID).Return(io.NopCloser(strings.NewReader(html)), nil)
-		m.EXPECT().GetUser(testUserID).Return(&model.User{Id: testUserID, Username: "user"}, nil)
 		m.EXPECT().GetChannel(channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil)
 		e.api.mmClient = m
 

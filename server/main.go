@@ -879,7 +879,7 @@ func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
 			return count + purged, err
 		}
 		if purged > 0 {
-			p.pluginAPI.Log.Info("Data retention cleaned up orphaned channel artifacts", "channels", purged)
+			p.pluginAPI.Log.Info("Data retention cleaned up orphaned channel artifacts", "artifacts", purged)
 			count += purged
 		}
 	}
@@ -903,11 +903,11 @@ func (p *Plugin) purgeOrphanedChannelArtifacts(batchSize int64) (int64, error) {
 			continue
 		}
 		n, purgeErr := p.channelArtifacts.PurgeChannel(channelID)
+		purged += int64(n)
 		if purgeErr != nil {
 			p.pluginAPI.Log.Error("Failed to purge channel artifacts for deleted channel", "channel_id", channelID, "error", purgeErr)
 			return purged, purgeErr
 		}
-		purged += int64(n)
 	}
 	if commitErr := commit(); commitErr != nil {
 		return purged, commitErr

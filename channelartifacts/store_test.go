@@ -19,6 +19,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +29,7 @@ type memoryKV struct {
 	permissionAll      bool
 	readAll            bool
 	channels           map[string]*model.Channel
+	channelErrs        map[string]error
 	histSetCount       int
 	failHistSet        int
 	failNextMeta       bool
@@ -281,6 +283,9 @@ func (kv *memoryKV) DM(string, string, *model.Post) error {
 }
 func (kv *memoryKV) GetTeam(string) (*model.Team, error) { return nil, nil }
 func (kv *memoryKV) GetChannel(channelID string) (*model.Channel, error) {
+	if err := kv.channelErrs[channelID]; err != nil {
+		return nil, err
+	}
 	if ch, ok := kv.channels[channelID]; ok {
 		return ch, nil
 	}
@@ -1420,4 +1425,44 @@ func TestReplaceContentStillCleansUpWhenVersionMetaCannotBeAligned(t *testing.T)
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func TestPurgeFromAStaleEntryDeletesTheCurrentSHALookup(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>a</html>"), 1024, 0, 0))
+	stale := *entry
+
+	replacement := []byte("<html>b</html>")
+	require.NoError(t, store.ReplaceContent(entry, replacement, 1024, 0))
+	require.NoError(t, store.Purge(&stale))
+
+	_, err := store.FindBySHA(entry.ChannelID, sha256Hex(replacement))
+	require.ErrorIs(t, err, ErrNotFound)
+	again := testEntry(entry.ChannelID)
+	require.NoError(t, store.Save(again, replacement, 1024, 0, 0))
+}
+
+func TestEnsureHistoryKeepsAHistoryCreatedAfterTheRead(t *testing.T) {
+	kv := newMemoryKV()
+	store := NewStore(kv)
+	entry := testEntry(model.NewId())
+	require.NoError(t, store.Save(entry, []byte("<html>a</html>"), 1024, 0, 0))
+	require.NoError(t, kv.KVDelete(histKey(entry.ID)))
+
+	concurrent := &VersionHistory{
+		Versions:    []VersionRecord{versionRecordFromEntry(entry, false), {Version: 2, SHA256: "other"}},
+		NextVersion: 3,
+		HeadVersion: 2,
+	}
+	kv.beforeHistCAS = func(data map[string][]byte) {
+		raw, err := json.Marshal(concurrent)
+		assert.NoError(t, err)
+		data[histKey(entry.ID)] = raw
+	}
+	hist, err := store.ensureHistory(entry)
+	require.NoError(t, err)
+	require.Len(t, hist.Versions, 2)
+	require.Equal(t, 2, hist.HeadVersion)
 }

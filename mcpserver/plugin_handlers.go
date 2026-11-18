@@ -94,11 +94,12 @@ type PluginMCPHandlers struct {
 }
 
 // NewPluginMCPHandlers creates MCP handlers for the Mattermost plugin.
-// registry may be nil to disable plugin-server aggregation. searchService,
-// fileContentService, and channelArtifactsService are optional; nil means the
-// corresponding capability is unavailable. Channel artifacts use the plugin HTTP
-// callback client (same path as external MCP). Callers must inject auth
-// (bearer token or user-ID) via plugin middleware.
+// registry may be nil to disable plugin-server aggregation. searchService and
+// fileContentService are optional; nil means the corresponding capability is
+// unavailable. Channel artifacts always use the plugin HTTP callback client
+// (same path as external MCP), so a nil channelArtifactsService does not opt
+// out of them. Callers must inject auth (bearer token or user-ID) via plugin
+// middleware.
 // allowStateChangingTools is a runtime predicate evaluated per request; a nil
 // predicate means state-changing tools are not available.
 // Runtime services, when supplied, are the access checker followed by the
