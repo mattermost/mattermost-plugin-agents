@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package channelartifacts
+package channelartifacts_test
 
 import (
 	"fmt"
@@ -12,12 +12,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-func newVersion(t *testing.T, db *sqlx.DB, sha string) NewVersion {
+func newVersion(t *testing.T, db *sqlx.DB, sha string) channelartifacts.NewVersion {
 	t.Helper()
-	v := NewVersion{
+	v := channelartifacts.NewVersion{
 		PostID: model.NewId(), FileID: model.NewId(), SHA256: sha, Size: 10,
 		SourceBotUserID: model.NewId(), UserID: model.NewId(), At: model.GetMillis(),
 	}
@@ -29,7 +30,7 @@ func sha(n int) string { return fmt.Sprintf("%064d", n) }
 
 func TestStoreCreateAndListReportAvailability(t *testing.T) {
 	db := testDB(t)
-	s := NewStore(db)
+	s := channelartifacts.NewStore(db)
 	channelID := model.NewId()
 	v := newVersion(t, db, sha(1))
 	id := model.NewId()
@@ -56,7 +57,7 @@ func TestStoreCreateAndListReportAvailability(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db := testDB(t)
-			s := NewStore(db)
+			s := channelartifacts.NewStore(db)
 			v := newVersion(t, db, sha(2))
 			id := model.NewId()
 			require.NoError(t, s.Create(id, model.NewId(), "T", v, 5))
@@ -76,7 +77,7 @@ func TestStoreCreateAndListReportAvailability(t *testing.T) {
 
 func TestStoreCreateEnforcesCapAndDedupe(t *testing.T) {
 	db := testDB(t)
-	s := NewStore(db)
+	s := channelartifacts.NewStore(db)
 	channelID := model.NewId()
 	first := model.NewId()
 	require.NoError(t, s.Create(first, channelID, "One", newVersion(t, db, sha(1)), 2))
@@ -88,10 +89,10 @@ func TestStoreCreateEnforcesCapAndDedupe(t *testing.T) {
 		wantErr error
 		wantDup string
 	}{
-		{name: "same content in the channel", sha: sha(1), channel: channelID, wantErr: ErrDuplicate, wantDup: first},
+		{name: "same content in the channel", sha: sha(1), channel: channelID, wantErr: channelartifacts.ErrDuplicate, wantDup: first},
 		{name: "same content in another channel", sha: sha(1), channel: model.NewId()},
 		{name: "second entry fits", sha: sha(2), channel: channelID},
-		{name: "third entry is over the cap", sha: sha(3), channel: channelID, wantErr: ErrLimitReached},
+		{name: "third entry is over the cap", sha: sha(3), channel: channelID, wantErr: channelartifacts.ErrLimitReached},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,7 +103,7 @@ func TestStoreCreateEnforcesCapAndDedupe(t *testing.T) {
 			}
 			require.ErrorIs(t, err, tt.wantErr)
 			if tt.wantDup != "" {
-				dup, ok := err.(*DuplicateError)
+				dup, ok := err.(*channelartifacts.DuplicateError)
 				require.True(t, ok)
 				assert.Equal(t, tt.wantDup, dup.ArtifactID)
 			}
@@ -112,9 +113,9 @@ func TestStoreCreateEnforcesCapAndDedupe(t *testing.T) {
 
 func TestStoreCreateHonoursTheCapUnderConcurrency(t *testing.T) {
 	db := testDB(t)
-	s := NewStore(db)
+	s := channelartifacts.NewStore(db)
 	channelID := model.NewId()
-	versions := make([]NewVersion, 12)
+	versions := make([]channelartifacts.NewVersion, 12)
 	for i := range versions {
 		versions[i] = newVersion(t, db, sha(100+i))
 	}
@@ -130,7 +131,7 @@ func TestStoreCreateHonoursTheCapUnderConcurrency(t *testing.T) {
 			if err == nil {
 				created++
 			} else {
-				assert.ErrorIs(t, err, ErrLimitReached)
+				assert.ErrorIs(t, err, channelartifacts.ErrLimitReached)
 			}
 		})
 	}
@@ -140,7 +141,7 @@ func TestStoreCreateHonoursTheCapUnderConcurrency(t *testing.T) {
 
 func TestStoreAddVersionPrunesRowsButKeepsTheHead(t *testing.T) {
 	db := testDB(t)
-	s := NewStore(db)
+	s := channelartifacts.NewStore(db)
 	channelID := model.NewId()
 	id := model.NewId()
 	require.NoError(t, s.Create(id, channelID, "T", newVersion(t, db, sha(1)), 5))
@@ -156,15 +157,15 @@ func TestStoreAddVersionPrunesRowsButKeepsTheHead(t *testing.T) {
 	assert.Equal(t, 3, versions[1].Version)
 
 	err = s.AddVersion(id, newVersion(t, db, sha(4)), 2)
-	var dup *DuplicateError
+	var dup *channelartifacts.DuplicateError
 	require.ErrorAs(t, err, &dup)
 	assert.Equal(t, id, dup.ArtifactID)
-	require.ErrorIs(t, s.AddVersion(model.NewId(), newVersion(t, db, sha(9)), 2), ErrNotFound)
+	require.ErrorIs(t, s.AddVersion(model.NewId(), newVersion(t, db, sha(9)), 2), channelartifacts.ErrNotFound)
 }
 
 func TestStoreHeadAndDeleteOperations(t *testing.T) {
 	db := testDB(t)
-	s := NewStore(db)
+	s := channelartifacts.NewStore(db)
 	id := model.NewId()
 	require.NoError(t, s.Create(id, model.NewId(), "T", newVersion(t, db, sha(1)), 5))
 	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(2)), 5))
@@ -176,7 +177,7 @@ func TestStoreHeadAndDeleteOperations(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, entry.Version)
 	assert.Equal(t, user, entry.UpdatedBy)
-	require.ErrorIs(t, s.SetHead(id, 9, user, 100), ErrNotFound)
+	require.ErrorIs(t, s.SetHead(id, 9, user, 100), channelartifacts.ErrNotFound)
 
 	require.NoError(t, s.DeleteVersion(id, 1, user, 200))
 	entry, err = s.Get(id)
@@ -184,7 +185,7 @@ func TestStoreHeadAndDeleteOperations(t *testing.T) {
 	assert.Equal(t, 3, entry.Version, "deleting the current version moves it to the newest remaining")
 
 	require.NoError(t, s.DeleteVersion(id, 2, user, 300))
-	require.ErrorIs(t, s.DeleteVersion(id, 3, user, 400), ErrInvalidInput)
+	require.ErrorIs(t, s.DeleteVersion(id, 3, user, 400), channelartifacts.ErrInvalidInput)
 	versions, err := s.Versions(id)
 	require.NoError(t, err)
 	assert.Len(t, versions, 1, "the last version cannot be removed")
@@ -196,16 +197,16 @@ func TestStoreHeadAndDeleteOperations(t *testing.T) {
 
 	require.NoError(t, s.Purge(id))
 	_, err = s.Get(id)
-	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, channelartifacts.ErrNotFound)
 	var leftover int
 	require.NoError(t, db.Get(&leftover, `SELECT COUNT(*) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id))
 	assert.Zero(t, leftover)
-	require.ErrorIs(t, s.Purge(id), ErrNotFound)
+	require.ErrorIs(t, s.Purge(id), channelartifacts.ErrNotFound)
 }
 
 func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	db := testDB(t)
-	s := NewStore(db)
+	s := channelartifacts.NewStore(db)
 	live, gone := model.NewId(), model.NewId()
 	_, err := db.Exec(`INSERT INTO Channels (Id) VALUES ($1)`, live)
 	require.NoError(t, err)
@@ -221,7 +222,7 @@ func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	_, err = s.Get(keep)
 	require.NoError(t, err)
 	_, err = s.Get(drop)
-	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, channelartifacts.ErrNotFound)
 	var versionRows int
 	require.NoError(t, db.Get(&versionRows, `SELECT COUNT(*) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, drop))
 	assert.Zero(t, versionRows)

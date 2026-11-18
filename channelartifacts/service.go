@@ -175,6 +175,20 @@ func (s *Service) Versions(userID, id string) ([]VersionRecord, error) {
 	return versions, nil
 }
 
+// VersionOf returns one version of an entry the caller may already read.
+// version 0 means the current version.
+func (s *Service) VersionOf(entry *Entry, version int) (*VersionRecord, error) {
+	if version == 0 || version == entry.Version {
+		return &VersionRecord{
+			Version: entry.Version, SHA256: entry.SHA256, Size: entry.Size,
+			SourcePostID: entry.SourcePostID, SourceFileID: entry.SourceFileID,
+			SourceBotUserID: entry.SourceBotUserID, CreatedBy: entry.CreatedBy,
+			Head: true, Available: entry.Available,
+		}, nil
+	}
+	return s.store.Version(entry.ID, version)
+}
+
 // IsHTMLFile reports whether the file is an HTML document by extension.
 func IsHTMLFile(info *model.FileInfo) bool {
 	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
@@ -433,18 +447,14 @@ func (s *Service) Delete(userID, id string) (*Entry, error) {
 // a denied policy is ErrNotFound, a deleted source or changed content is
 // ErrUnavailable.
 func (s *Service) ReadContent(sessionID string, entry *Entry, version int, maxSize int64) ([]byte, error) {
-	fileID, wantSHA, available := entry.SourceFileID, entry.SHA256, entry.Available
-	if version > 0 && version != entry.Version {
-		rec, err := s.store.Version(entry.ID, version)
-		if err != nil {
-			return nil, err
-		}
-		fileID, wantSHA, available = rec.SourceFileID, rec.SHA256, rec.Available
+	rec, err := s.VersionOf(entry, version)
+	if err != nil {
+		return nil, err
 	}
-	if !available {
+	if !rec.Available {
 		return nil, ErrUnavailable
 	}
-	rc, err := s.openFile(mmapi.WithFilePolicy(s.mm, sessionID), fileID)
+	rc, err := s.openFile(mmapi.WithFilePolicy(s.mm, sessionID), rec.SourceFileID)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +463,7 @@ func (s *Service) ReadContent(sessionID string, entry *Entry, version int, maxSi
 	if err != nil {
 		return nil, err
 	}
-	if hashHex(body) != wantSHA {
+	if hashHex(body) != rec.SHA256 {
 		return nil, ErrUnavailable
 	}
 	return body, nil
