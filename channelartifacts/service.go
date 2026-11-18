@@ -395,11 +395,17 @@ func (s *Service) ListByTeam(userID, teamID string) (*TeamListResponse, error) {
 	seeAll := userID != "" && s.mm.HasPermissionTo(userID, model.PermissionManageSystem)
 	out := make([]*Entry, 0)
 	err := s.store.ForEachChannelIndex(func(channelID string) error {
-		if !seeAll && !s.CanRead(userID, channelID) {
+		channel, err := s.mm.GetChannel(channelID)
+		if err != nil {
+			if mmapi.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		if channel == nil || channel.TeamId != teamID {
 			return nil
 		}
-		channel, err := s.mm.GetChannel(channelID)
-		if err != nil || channel == nil || channel.TeamId != teamID {
+		if !seeAll && !s.CanRead(userID, channelID) {
 			return nil
 		}
 		entries, err := s.store.List(channelID)
