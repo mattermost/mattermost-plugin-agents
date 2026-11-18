@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
@@ -63,16 +64,51 @@ export const originChanged = (before: string, after: string): boolean => {
     return a !== b;
 };
 
-// A ReauthReason is an edit after which users' existing sign-ins to the server
-// stop working:
+// A ReauthReason is an edit that users have to sign in to the server again for:
 //   - name: OAuth grants are stored under the server's name; saving a rename
 //     removes them.
 //   - url: saving a move to another origin removes the server's grants, which
 //     were issued for the old server. A path-only change keeps them.
 //   - clientID: refreshes must use the client a grant was issued to, so a
 //     grant from another client cannot be renewed once its token expires.
+//   - authorizationParams: existing sign-ins keep working, but the parameters
+//     are only sent when signing in, so they apply once users sign in again.
+//     Some providers, such as Hub, issue a refresh token only on the first
+//     code exchange.
 // The client secret, headers, and service account headers only reconnect.
-export type ReauthReason = 'name' | 'url' | 'clientID';
+export type ReauthReason = 'name' | 'url' | 'clientID' | 'authorizationParams';
+
+// sortedParams is a key-order-independent form of authorization parameters.
+const sortedParams = (params?: Record<string, string>) => JSON.stringify(
+    Object.entries(params ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+);
+
+// Mirrors config.reservedMCPAuthorizationParams: the parameters the OAuth flow
+// sets itself.
+const reservedAuthorizationParams = new Set([
+    'response_type',
+    'client_id',
+    'redirect_uri',
+    'state',
+    'scope',
+    'code_challenge',
+    'code_challenge_method',
+    'resource',
+]);
+
+// cleanAuthorizationParams trims entries and drops blank rows. A value without
+// a name is kept so that validation asks for the name instead of losing it.
+const cleanAuthorizationParams = (params?: Record<string, string>): Record<string, string> => {
+    const cleaned: Record<string, string> = {};
+    for (const [key, value] of Object.entries(params ?? {})) {
+        const trimmedKey = key.trim();
+        const trimmedValue = value.trim();
+        if (trimmedKey || trimmedValue) {
+            cleaned[trimmedKey] = trimmedValue;
+        }
+    }
+    return cleaned;
+};
 
 // after is the server exactly as it will be saved. Values are compared as the
 // server compares them, untrimmed: a stored name with stray spaces that the
@@ -87,6 +123,9 @@ export const reauthReasons = (before: MCPServerConfig, after: MCPServerConfig): 
     }
     if ((before.clientID ?? '') !== (after.clientID ?? '')) {
         reasons.push('clientID');
+    }
+    if (sortedParams(before.authorizationParams) !== sortedParams(after.authorizationParams)) {
+        reasons.push('authorizationParams');
     }
     return reasons;
 };
@@ -115,6 +154,7 @@ const emptyServer: MCPServerConfig = {
     description: '',
     clientID: '',
     clientSecret: '',
+    authorizationParams: {},
 };
 
 const errorMessage = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
@@ -243,7 +283,18 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         return '';
     })();
     const urlError = (/^https?:\/\/\S+$/i).test(trimmedURL) ? '' : intl.formatMessage({defaultMessage: 'Enter the server URL, starting with https:// or http://.'});
-    const detailsValid = !nameError && !urlError;
+    const authorizationParamsError = (() => {
+        const names = Object.keys(cleanAuthorizationParams(details.authorizationParams));
+        if (names.includes('')) {
+            return intl.formatMessage({defaultMessage: 'Enter a name for every authorization parameter.'});
+        }
+        const reserved = names.find((name) => reservedAuthorizationParams.has(name.toLowerCase()));
+        if (reserved) {
+            return intl.formatMessage({defaultMessage: '{name} is set by the OAuth sign-in and cannot be changed.'}, {name: reserved});
+        }
+        return '';
+    })();
+    const detailsValid = !nameError && !urlError && !authorizationParamsError;
 
     // editedServer is the server as the details step has it, without its tool
     // policies, which a settings save keeps as saved. A server moved to
@@ -255,6 +306,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             name: trimmedName,
             baseURL: trimmedURL,
             clientID: (details.clientID ?? '').trim(),
+            authorizationParams: cleanAuthorizationParams(details.authorizationParams),
         };
         if (savedServer && originChanged(savedServer.baseURL, trimmedURL)) {
             return {...settings, tool_configs: []};
@@ -477,6 +529,24 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 type='password'
                 onChange={(e) => setDetails({...details, clientSecret: e.target.value})}
             />
+            <FieldGroup>
+                <ItemLabel as='div'>
+                    <FormattedMessage defaultMessage='OAuth authorization parameters'/>
+                </ItemLabel>
+                <FieldHelp>
+                    <FormattedMessage defaultMessage='Optional. Extra parameters added to the OAuth authorization URL, such as access_type=offline. Do not put secrets here.'/>
+                </FieldHelp>
+                <HeaderMapEditor
+                    headers={details.authorizationParams ?? {}}
+                    onChange={(authorizationParams) => setDetails({...details, authorizationParams})}
+                    namePlaceholder={intl.formatMessage({defaultMessage: 'Parameter name (e.g. access_type)'})}
+                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Parameter value (e.g. offline)'})}
+                    showValues={true}
+                    addLabel={<FormattedMessage defaultMessage='Add Parameter'/>}
+                    removeLabel={intl.formatMessage({defaultMessage: 'Remove parameter'})}
+                />
+                {showErrors && authorizationParamsError && <ErrorMessage message={authorizationParamsError}/>}
+            </FieldGroup>
             {mode.kind === 'edit' && savedServer?.id && (
                 <ConsolePolicySection
                     resourceType='mcp'
@@ -491,6 +561,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         name: intl.formatMessage({defaultMessage: 'Renaming the server: sign-ins are saved under its name and are removed, so every user has to sign in again.'}),
         url: intl.formatMessage({defaultMessage: 'Moving the server to another host: sign-ins issued for the old server are removed, so every user has to sign in again. Its tool policies are cleared and reviewed again.'}),
         clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID: sign-ins issued to the old client cannot be renewed, so every user has to sign in again.'}),
+        authorizationParams: intl.formatMessage({defaultMessage: 'Changing the OAuth authorization parameters: they are only sent at sign-in, so the change applies to a user once they disconnect and sign in again.'}),
     };
 
     const renderReauth = () => (

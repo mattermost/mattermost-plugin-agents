@@ -19,6 +19,9 @@ export const HeaderMapEditor = ({
     valuePlaceholder,
     disableAdd,
     disableEdit,
+    showValues,
+    addLabel,
+    removeLabel,
 }: {
     headers: {[key: string]: string};
     onChange: (headers: {[key: string]: string}) => void;
@@ -26,10 +29,16 @@ export const HeaderMapEditor = ({
     valuePlaceholder?: string;
     disableAdd?: boolean;
     disableEdit?: boolean;
+
+    // Shows values in clear text, for maps that hold no secrets.
+    showValues?: boolean;
+    addLabel?: React.ReactNode;
+    removeLabel?: string;
 }) => {
     const intl = useIntl();
     const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
     const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
+    const removeRowLabel = removeLabel ?? intl.formatMessage({defaultMessage: 'Remove header'});
 
     const addHeader = () => {
         onChange({...headers, '': ''});
@@ -66,7 +75,7 @@ export const HeaderMapEditor = ({
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
-                            type='password'
+                            type={showValues ? 'text' : 'password'}
                             placeholder={headerValuePlaceholder}
                             value={value}
                             disabled={disableEdit}
@@ -74,7 +83,7 @@ export const HeaderMapEditor = ({
                         />
                         <IconButton
                             icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
+                            aria-label={removeRowLabel}
                             size='small'
                             destructive={true}
                             disabled={disableEdit}
@@ -90,7 +99,7 @@ export const HeaderMapEditor = ({
                     leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                     onClick={addHeader}
                 >
-                    <FormattedMessage defaultMessage='Add Header'/>
+                    {addLabel ?? <FormattedMessage defaultMessage='Add Header'/>}
                 </AddHeaderButton>
             )}
         </>

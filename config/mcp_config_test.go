@@ -155,6 +155,29 @@ func TestConfigClonePreservesServiceAccountHeaders(t *testing.T) {
 	require.Equal(t, "Bearer service-pat", original.MCP.Servers[0].ServiceAccountHeaders["Authorization"])
 }
 
+func TestMCPServerConfigAuthorizationParamsJSON(t *testing.T) {
+	testCases := []struct {
+		name     string
+		params   map[string]string
+		wantJSON bool
+	}{
+		{name: "set", params: map[string]string{"access_type": "offline"}, wantJSON: true},
+		{name: "unset is omitted"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(MCPServerConfig{Name: "YouTrack", AuthorizationParams: tc.params})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantJSON, strings.Contains(string(data), `"authorizationParams"`))
+
+			var decoded MCPServerConfig
+			require.NoError(t, json.Unmarshal(data, &decoded))
+			require.Equal(t, tc.params, decoded.AuthorizationParams)
+		})
+	}
+}
+
 func TestMCPConfigServerIDMaps(t *testing.T) {
 	tests := []struct {
 		name             string

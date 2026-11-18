@@ -93,9 +93,36 @@ type MCPServerConfig struct {
 	// sent in place of per-user OAuth on service-account-mode connections.
 	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`
 
-	ClientID     string          `json:"clientID,omitempty"`
-	ClientSecret string          `json:"clientSecret,omitempty"`
-	ToolConfigs  []MCPToolConfig `json:"tool_configs,omitempty"`
+	ClientID     string `json:"clientID,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+
+	// AuthorizationParams are extra query parameters added to the OAuth
+	// authorization URL, such as access_type=offline. They are not secret and
+	// are not sent on the token or refresh requests. Keys the OAuth flow sets
+	// itself are rejected; see IsReservedMCPAuthorizationParam.
+	AuthorizationParams map[string]string `json:"authorizationParams,omitempty"`
+
+	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
+}
+
+// reservedMCPAuthorizationParams are the authorization request parameters the
+// OAuth flow sets itself. Overriding one would break the flow or its CSRF,
+// PKCE, or audience protections.
+var reservedMCPAuthorizationParams = map[string]bool{
+	"response_type":         true,
+	"client_id":             true,
+	"redirect_uri":          true,
+	"state":                 true,
+	"scope":                 true,
+	"code_challenge":        true,
+	"code_challenge_method": true,
+	"resource":              true,
+}
+
+// IsReservedMCPAuthorizationParam reports whether key names a parameter the
+// OAuth flow sets itself, ignoring case and surrounding whitespace.
+func IsReservedMCPAuthorizationParam(key string) bool {
+	return reservedMCPAuthorizationParams[strings.ToLower(strings.TrimSpace(key))]
 }
 
 // GetToolPolicy returns the policy and enabled state for a tool.

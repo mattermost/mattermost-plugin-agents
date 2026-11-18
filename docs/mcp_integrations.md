@@ -28,6 +28,7 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
    | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in the System Console; leave one untouched to keep it, or type a new value to replace it. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
+   | **OAuth authorization parameters** | Config key `authorizationParams`. Optional extra parameters for the OAuth authorization URL. See [Add OAuth authorization parameters](#add-oauth-authorization-parameters). |
 
 3. Select **Save and connect**. Mattermost saves the server and connects to it as you. For an OAuth server, select **Sign in** to complete the provider's sign-in, which connects only your account.
 4. In **Review tools**, check each tool's approval policy and select **Accept and save**. Tools are grouped as **Read-only tools** and **Write tools**, and each group and **All tools** has a control that sets every tool in it. Tools the server marks read-only (the `readOnlyHint` annotation) start at **Auto Run (DM)**. All others start at **Ask Every Time**, except tools with a curated default, such as read tools on Atlassian and Figma. Annotations never change how a tool runs until you save a policy.
@@ -43,6 +44,8 @@ These changes remove every user's saved sign-in for the server, and Mattermost w
 - Renaming the server.
 - Moving it to another host, meaning a different scheme, host, or port. Its tool policies are cleared too.
 - Changing the OAuth client ID.
+
+Mattermost also warns you when you change **OAuth authorization parameters**, but saved sign-ins are kept. See [Add OAuth authorization parameters](#add-oauth-authorization-parameters).
 
 Deleting a server also removes its sign-ins. Changing only the URL's path, the client secret, headers, service account headers, the description, or whether the server is enabled doesn't affect sign-ins. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
 
@@ -62,6 +65,29 @@ Servers that use OAuth authorize each Mattermost user separately. Connecting in 
 - **Where users connect.** Users connect from a **Connect** card in the conversation, or from the **Tools** menu in the Agents pane. See [Use tools and approve actions](using_tools.md). The mobile apps can't start OAuth, so users need web or desktop.
 - **Discovery.** If the OAuth start URL carries a `resource_metadata` parameter, it's accepted only when its origin matches the **Server URL**. This blocks cross-origin metadata injection.
 - **Expired authorization.** If a user's authorization expires or is revoked during a conversation, the agent drops that connection and shows the **Connect** card again instead of failing.
+
+### Add OAuth authorization parameters
+
+Some providers need extra parameters on the authorization URL, for example to issue a refresh token. Add them under **OAuth authorization parameters**, or in the server's `authorizationParams` map in the configuration. They're sent only on the authorization request, not on token or refresh requests. Values are stored and shown in clear text, so don't put secrets in them.
+
+| Provider | Parameters |
+|---|---|
+| YouTrack or Hub | `access_type=offline` |
+| Google | `access_type=offline` and `prompt=consent` |
+
+```json
+{
+  "name": "YouTrack",
+  "baseURL": "https://youtrack.example.com/mcp",
+  "authorizationParams": {
+    "access_type": "offline"
+  }
+}
+```
+
+Saving fails if a parameter has no name or uses a name the OAuth flow sets itself: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, or `resource`. Names are compared without regard to case.
+
+A change applies at the next sign-in. Users who are already connected must disconnect and connect again to get it.
 
 ### Atlassian MCP server
 

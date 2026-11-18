@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
@@ -395,11 +396,16 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 
 	// Build authorization URL with PKCE and the canonical RFC 8707 resource
 	// so the authorization server audience-restricts the issued token to this
-	// MCP server.
-	authURL := resolved.config.AuthCodeURL(state,
+	// MCP server. Admin-configured parameters come last.
+	authOpts := []oauth2.AuthCodeOption{
 		oauth2.S256ChallengeOption(codeVerifier),
 		oauth2.SetAuthURLParam("resource", resolved.resource),
-	)
+	}
+	extraOpts, optsErr := m.authorizationParamOptions(serverConfigID, serverID, serverURL)
+	if optsErr != nil {
+		return "", optsErr
+	}
+	authURL := resolved.config.AuthCodeURL(state, append(authOpts, extraOpts...)...)
 
 	// Store OAuth session, bound to the discovery outcome so the callback
 	// exchanges the code against exactly these endpoints (see OAuthSession).
@@ -436,6 +442,30 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 // used with.
 type staticIssuerPin struct {
 	Issuer string `json:"issuer"`
+}
+
+// authorizationParamOptions returns the server's configured authorization
+// parameters from the live config. A server that no longer matches the sign-in
+// being started is an error, as it would be at callback time. Reserved keys are
+// rejected when a config is saved, and skipped here too because a stored config
+// may not have gone through that validation.
+func (m *OAuthManager) authorizationParamOptions(serverConfigID, serverID, serverURL string) ([]oauth2.AuthCodeOption, error) {
+	if m.serverConfigLookup == nil {
+		return nil, nil
+	}
+	cfg, ok := m.serverConfigLookup(serverID)
+	if !ok || !sameServerOrigin(cfg.BaseURL, serverURL) ||
+		(serverConfigID != "" && cfg.ID != "" && cfg.ID != serverConfigID) {
+		return nil, fmt.Errorf("the MCP server's configuration changed; please sign in again")
+	}
+	opts := make([]oauth2.AuthCodeOption, 0, len(cfg.AuthorizationParams))
+	for key, value := range cfg.AuthorizationParams {
+		if strings.TrimSpace(key) == "" || config.IsReservedMCPAuthorizationParam(key) {
+			continue
+		}
+		opts = append(opts, oauth2.SetAuthURLParam(key, value))
+	}
+	return opts, nil
 }
 
 // checkStaticCredsIssuerPin enforces trust-on-first-use issuer pinning for
