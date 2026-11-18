@@ -150,6 +150,14 @@ test.describe('Channel artifacts', () => {
         channelId = await makeChannelAdmin(mattermost, username, 'test', 'off-topic');
         await setupSecondViewer(mattermost);
 
+        // Managing the library follows the channel bookmark permissions, which
+        // plain members hold by default. Take them away so the second viewer is
+        // a reader only; the channel admin keeps them through the admin role.
+        const memberRole = await admin.getRoleByName('channel_user');
+        await admin.patchRole(memberRole.id, {
+            permissions: memberRole.permissions.filter((permission) => !/_bookmark_(public|private)_channel$/.test(permission)),
+        });
+
         const client = await mattermost.getClient(username, password);
         const me = await client.getMe();
         await client.savePreferences(me.id, [
