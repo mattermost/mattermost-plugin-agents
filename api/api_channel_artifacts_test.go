@@ -449,6 +449,17 @@ func TestMCPChannelArtifactCallbacks(t *testing.T) {
 		assert.Equal(t, versioned.SourceFileID, got.Entry.SourceFileID)
 		assert.Equal(t, "Helper", got.Entry.SourceAgentDisplayName)
 
+		metaOnly := f.do(http.MethodPost, tools.ChannelArtifactsGetPath, `{"artifact_id":"`+versioned.ID+`","version":1,"include_content":false}`)
+		require.Equal(t, http.StatusOK, metaOnly.Code)
+		var meta tools.ChannelArtifactGetResponse
+		require.NoError(t, json.Unmarshal(metaOnly.Body.Bytes(), &meta))
+		assert.Equal(t, 1, meta.Entry.Version)
+		assert.Equal(t, versioned.SHA256, meta.Entry.SHA256)
+		assert.False(t, meta.ContentIncluded)
+
+		missing := f.do(http.MethodPost, tools.ChannelArtifactsGetPath, `{"artifact_id":"`+versioned.ID+`","version":9,"include_content":false}`)
+		assert.Equal(t, http.StatusNotFound, missing.Code)
+
 		current := f.do(http.MethodPost, tools.ChannelArtifactsGetPath, `{"artifact_id":"`+versioned.ID+`"}`)
 		require.NoError(t, json.Unmarshal(current.Body.Bytes(), &got))
 		assert.Equal(t, 2, got.Entry.Version)
