@@ -344,7 +344,8 @@ func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
 }
 
 // Delete removes the head version, or purges the artifact when purge is true
-// or only one version remains.
+// or only one version remains. A row already marked purging finishes that
+// purge without listing versions: the history key may already be gone.
 func (s *Service) Delete(userID, id string, purge bool) error {
 	entry, err := s.store.Get(id)
 	if err != nil {
@@ -353,7 +354,7 @@ func (s *Service) Delete(userID, id string, purge bool) error {
 	if !s.CanManage(userID, entry.ChannelID) {
 		return ErrNotFound
 	}
-	if purge {
+	if purge || entry.Purging {
 		return s.store.Purge(entry)
 	}
 	versions, err := s.store.ListVersions(entry.ID)
