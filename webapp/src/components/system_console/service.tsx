@@ -183,9 +183,12 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
             setModelsFetchError('');
-            return;
+            setLoadingModels(false);
+            return () => null;
         }
 
+        // A response for settings the admin has since changed must not replace newer state.
+        let superseded = false;
         const loadModels = async () => {
             setLoadingModels(true);
             setModelsFetchError('');
@@ -201,19 +204,33 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         vertexProjectID: props.service.vertexProjectID || '',
                         vertexProjectNumber: props.service.vertexProjectNumber || '',
                         vertexAuthCredentials: props.service.vertexAuthCredentials || '',
+
+                        // Once the service is saved its credentials are read
+                        // server-side; a service still being entered sends them
+                        // inline above.
+                        serviceID: props.service.id,
                     },
                 );
-                setAvailableModels(data);
+                if (!superseded) {
+                    setAvailableModels(data);
+                }
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
-                setAvailableModels([]);
+                if (!superseded) {
+                    setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                    setAvailableModels([]);
+                }
             } finally {
-                setLoadingModels(false);
+                if (!superseded) {
+                    setLoadingModels(false);
+                }
             }
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
+        return () => {
+            superseded = true;
+        };
+    }, [type, props.service.id, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {

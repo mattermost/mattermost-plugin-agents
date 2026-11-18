@@ -43,6 +43,14 @@ var PostgresTestConnStr string
 
 func newPostgresTestStore(t *testing.T) *store.Store {
 	t.Helper()
+	s, _ := newPostgresTestStoreWithDB(t)
+	return s
+}
+
+// newPostgresTestStoreWithDB also returns the store's database, for tests
+// that must set state the store API cannot, such as an old heartbeat.
+func newPostgresTestStoreWithDB(t *testing.T) (*store.Store, *sqlx.DB) {
+	t.Helper()
 	if PostgresTestConnStr == "" {
 		t.Skip("postgres testcontainer not available")
 	}
@@ -65,7 +73,7 @@ func newPostgresTestStore(t *testing.T) *store.Store {
 
 	s := store.New(db)
 	require.NoError(t, s.RunMigrations())
-	return s
+	return s, db
 }
 
 // fakeAnthropic is an Anthropic Messages endpoint that answers 400
