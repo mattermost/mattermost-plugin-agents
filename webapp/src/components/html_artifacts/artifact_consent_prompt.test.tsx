@@ -234,3 +234,23 @@ describe('ArtifactConsentPrompt download details', () => {
         expect(truncateMiddle(name_, 48)).toBe(expected);
     });
 });
+
+describe('ArtifactConsentPrompt focus containment', () => {
+    test.each([
+        {name: 'Tab from the last button wraps to the first', from: 'allow', shiftKey: false, to: 'deny'},
+        {name: 'Shift+Tab from the first button wraps to the last', from: 'deny', shiftKey: true, to: 'allow'},
+    ] as const)('$name', ({from, shiftKey, to}) => {
+        const prompt = renderPrompt();
+        act(() => prompt[from].focus());
+        const notPrevented = fireEvent.keyDown(prompt[from], {key: 'Tab', shiftKey});
+        expect(notPrevented).toBe(false);
+        expect(document.activeElement).toBe(prompt[to]);
+    });
+
+    test('Tab between the two buttons is left to the browser', () => {
+        const prompt = renderPrompt();
+        expect(fireEvent.keyDown(prompt.deny, {key: 'Tab'})).toBe(true);
+        act(() => prompt.allow.focus());
+        expect(fireEvent.keyDown(prompt.allow, {key: 'Tab', shiftKey: true})).toBe(true);
+    });
+});

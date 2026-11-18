@@ -148,10 +148,32 @@ const ArtifactConsentPrompt = ({fileName, request, onAllow, onDeny}: Props) => {
         }
     };
 
+    // Tab cycles between the dialog's own buttons.
+    const trapTab = (e: React.KeyboardEvent) => {
+        if (e.key !== 'Tab') {
+            return;
+        }
+        const buttons = dialogRef.current?.querySelectorAll<HTMLElement>('button');
+        if (!buttons?.length) {
+            return;
+        }
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
     return (
         <Backdrop>
+            {/* eslint-disable-next-line agents/no-noninteractive-element-interactions -- the alertdialog only traps Tab between its buttons */}
             <Dialog
                 ref={dialogRef}
+                onKeyDown={trapTab}
                 role='alertdialog'
                 aria-modal='true'
                 aria-labelledby='html-artifact-consent-heading'
