@@ -68,11 +68,7 @@ type Config interface {
 	EnableHTMLArtifacts() bool
 	EnableChannelArtifacts() bool
 	ChannelArtifactsMaxPerChannel() int
-	ChannelArtifactsMaxSitewide() int
 	ChannelArtifactVersionsToKeep() int
-	DisableChannelArtifactDownload() bool
-	DisableChannelArtifactRendering() bool
-	DisableHumanChannelArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
@@ -412,18 +408,15 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/artifacts/:fileid/token", a.handleGetArtifactToken)
 	router.GET("/channel-artifacts", a.handleListChannelArtifacts)
 	router.POST("/channel-artifacts", a.handleCreateChannelArtifact)
-	router.GET("/channel-artifacts/export", a.handleExportChannelArtifacts)
-	router.GET("/channel-artifacts/team", a.handleListTeamChannelArtifacts)
 	// MCP callbacks must be registered before /channel-artifacts/:id so "mcp" is not captured as an id.
 	router.POST("/channel-artifacts/mcp/list", a.handleMCPListChannelArtifacts)
 	router.POST("/channel-artifacts/mcp/get", a.handleMCPGetChannelArtifact)
-	router.POST("/channel-artifacts/mcp/can-save", a.handleMCPCanSaveChannelArtifact)
-	router.PUT("/channel-artifacts/order", a.handleReorderChannelArtifacts)
 	router.PATCH("/channel-artifacts/:id", a.handlePatchChannelArtifact)
-	router.PUT("/channel-artifacts/:id/content", a.handleReplaceChannelArtifact)
 	router.POST("/channel-artifacts/:id/rollback", a.handleRollbackChannelArtifact)
 	router.DELETE("/channel-artifacts/:id", a.handleDeleteChannelArtifact)
+	router.DELETE("/channel-artifacts/:id/versions/:version", a.handleDeleteChannelArtifactVersion)
 	router.GET("/channel-artifacts/:id", a.handleGetChannelArtifact)
+	router.GET("/channel-artifacts/:id/info", a.handleGetChannelArtifactInfo)
 	router.GET("/channel-artifacts/:id/versions", a.handleListChannelArtifactVersions)
 	router.GET("/channel-artifacts/:id/token", a.handleGetChannelArtifactToken)
 	router.GET("/channel-artifacts/:id/download", a.handleDownloadChannelArtifact)
@@ -794,11 +787,9 @@ type AIBotsResponse struct {
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
 	// API compatibility.
-	LinkPolicy                      config.LinkPolicy `json:"linkPolicy"`
-	HTMLArtifactsEnabled            bool              `json:"htmlArtifactsEnabled"`
-	ChannelArtifactsEnabled         bool              `json:"channelArtifactsEnabled"`
-	ChannelArtifactDownloadEnabled  bool              `json:"channelArtifactDownloadEnabled"`
-	ChannelArtifactRenderingEnabled bool              `json:"channelArtifactRenderingEnabled"`
+	LinkPolicy              config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled    bool              `json:"htmlArtifactsEnabled"`
+	ChannelArtifactsEnabled bool              `json:"channelArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -903,14 +894,12 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:                            bots,
-		SearchEnabled:                   searchEnabled,
-		AllowUnsafeLinks:                a.config.AllowUnsafeLinks(),
-		LinkPolicy:                      a.config.LinkPolicy(),
-		HTMLArtifactsEnabled:            a.config.EnableHTMLArtifacts(),
-		ChannelArtifactsEnabled:         a.config.EnableChannelArtifacts(),
-		ChannelArtifactDownloadEnabled:  a.config.EnableChannelArtifacts() && !a.config.DisableChannelArtifactDownload(),
-		ChannelArtifactRenderingEnabled: a.config.EnableChannelArtifacts() && !a.config.DisableChannelArtifactRendering(),
+		Bots:                    bots,
+		SearchEnabled:           searchEnabled,
+		AllowUnsafeLinks:        a.config.AllowUnsafeLinks(),
+		LinkPolicy:              a.config.LinkPolicy(),
+		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
+		ChannelArtifactsEnabled: a.config.EnableChannelArtifacts(),
 	})
 }
 

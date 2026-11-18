@@ -72,4 +72,7 @@ Fix common Agents problems by symptom. Start with the Mattermost Server log, fil
 |---|---|
 | "can only be viewed inside Mattermost" | Mattermost is served over plain HTTP, or the artifact URL was opened directly in a tab. Use HTTPS, and open it from the conversation. |
 | "This artifact could not be loaded" | The **Site URL** doesn't match the address users open. |
+| A saved channel artifact shows as unavailable | The post or file it came from was deleted or expired under message or file retention. The entry stays so you can see what is missing. Remove it, or save the app again from a new message. |
+| Saving to the channel fails with "limit reached" | The channel is at **Max artifacts per channel**. Remove an artifact or raise the setting. |
+| Saving to the channel is refused for a file | Only HTML files on an agent's post in the same channel, up to the size limit, can be saved. See [Channel artifacts](channel_artifacts.md#what-can-be-saved). |
 | An artifact can still reach the network | The browser isn't Chromium 152 or later. See [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts). |

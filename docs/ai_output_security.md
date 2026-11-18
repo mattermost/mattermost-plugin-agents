@@ -43,6 +43,10 @@ Turn on **Enable HTML artifacts** (`enableHTMLArtifacts`). Only HTML files (`.ht
 
 If you need full isolation, enable artifacts only where everyone uses a supported browser.
 
+### Channel artifact library
+
+With **Enable channel artifacts** (`enableChannelArtifacts`), channel members who can add bookmarks can save an artifact so it can be reopened later. The library applies the same boundary as inline artifacts: only HTML files on posts written by Agents' own bots can be saved, and rendering uses the same sandbox, consent prompt, and **Run** step. The library stores a reference, not a copy. Each read checks the viewer's channel access and the source file's download policy, fails closed on a denial, and verifies the stored SHA-256. See [Channel artifacts](channel_artifacts.md).
+
 ### How artifacts are contained
 
 - Nothing runs on its own. Everyone, including the person who asked for the artifact, sees a placeholder and must select **Run**. This prevents an injected artifact from acting without a human decision. Once run, an artifact keeps running in that browser session, but a transparent **Click to interact** layer covers it until the viewer clicks.

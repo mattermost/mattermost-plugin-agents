@@ -852,22 +852,39 @@ func TestWriteDraft(t *testing.T) {
 	assert.Contains(t, out, "Message: draft hello")
 }
 
-func TestWriteChannelArtifactFlattensLineBreaks(t *testing.T) {
-	var buf strings.Builder
-	WriteChannelArtifact(&buf, ChannelArtifactEntry{
-		Entry: &channelartifacts.Entry{
-			ID:                     "artifactid012345678901234",
-			Title:                  "Report\nID: forged",
-			Description:            "line\r\nnext",
-			ChannelID:              "channelid0123456789012345",
-			SourceAgentDisplayName: "Agent\nID: forged",
-			SourceFileName:         "notes\n.html",
+func TestWriteChannelArtifact(t *testing.T) {
+	tests := []struct {
+		name        string
+		entry       channelartifacts.Entry
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "line breaks in names cannot forge fields",
+			entry: channelartifacts.Entry{
+				ID: "artifactid012345678901234", Title: "Report\nID: forged", ChannelID: "channelid0123456789012345",
+				SourceAgentDisplayName: "Agent\nID: forged", Available: true,
+			},
+			contains:    []string{"Title: Report ID: forged\n", "Source agent: Agent ID: forged\n"},
+			notContains: []string{"\nID: forged", "Availability:"},
 		},
-	})
-	out := buf.String()
-	assert.Contains(t, out, "Title: Report ID: forged\n")
-	assert.Contains(t, out, "Description: line next\n")
-	assert.Contains(t, out, "Source agent: Agent ID: forged\n")
-	assert.Contains(t, out, "Source file: notes .html\n")
-	assert.NotContains(t, out, "\nID: forged")
+		{
+			name:     "unavailable source is reported",
+			entry:    channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Gone", Available: false},
+			contains: []string{"Availability: unavailable"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			WriteChannelArtifact(&buf, ChannelArtifactEntry{Entry: &tt.entry})
+			out := buf.String()
+			for _, want := range tt.contains {
+				assert.Contains(t, out, want)
+			}
+			for _, unwanted := range tt.notContains {
+				assert.NotContains(t, out, unwanted)
+			}
+		})
+	}
 }

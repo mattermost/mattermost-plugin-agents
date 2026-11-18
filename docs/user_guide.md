@@ -75,6 +75,15 @@ Ask the agent to put long output in a file, for example "the meeting notes as a 
 - When an agent posts for you with `create_post`, `dm`, or `group_message`, it can attach text files to that post too.
 - If your admin enabled HTML artifacts, an `.html` file the agent creates renders as an interactive page in the reply after you select **Run**.
 
+## Save an HTML app to the channel
+
+When your admin turns on channel artifacts, you can keep an interactive HTML app an agent built so the whole channel can reopen it.
+
+- Select the pin icon on the artifact to save it. Saving the same file again, or a new file with a new name, offers to add a new version.
+- Open **Channel artifacts** from the channel header menu or the channel info panel to see the channel's saved apps, open one, rename it, restore an earlier version, or remove it. Everyone who can read the channel can open them. If a control is missing, ask your admin about your permissions in the channel.
+- Ask the agent to save or update one, for example "save this dashboard to the channel". The agent posts the HTML as its own message and saves that message, and it asks you to approve first.
+- A saved app isn't a copy. It lasts as long as the message it came from. If that message or file is deleted or expires under your organization's retention, the app shows as unavailable.
+
 ## What an agent sees and keeps
 
 An agent reads the conversation it's in and whatever its tools return, with your permissions, except external MCP tools on an agent that uses a shared service account. Conversations are stored in Mattermost's database. With a cloud model the provider receives the content sent to the model, and with a self-hosted model that content stays in your organization. See [What agents can see and keep](what_agents_see.md).

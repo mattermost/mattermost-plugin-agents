@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -14,8 +15,8 @@ import (
 )
 
 // HTTPChannelArtifactsService lists and reads channel library artifacts by
-// calling back to the plugin API. External MCP servers (HTTP, Stdio) and the
-// embedded server share this path so permission checks stay inside the plugin.
+// calling back to the plugin API, for MCP servers that run outside the plugin
+// (HTTP and stdio). Permission checks stay inside the plugin.
 type HTTPChannelArtifactsService struct {
 	pluginURL string
 	client    *http.Client
@@ -30,182 +31,89 @@ func NewHTTPChannelArtifactsService(pluginURL string) *HTTPChannelArtifactsServi
 	}
 }
 
-type httpChannelArtifactsListRequest struct {
+// ChannelArtifactListRequest is the body of POST /channel-artifacts/mcp/list.
+type ChannelArtifactListRequest struct {
 	ChannelID string `json:"channel_id"`
 }
 
-type httpChannelArtifactsGetRequest struct {
+// ChannelArtifactListResponse is the response of POST /channel-artifacts/mcp/list.
+type ChannelArtifactListResponse struct {
+	Entries []*channelartifacts.Entry `json:"entries"`
+	Error   string                    `json:"error,omitempty"`
+}
+
+// ChannelArtifactGetRequest is the body of POST /channel-artifacts/mcp/get.
+type ChannelArtifactGetRequest struct {
 	ArtifactID     string `json:"artifact_id"`
 	IncludeContent *bool  `json:"include_content,omitempty"`
+	Offset         int    `json:"offset,omitempty"`
 	ContentLimit   int    `json:"content_limit,omitempty"`
+	Version        int    `json:"version,omitempty"`
 }
 
-type httpChannelArtifactEntry struct {
-	ID                     string `json:"id"`
-	ChannelID              string `json:"channel_id"`
-	TeamID                 string `json:"team_id"`
-	Title                  string `json:"title"`
-	Description            string `json:"description,omitempty"`
-	Version                int    `json:"version"`
-	SHA256                 string `json:"sha256"`
-	Size                   int64  `json:"size"`
-	SourcePostID           string `json:"source_post_id"`
-	SourceFileID           string `json:"source_file_id"`
-	SourceFileName         string `json:"source_file_name,omitempty"`
-	SourceBotUserID        string `json:"source_bot_user_id,omitempty"`
-	SourceAgentDisplayName string `json:"source_agent_display_name,omitempty"`
-	CreateAt               int64  `json:"create_at"`
-	UpdateAt               int64  `json:"update_at"`
-	UpdatedBy              string `json:"updated_by,omitempty"`
-	CreatedBy              string `json:"created_by,omitempty"`
+// ChannelArtifactGetResponse is the response of POST /channel-artifacts/mcp/get.
+type ChannelArtifactGetResponse struct {
+	ChannelArtifactContent
+	Error string `json:"error,omitempty"`
 }
 
-type httpChannelArtifactsListResponse struct {
-	Entries []httpChannelArtifactEntry `json:"entries"`
-	Error   string                     `json:"error,omitempty"`
-}
+// Enabled is always true: only the plugin knows whether the library is on, and
+// it answers 503 when it is not.
+func (s *HTTPChannelArtifactsService) Enabled() bool { return true }
 
-type httpChannelArtifactsGetResponse struct {
-	Entry           httpChannelArtifactEntry `json:"entry"`
-	ContentIncluded bool                     `json:"content_included"`
-	Content         string                   `json:"content,omitempty"`
-	TotalRunes      int                      `json:"total_runes,omitempty"`
-	Returned        int                      `json:"returned,omitempty"`
-	HasMore         bool                     `json:"has_more,omitempty"`
-	Error           string                   `json:"error,omitempty"`
-}
-
-func entryFromHTTP(e httpChannelArtifactEntry) *channelartifacts.Entry {
-	return &channelartifacts.Entry{
-		ID:                     e.ID,
-		ChannelID:              e.ChannelID,
-		TeamID:                 e.TeamID,
-		Title:                  e.Title,
-		Description:            e.Description,
-		Version:                e.Version,
-		SHA256:                 e.SHA256,
-		Size:                   e.Size,
-		SourcePostID:           e.SourcePostID,
-		SourceFileID:           e.SourceFileID,
-		SourceFileName:         e.SourceFileName,
-		SourceBotUserID:        e.SourceBotUserID,
-		SourceAgentDisplayName: e.SourceAgentDisplayName,
-		CreateAt:               e.CreateAt,
-		UpdateAt:               e.UpdateAt,
-		UpdatedBy:              e.UpdatedBy,
-		CreatedBy:              e.CreatedBy,
+// callbackError maps a non-200 callback response to the library's errors.
+func callbackError(status int, errText string) error {
+	switch status {
+	case http.StatusNotFound:
+		return channelartifacts.ErrNotFound
+	case http.StatusGone:
+		return channelartifacts.ErrUnavailable
+	case http.StatusServiceUnavailable:
+		return errors.New("channel artifacts are not available")
 	}
+	if errText != "" {
+		return fmt.Errorf("channel artifact request failed: %s", errText)
+	}
+	return fmt.Errorf("channel artifact request failed with status %d", status)
 }
 
 // List returns channel library artifact metadata for the given channel.
 func (s *HTTPChannelArtifactsService) List(ctx context.Context, userID, channelID string) ([]*channelartifacts.Entry, error) {
-	reqBody := httpChannelArtifactsListRequest{ChannelID: channelID}
-	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+ChannelArtifactsListPath, reqBody, userID)
+	status, body, err := postPluginJSON(ctx, s.client, s.pluginURL+ChannelArtifactsListPath, ChannelArtifactListRequest{ChannelID: channelID}, userID)
 	if err != nil {
 		return nil, err
 	}
-
-	if status == http.StatusNotFound {
-		return nil, channelartifacts.ErrNotFound
-	}
-	if status == http.StatusServiceUnavailable {
-		var errResp httpChannelArtifactsListResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("%s", errResp.Error)
-		}
-		return nil, fmt.Errorf("channel artifacts are not available")
-	}
+	var out ChannelArtifactListResponse
+	parseErr := json.Unmarshal(body, &out)
 	if status != http.StatusOK {
-		var errResp httpChannelArtifactsListResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("list channel artifacts failed: %s", errResp.Error)
-		}
-		return nil, fmt.Errorf("list channel artifacts failed with status %d: %s", status, string(respBody))
+		return nil, callbackError(status, out.Error)
 	}
-
-	var out httpChannelArtifactsListResponse
-	if err := json.Unmarshal(respBody, &out); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	if parseErr != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", parseErr)
 	}
-
-	entries := make([]*channelartifacts.Entry, 0, len(out.Entries))
-	for _, e := range out.Entries {
-		entries = append(entries, entryFromHTTP(e))
-	}
-	return entries, nil
+	return out.Entries, nil
 }
 
-// Get returns metadata and optionally truncated HTML for one library artifact.
-func (s *HTTPChannelArtifactsService) Get(ctx context.Context, userID, artifactID string, includeContent bool, contentLimit int) (ChannelArtifactContent, error) {
-	include := includeContent
-	reqBody := httpChannelArtifactsGetRequest{
+// Get returns metadata and optionally a window of the HTML for one artifact.
+func (s *HTTPChannelArtifactsService) Get(ctx context.Context, userID, artifactID string, opts ChannelArtifactReadOptions) (ChannelArtifactContent, error) {
+	include := opts.IncludeContent
+	status, body, err := postPluginJSON(ctx, s.client, s.pluginURL+ChannelArtifactsGetPath, ChannelArtifactGetRequest{
 		ArtifactID:     artifactID,
 		IncludeContent: &include,
-		ContentLimit:   contentLimit,
-	}
-	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+ChannelArtifactsGetPath, reqBody, userID)
+		Offset:         opts.Offset,
+		ContentLimit:   opts.Limit,
+		Version:        opts.Version,
+	}, userID)
 	if err != nil {
 		return ChannelArtifactContent{}, err
 	}
-
-	if status == http.StatusNotFound {
-		return ChannelArtifactContent{}, channelartifacts.ErrNotFound
-	}
-	if status == http.StatusServiceUnavailable {
-		var errResp httpChannelArtifactsGetResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return ChannelArtifactContent{}, fmt.Errorf("%s", errResp.Error)
-		}
-		return ChannelArtifactContent{}, fmt.Errorf("channel artifacts are not available")
-	}
+	var out ChannelArtifactGetResponse
+	parseErr := json.Unmarshal(body, &out)
 	if status != http.StatusOK {
-		var errResp httpChannelArtifactsGetResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return ChannelArtifactContent{}, fmt.Errorf("get channel artifact failed: %s", errResp.Error)
-		}
-		return ChannelArtifactContent{}, fmt.Errorf("get channel artifact failed with status %d: %s", status, string(respBody))
+		return ChannelArtifactContent{}, callbackError(status, out.Error)
 	}
-
-	var out httpChannelArtifactsGetResponse
-	if err := json.Unmarshal(respBody, &out); err != nil {
-		return ChannelArtifactContent{}, fmt.Errorf("failed to parse response: %w", err)
+	if parseErr != nil {
+		return ChannelArtifactContent{}, fmt.Errorf("failed to parse response: %w", parseErr)
 	}
-
-	return ChannelArtifactContent{
-		Entry:           entryFromHTTP(out.Entry),
-		ContentIncluded: out.ContentIncluded,
-		Content:         out.Content,
-		TotalRunes:      out.TotalRunes,
-		Returned:        out.Returned,
-		HasMore:         out.HasMore,
-	}, nil
-}
-
-type httpCanSaveRequest struct {
-	PostID string `json:"post_id"`
-	FileID string `json:"file_id"`
-}
-
-type httpCanSaveResponse struct {
-	Error string `json:"error,omitempty"`
-}
-
-// CanSave asks the plugin whether this file may be saved into the channel library.
-// The plugin enforces HTML and the human-authored restriction; the tool does not.
-func (s *HTTPChannelArtifactsService) CanSave(ctx context.Context, userID, postID, fileID string) error {
-	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+ChannelArtifactsCanSavePath, httpCanSaveRequest{
-		PostID: postID,
-		FileID: fileID,
-	}, userID)
-	if err != nil {
-		return err
-	}
-	if status == http.StatusOK {
-		return nil
-	}
-	var out httpCanSaveResponse
-	if json.Unmarshal(respBody, &out) == nil && out.Error != "" {
-		return fmt.Errorf("%s", out.Error)
-	}
-	return fmt.Errorf("this file cannot be saved to the channel library (status %d)", status)
+	return out.ChannelArtifactContent, nil
 }

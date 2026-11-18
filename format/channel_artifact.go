@@ -31,9 +31,6 @@ func WriteChannelArtifact(w *strings.Builder, entry ChannelArtifactEntry) {
 	}
 	fmt.Fprintf(w, "ID: %s\n", e.ID)
 	fmt.Fprintf(w, "Title: %s\n", lineBreakReplacer.Replace(e.Title))
-	if e.Description != "" {
-		fmt.Fprintf(w, "Description: %s\n", lineBreakReplacer.Replace(e.Description))
-	}
 	fmt.Fprintf(w, "Channel ID: %s\n", e.ChannelID)
 	fmt.Fprintf(w, "Version: %d\n", e.Version)
 	if e.SHA256 != "" {
@@ -49,14 +46,14 @@ func WriteChannelArtifact(w *strings.Builder, entry ChannelArtifactEntry) {
 	} else if e.SourceBotUserID != "" {
 		fmt.Fprintf(w, "Source bot user ID: %s\n", e.SourceBotUserID)
 	}
-	if e.SourceFileName != "" {
-		fmt.Fprintf(w, "Source file: %s\n", lineBreakReplacer.Replace(e.SourceFileName))
-	}
 	if e.SourcePostID != "" {
 		fmt.Fprintf(w, "Source post ID: %s\n", e.SourcePostID)
 	}
 	if e.SourceFileID != "" {
 		fmt.Fprintf(w, "Source file ID: %s\n", e.SourceFileID)
+	}
+	if !e.Available {
+		w.WriteString("Availability: unavailable (the source message or file was deleted)\n")
 	}
 	if e.UpdateAt > 0 {
 		fmt.Fprintf(w, "Updated: %s\n", time.UnixMilli(e.UpdateAt).UTC().Format(time.RFC3339))
