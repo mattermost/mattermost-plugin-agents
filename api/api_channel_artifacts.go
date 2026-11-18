@@ -126,22 +126,22 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	body, info, post, authorDisplay, teamID, limit, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, req.ChannelID)
+	read, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, req.ChannelID)
 	if !ok {
 		return
 	}
 
 	limits := a.channelArtifactLimits()
-	limits.MaxSize = limit
+	limits.MaxSize = read.limit
 	entry, err := a.channelArtifacts.CreateFromHTML(
 		userID,
 		req,
-		body,
-		info.Name,
-		post.UserId,
-		authorDisplay,
-		teamID,
-		channelartifacts.RootPostID(post),
+		read.body,
+		read.info.Name,
+		read.post.UserId,
+		read.authorDisplay,
+		read.teamID,
+		channelartifacts.RootPostID(read.post),
 		limits,
 	)
 	if err != nil && !errors.Is(err, channelartifacts.ErrCleanupDeferred) {
@@ -189,21 +189,21 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	body, info, post, authorDisplay, _, limit, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, entry.ChannelID)
+	read, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, entry.ChannelID)
 	if !ok {
 		return
 	}
 	limits := a.channelArtifactLimits()
-	limits.MaxSize = limit
+	limits.MaxSize = read.limit
 	updated, err := a.channelArtifacts.ReplaceContent(
 		userID,
 		id,
 		req,
-		body,
-		info.Name,
-		post.UserId,
-		authorDisplay,
-		channelartifacts.RootPostID(post),
+		read.body,
+		read.info.Name,
+		read.post.UserId,
+		read.authorDisplay,
+		channelartifacts.RootPostID(read.post),
 		limits,
 	)
 	if err != nil && !errors.Is(err, channelartifacts.ErrCleanupDeferred) {
@@ -219,50 +219,69 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// readPostArtifactBody authorizes an HTML attachment and returns its bytes.
-func (a *API) readPostArtifactBody(c *gin.Context, userID, fileID, postID, channelID string) (body []byte, info *model.FileInfo, post *model.Post, authorDisplay, teamID string, limit int64, ok bool) {
+// postArtifactBody is an authorized HTML attachment read for a library write.
+type postArtifactBody struct {
+	body          []byte
+	info          *model.FileInfo
+	post          *model.Post
+	authorDisplay string
+	teamID        string
+	limit         int64
+}
+
+// readPostArtifactBody authorizes an HTML attachment and reads it.
+func (a *API) readPostArtifactBody(c *gin.Context, userID, fileID, postID, channelID string) (postArtifactBody, bool) {
 	client, info, post, ok := a.lookupPostArtifact(c, userID, fileID)
 	if !ok {
-		return nil, nil, nil, "", "", 0, false
+		return postArtifactBody{}, false
 	}
 	if post.Id != postID || post.ChannelId != channelID {
 		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, "", "", 0, false
+		return postArtifactBody{}, false
 	}
-	limit = artifactRenderLimit(client.GetConfig())
+	limit := artifactRenderLimit(client.GetConfig())
 	if info.Size > limit {
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
-		return nil, nil, nil, "", "", 0, false
+		return postArtifactBody{}, false
 	}
 	reader, err := client.GetFile(fileID)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
-		return nil, nil, nil, "", "", 0, false
+		return postArtifactBody{}, false
 	}
 	defer reader.Close()
-	body, err = io.ReadAll(io.LimitReader(reader, limit+1))
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
-		return nil, nil, nil, "", "", 0, false
+		return postArtifactBody{}, false
 	}
 	if int64(len(body)) > limit {
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
-		return nil, nil, nil, "", "", 0, false
+		return postArtifactBody{}, false
 	}
+	var authorDisplay string
 	if a.bots != nil {
 		if bot := a.bots.GetBotByIDOrUsername(post.UserId, ""); bot != nil {
 			authorDisplay = bot.GetMMBot().DisplayName
 		}
 	}
 	if authorDisplay == "" {
-		if user, err := client.GetUser(post.UserId); err == nil && user != nil {
+		if user, userErr := client.GetUser(post.UserId); userErr == nil && user != nil {
 			authorDisplay = user.GetDisplayName(model.ShowNicknameFullName)
 		}
 	}
+	var teamID string
 	if channel, _ := client.GetChannel(channelID); channel != nil {
 		teamID = channel.TeamId
 	}
-	return body, info, post, authorDisplay, teamID, limit, true
+	return postArtifactBody{
+		body:          body,
+		info:          info,
+		post:          post,
+		authorDisplay: authorDisplay,
+		teamID:        teamID,
+		limit:         limit,
+	}, true
 }
 
 func (a *API) handlePatchChannelArtifact(c *gin.Context) {

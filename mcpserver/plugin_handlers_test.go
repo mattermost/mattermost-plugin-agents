@@ -485,7 +485,7 @@ func TestPluginMCPHandlers_CloseCancelsInFlightDiscovery(t *testing.T) {
 	}}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	h.proxyDiscoveryTimeout = time.Minute
 
@@ -515,7 +515,7 @@ func TestPluginMCPHandlers_CloseCancelsInFlightDiscovery(t *testing.T) {
 func TestPluginMCPHandlers_CloseIsIdempotent(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 
 	closed := make(chan struct{})
@@ -554,7 +554,7 @@ func TestPluginMCPHandlers_RefusesToolCallsDisabledBeforeRebuild(t *testing.T) {
 			reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{enabled}}
 			logger, err := loggerlib.CreateDefaultLogger()
 			require.NoError(t, err)
-			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, newPluginHTTPForwarder(t, target), nil, nil, allowAllStateChangingTools, nil, nil)
+			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, newPluginHTTPForwarder(t, target), nil, nil, nil, allowAllStateChangingTools, nil, nil)
 			require.NoError(t, err)
 			t.Cleanup(h.Close)
 

@@ -24,7 +24,7 @@ func newRebuildTestHandlers(t *testing.T, mockAPI *stubPluginAPI) (*PluginMCPHan
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 	registry := &stubRegistry{}
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, allowAllStateChangingTools)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, nil, nil, nil, allowAllStateChangingTools)
 	require.NoError(t, err)
 	h.retryBaseDelay = 5 * time.Millisecond
 	h.retryMaxDelay = 20 * time.Millisecond
