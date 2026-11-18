@@ -480,6 +480,12 @@ func (p *Plugin) OnActivate() error {
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
+	channelArtifactsService := channelartifacts.NewService(
+		channelartifacts.NewStore(mmClient),
+		mmClient,
+		channelartifacts.MembersFromPluginAPI(pluginAPI),
+	)
+	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelArtifactsService, mmClient, &p.configuration, bots)
 	var (
 		embeddedMu     sync.Mutex
 		embeddedServer *EmbeddedMCPServer
@@ -495,7 +501,7 @@ func (p *Plugin) OnActivate() error {
 		defer embeddedMu.Unlock()
 
 		if embeddedServer == nil {
-			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, nil, func() bool {
+			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, mcpChannelArtifacts, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
 			})
 			if embeddedErr != nil {
@@ -593,7 +599,7 @@ func (p *Plugin) OnActivate() error {
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
 	pluginServers := licensedPluginServers{registry: mcpClientManager, allowed: remoteMCPAllowed}
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, nil, func() bool {
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, mcpChannelArtifacts, func() bool {
 		return licenseChecker.Allows(enterprise.CapStateChangingTools)
 	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
@@ -645,11 +651,6 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
-	channelArtifactsService := channelartifacts.NewService(
-		channelartifacts.NewStore(mmClient),
-		mmClient,
-		channelartifacts.MembersFromPluginAPI(pluginAPI),
-	)
 	apiService.SetChannelArtifacts(channelArtifactsService)
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
