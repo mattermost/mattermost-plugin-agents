@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -225,22 +227,27 @@ func (a *API) handleMCPCanSaveChannelArtifact(c *gin.Context) {
 		return
 	}
 
-	info, err := a.mmClient.GetFileInfo(req.FileID)
-	if err != nil || info == nil || !isArtifactExtension(info) {
+	client := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
+	info, err := client.GetFileInfo(req.FileID)
+	if err != nil || info == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	post, err := client.GetPost(req.PostID)
+	if err != nil || post == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	if !client.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	if !isArtifactExtension(info) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file is not an HTML artifact"})
 		return
 	}
-	if info.PostId == "" || info.PostId != req.PostID {
+	if info.PostId == "" || info.PostId != req.PostID || !slices.Contains(post.FileIds, req.FileID) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file is not attached to the post"})
-		return
-	}
-	post, err := a.mmClient.GetPost(req.PostID)
-	if err != nil || post == nil || !slices.Contains(post.FileIds, req.FileID) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file is not attached to the post"})
-		return
-	}
-	if !a.mmClient.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
 	if a.config.DisableHumanChannelArtifacts() && (a.bots == nil || !a.bots.IsAnyBot(post.UserId)) {

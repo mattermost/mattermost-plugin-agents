@@ -138,7 +138,15 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 	postID := model.NewId()
 	fileID := model.NewId()
 	channelID := model.NewId()
+	sessionID := model.NewId()
 	body := `{"post_id":"` + postID + `","file_id":"` + fileID + `"}`
+	allowDownload := func(m *mocks.MockClient) {
+		m.EXPECT().HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true)
+	}
+	readablePost := func(m *mocks.MockClient) {
+		m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
+		m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+	}
 
 	tests := []struct {
 		name       string
@@ -151,34 +159,55 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 	}{
 		{name: "feature off", wantStatus: http.StatusServiceUnavailable, wantError: "channel artifacts are not available"},
 		{
+			name: "download policy denies the file", enabled: true, client: true,
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(false)
+			},
+			wantStatus: http.StatusNotFound, wantError: "not found",
+		},
+		{
+			name: "non-html file stays hidden without channel access", enabled: true, client: true,
+			setup: func(m *mocks.MockClient) {
+				allowDownload(m)
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.txt", Extension: "txt"}, nil)
+				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID}, nil)
+				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(false)
+			},
+			wantStatus: http.StatusNotFound, wantError: "not found",
+		},
+		{
 			name: "non-html file", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
+				allowDownload(m)
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.txt", Extension: "txt"}, nil)
+				readablePost(m)
 			},
 			wantStatus: http.StatusNotFound, wantError: "file is not an HTML artifact",
 		},
 		{
 			name: "file is not attached to a post", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
+				allowDownload(m)
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, Name: "notes.html", Extension: "html"}, nil)
+				readablePost(m)
 			},
 			wantStatus: http.StatusNotFound, wantError: "file is not attached to the post",
 		},
 		{
 			name: "human authored while restricted", enabled: true, humanOnly: true, client: true,
 			setup: func(m *mocks.MockClient) {
+				allowDownload(m)
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "notes.html", Extension: "html"}, nil)
-				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
-				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				readablePost(m)
 			},
 			wantStatus: http.StatusForbidden, wantError: "channel artifacts only accept files posted by agents",
 		},
 		{
 			name: "larger than the render limit", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
+				allowDownload(m)
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "notes.html", Extension: "html", Size: 2 << 20}, nil)
-				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
-				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				readablePost(m)
 				m.EXPECT().GetConfig().Return(&model.Config{})
 			},
 			wantStatus: http.StatusRequestEntityTooLarge, wantError: "artifact too large",
@@ -186,9 +215,9 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 		{
 			name: "html file on the post", enabled: true, client: true,
 			setup: func(m *mocks.MockClient) {
+				allowDownload(m)
 				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "notes.html", Extension: "html"}, nil)
-				m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
-				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				readablePost(m)
 				m.EXPECT().GetConfig().Return(&model.Config{})
 			},
 			wantStatus: http.StatusOK,
@@ -209,7 +238,7 @@ func TestMCPCanSaveChannelArtifact(t *testing.T) {
 				e.api.mmClient = m
 			}
 
-			rec := serveLibrary(e, http.MethodPost, "/channel-artifacts/mcp/can-save", body, "")
+			rec := serveLibrary(e, http.MethodPost, "/channel-artifacts/mcp/can-save", body, sessionID)
 			require.Equal(t, tt.wantStatus, rec.Code)
 			if tt.wantError != "" {
 				var got struct {
@@ -236,6 +265,14 @@ func TestDownloadChannelArtifactDisabled(t *testing.T) {
 	e.api.SetChannelArtifacts(libraryService(newArtifactTokenKV()))
 
 	rec := serveLibrary(e, http.MethodGet, "/channel-artifacts/"+model.NewId()+"/download", "", "")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	kv := newArtifactTokenKV()
+	svc := libraryService(kv)
+	e.api.SetChannelArtifacts(svc)
+	e.api.mmClient = kv
+	entry := saveLibraryEntry(t, svc, model.NewId(), "Notes", "<html>v1</html>")
+	rec = serveLibrary(e, http.MethodGet, "/channel-artifacts/"+entry.ID+"/download", "", "")
 	require.Equal(t, http.StatusForbidden, rec.Code)
 	assert.Equal(t, "channel artifact download is disabled", rec.Body.String())
 }

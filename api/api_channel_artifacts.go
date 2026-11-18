@@ -655,12 +655,12 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 }
 
 func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
-	if a.config.DisableChannelArtifactDownload() {
-		c.String(http.StatusForbidden, "channel artifact download is disabled")
-		return
-	}
 	entry, ok := a.authorizeLibraryArtifact(c)
 	if !ok {
+		return
+	}
+	if a.config.DisableChannelArtifactDownload() {
+		c.String(http.StatusForbidden, "channel artifact download is disabled")
 		return
 	}
 	version, ok := parseArtifactVersionQuery(c)
