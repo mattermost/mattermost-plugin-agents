@@ -136,7 +136,7 @@ describe('AgentChatThreadView', () => {
         renderView({layout, isThreadView, agentName});
 
         expect(screen.getByTestId('thread-pane').contains(screen.getByTestId('thread-viewer'))).toBe(true);
-        expect(mockThreadViewerProps).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView, inputPlaceholder: placeholder}));
+        expect(mockThreadViewerProps).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView, inputPlaceholder: placeholder, agentMode: true}));
     });
 
     test('loads the profiles of thread posters the store lacks, for the host composer\'s @mention list', async () => {

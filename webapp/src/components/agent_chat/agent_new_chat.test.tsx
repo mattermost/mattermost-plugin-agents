@@ -139,7 +139,7 @@ describe('AgentNewChat', () => {
     ])('in the $layout layout, the host composer posts a root post to the agent\'s DM', ({layout, location}) => {
         render(ui(layout));
         expect(screen.getByTestId('agent-chat-new-composer')).toBeTruthy();
-        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({location, channelId: 'dm1', rootId: '', placeholder: 'Message Matty'}));
+        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({location, channelId: 'dm1', rootId: '', placeholder: 'Message Matty', agentMode: true}));
     });
 
     describe('pinned skills', () => {

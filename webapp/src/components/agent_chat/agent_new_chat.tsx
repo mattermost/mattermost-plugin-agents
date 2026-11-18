@@ -213,6 +213,10 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                             rootId=''
                             placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
                             afterSubmit={afterSubmit}
+
+                            // Host agent mode: hide channel chrome for this composer only.
+                            // Older servers ignore the prop.
+                            agentMode={true}
                         />
                     </Composer>
                 )}

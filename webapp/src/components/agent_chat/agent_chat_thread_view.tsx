@@ -73,6 +73,10 @@ const AgentChatThreadView = ({rootId, agentName, layout, isThreadView, testId, v
                         isThreadView={isThreadView}
                         useRelativeTimestamp={false}
                         inputPlaceholder={agentName ? intl.formatMessage({defaultMessage: 'Reply to {name}'}, {name: agentName}) : intl.formatMessage({defaultMessage: 'Reply…'})}
+
+                        // Host agent mode, forwarded to the reply composer.
+                        // Older servers ignore the prop.
+                        agentMode={true}
                     />
                     <JumpToLatest
                         visible={scrolledUp}
