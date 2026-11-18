@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,6 +75,19 @@ func (a *API) writeChannelArtifactError(c *gin.Context, err error) {
 	}
 }
 
+func bindChannelArtifactJSON(c *gin.Context, out any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
+	if err := c.ShouldBindJSON(out); err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			c.String(http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		c.String(http.StatusBadRequest, "invalid request")
+		return false
+	}
+	return true
+}
+
 func (a *API) handleListChannelArtifacts(c *gin.Context) {
 	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
 	c.Writer.Header().Set("Cache-Control", "private, no-store")
@@ -105,8 +119,7 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		return
 	}
 	var req channelartifacts.CreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.String(http.StatusBadRequest, "invalid request")
+	if !bindChannelArtifactJSON(c, &req) {
 		return
 	}
 	if !model.IsValidId(req.ChannelID) || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
@@ -138,7 +151,7 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		req,
 		read.body,
 		read.info.Name,
-		read.post.UserId,
+		read.sourceBotUserID,
 		read.authorDisplay,
 		read.teamID,
 		channelartifacts.RootPostID(read.post),
@@ -179,7 +192,10 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.ReplaceRequest
-	if err := c.ShouldBindJSON(&req); err != nil || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
+	if !bindChannelArtifactJSON(c, &req) {
+		return
+	}
+	if !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
@@ -201,7 +217,7 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 		req,
 		read.body,
 		read.info.Name,
-		read.post.UserId,
+		read.sourceBotUserID,
 		read.authorDisplay,
 		channelartifacts.RootPostID(read.post),
 		limits,
@@ -221,12 +237,15 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 
 // postArtifactBody is an authorized HTML attachment read for a library write.
 type postArtifactBody struct {
-	body          []byte
-	info          *model.FileInfo
-	post          *model.Post
-	authorDisplay string
-	teamID        string
-	limit         int64
+	body []byte
+	info *model.FileInfo
+	post *model.Post
+	// sourceBotUserID and authorDisplay are set only when an agent authored the
+	// post; people who save their own attachments are not recorded as agents.
+	sourceBotUserID string
+	authorDisplay   string
+	teamID          string
+	limit           int64
 }
 
 // readPostArtifactBody authorizes an HTML attachment and reads it.
@@ -259,28 +278,30 @@ func (a *API) readPostArtifactBody(c *gin.Context, userID, fileID, postID, chann
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
 		return postArtifactBody{}, false
 	}
-	var authorDisplay string
+	var sourceBotUserID, authorDisplay string
 	if a.bots != nil {
 		if bot := a.bots.GetBotByIDOrUsername(post.UserId, ""); bot != nil {
+			sourceBotUserID = post.UserId
 			authorDisplay = bot.GetMMBot().DisplayName
 		}
 	}
-	if authorDisplay == "" {
-		if user, userErr := client.GetUser(post.UserId); userErr == nil && user != nil {
-			authorDisplay = user.GetDisplayName(model.ShowNicknameFullName)
-		}
-	}
 	var teamID string
-	if channel, _ := client.GetChannel(channelID); channel != nil {
+	channel, err := client.GetChannel(channelID)
+	if err != nil {
+		a.writeChannelArtifactError(c, err)
+		return postArtifactBody{}, false
+	}
+	if channel != nil {
 		teamID = channel.TeamId
 	}
 	return postArtifactBody{
-		body:          body,
-		info:          info,
-		post:          post,
-		authorDisplay: authorDisplay,
-		teamID:        teamID,
-		limit:         limit,
+		body:            body,
+		info:            info,
+		post:            post,
+		sourceBotUserID: sourceBotUserID,
+		authorDisplay:   authorDisplay,
+		teamID:          teamID,
+		limit:           limit,
 	}, true
 }
 
@@ -298,8 +319,7 @@ func (a *API) handlePatchChannelArtifact(c *gin.Context) {
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.PatchRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.String(http.StatusBadRequest, "invalid request")
+	if !bindChannelArtifactJSON(c, &req) {
 		return
 	}
 	entry, err := a.channelArtifacts.Patch(c.GetHeader("Mattermost-User-Id"), id, req)
@@ -327,7 +347,10 @@ func (a *API) handleRollbackChannelArtifact(c *gin.Context) {
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.RollbackRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.Version < 1 {
+	if !bindChannelArtifactJSON(c, &req) {
+		return
+	}
+	if req.Version < 1 {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
@@ -362,7 +385,11 @@ func (a *API) handleDeleteChannelArtifact(c *gin.Context) {
 		return
 	}
 	channelID := entry.ChannelID
-	purge, purgeErr := purgeQuery(c.Query("purge"))
+	rawPurge, ok := strictQueryValue(c, "purge")
+	if !ok {
+		return
+	}
+	purge, purgeErr := purgeQuery(rawPurge)
 	if purgeErr != nil {
 		c.String(http.StatusBadRequest, "invalid purge")
 		return
@@ -411,7 +438,10 @@ func (a *API) handleReorderChannelArtifacts(c *gin.Context) {
 		return
 	}
 	var req channelartifacts.OrderRequest
-	if err := c.ShouldBindJSON(&req); err != nil || !model.IsValidId(req.ChannelID) {
+	if !bindChannelArtifactJSON(c, &req) {
+		return
+	}
+	if !model.IsValidId(req.ChannelID) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
@@ -531,8 +561,23 @@ func (a *API) authorizeLibraryArtifact(c *gin.Context) (*channelartifacts.Entry,
 	return entry, true
 }
 
+// strictQueryValue reads one query parameter and rejects a malformed query
+// string or a repeated key. c.Query silently drops bad pairs and takes the
+// first of a repeated key, which would turn a bad request into a default one.
+func strictQueryValue(c *gin.Context, key string) (string, bool) {
+	query, err := url.ParseQuery(c.Request.URL.RawQuery)
+	if err != nil || len(query[key]) > 1 {
+		c.String(http.StatusBadRequest, "invalid request")
+		return "", false
+	}
+	return query.Get(key), true
+}
+
 func parseArtifactVersionQuery(c *gin.Context) (int, bool) {
-	raw := c.Query("version")
+	raw, ok := strictQueryValue(c, "version")
+	if !ok {
+		return 0, false
+	}
 	if raw == "" {
 		return 0, true
 	}
