@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {LLMBotConfig} from './bot';
+import {DictationConfig} from './dictation_panel';
 import {EmbeddingSearchConfig} from './embedding_search/types';
 import {MCPConfig} from './mcp_types';
 import {LLMService} from './service';
@@ -34,6 +35,9 @@ export type PluginConfig = {
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
+
+    // Absent on servers that predate dictation; a zero value means disabled.
+    dictation?: DictationConfig,
 
     // Versions of each agent's history to keep; 0 keeps every version.
     agentVersionsToKeep?: number,

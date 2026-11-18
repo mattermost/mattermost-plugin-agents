@@ -61,6 +61,8 @@ import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
+import DictationButton from './components/dictation/dictation_button';
+import {refreshDictationAvailability} from './dictation/availability';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -194,6 +196,7 @@ export default class Plugin {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                refreshDictationAvailability(store.dispatch);
             });
         }
 
@@ -224,10 +227,26 @@ export default class Plugin {
             fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         };
 
-        registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
+        registry.registerWebSocketEventHandler('config_changed', () => {
+            refreshRuntimeBotsCache();
+            refreshDictationAvailability(store.dispatch);
+        });
+
+        // Availability includes the license check, so a license change can show or hide the mic.
+        registry.registerWebSocketEventHandler('license_changed', () => {
+            refreshDictationAvailability(store.dispatch);
+        });
+
+        if (registry.registerPostEditorActionComponent) {
+            registry.registerPostEditorActionComponent(DictationButton);
+            refreshDictationAvailability(store.dispatch);
+        }
 
         // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', () => {
+            refreshRuntimeBotsCache();
+            refreshDictationAvailability(store.dispatch);
+        });
 
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);

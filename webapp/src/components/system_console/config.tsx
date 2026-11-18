@@ -25,6 +25,12 @@ import MCPServers, {MCPServerConfig} from './mcp_servers';
 import {PersistMCPServerScope} from './mcp_types';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
+import DictationPanel, {
+    DEFAULT_DICTATION_MODEL,
+    DictationConfig,
+    defaultDictationConfig,
+    validateDictationConfig,
+} from './dictation_panel';
 
 type Config = PluginConfig;
 
@@ -173,7 +179,21 @@ const defaultConfig: Config = {
             resultLimit: 5,
         },
     },
+    dictation: defaultDictationConfig,
 };
+
+// A server's zero-value dictation config has no model; pre-fill the default.
+const withDictationDefaults = (dictation: DictationConfig | undefined): DictationConfig => ({
+    ...defaultDictationConfig,
+    ...(dictation ?? {}),
+    model: dictation?.model || DEFAULT_DICTATION_MODEL,
+});
+
+const fromServerConfig = (cfg: Config): Config => ({
+    ...defaultConfig,
+    ...cfg,
+    dictation: withDictationDefaults(cfg.dictation),
+});
 
 const BetaMessage = () => (
     <SectionNotice
@@ -256,8 +276,8 @@ const Config = (props: Props) => {
         const loadConfig = async () => {
             try {
                 const cfg = await getPluginConfig();
-                setLocalConfig({...defaultConfig, ...cfg});
-                setSavedConfig({...defaultConfig, ...cfg});
+                setLocalConfig(fromServerConfig(cfg));
+                setSavedConfig(fromServerConfig(cfg));
                 setLoadError(null);
             } catch (e: any) {
                 setLoadError(intl.formatMessage({defaultMessage: 'Failed to load configuration.'}));
@@ -287,14 +307,17 @@ const Config = (props: Props) => {
     // Register save action that PUTs config to plugin API
     useEffect(() => {
         const save = async () => {
+            if (Object.keys(validateDictationConfig(localConfig.dictation ?? defaultDictationConfig, localConfig.services ?? [], intl)).length > 0) {
+                return {error: {message: intl.formatMessage({defaultMessage: 'Fix the Dictation settings before saving.'})}};
+            }
             try {
                 const saved = await savePluginConfig(localConfig);
 
                 // Adopt the normalized saved config so server-minted
                 // service/MCP IDs (and the UI gated on them) appear
                 // immediately instead of after a page reload.
-                setLocalConfig({...defaultConfig, ...saved});
-                setSavedConfig({...defaultConfig, ...saved});
+                setLocalConfig(fromServerConfig(saved));
+                setSavedConfig(fromServerConfig(saved));
                 setLinkDomainsError('');
                 return {};
             } catch (e: any) {
@@ -419,6 +442,7 @@ const Config = (props: Props) => {
 
     // Initialize with default empty config if not provided
     const mcpConfig = value.mcp || defaultConfig.mcp;
+    const dictationConfig = value.dictation ?? defaultDictationConfig;
     const defaultBotID = effectiveDefaultBotID(value.defaultBotUserID, value.defaultBotName, runtimeBots);
 
     return (
@@ -635,6 +659,12 @@ const Config = (props: Props) => {
                 onChange={(config) => {
                     updateConfig({embeddingSearchConfig: config});
                 }}
+            />
+            <DictationPanel
+                value={dictationConfig}
+                services={value.services ?? []}
+                errors={validateDictationConfig(dictationConfig, value.services ?? [], intl)}
+                onChange={(dictation) => updateConfig({dictation})}
             />
             <WebSearchPanel
                 value={value.webSearch || defaultConfig.webSearch}

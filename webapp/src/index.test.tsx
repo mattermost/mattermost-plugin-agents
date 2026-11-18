@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {BotsHandler} from './redux';
+import {SetDictationAvailability} from './dictation/availability';
 import {LLMBot} from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 
@@ -49,8 +50,10 @@ jest.mock('react-router-dom', () => ({
 const mockGetAIBots = jest.fn();
 const mockSetSiteURL = jest.fn();
 const mockGetAIThreads = jest.fn();
+const mockGetDictationAvailability = jest.fn();
 jest.mock('@/client', () => ({
     getAIBots: (...args: unknown[]) => mockGetAIBots(...args),
+    getDictationAvailability: (...args: unknown[]) => mockGetDictationAvailability(...args),
     setSiteURL: (...args: unknown[]) => mockSetSiteURL(...args),
     getAIThreads: (...args: unknown[]) => mockGetAIThreads(...args),
     doReaction: jest.fn(),
@@ -89,6 +92,7 @@ function makeRegistry(websocketHandlers: WebSocketHandlers) {
         registerAdminConsoleCustomSetting: jest.fn(),
         registerChannelSettingsTab: jest.fn(),
         registerGlobalComponent: jest.fn(),
+        registerPostEditorActionComponent: jest.fn(),
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
@@ -116,9 +120,10 @@ async function initializePlugin(siteURL?: string, state?: Record<string, unknown
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch, siteURL, state));
+    const registry = makeRegistry(websocketHandlers);
+    await new Plugin().initialize(registry, makeStore(dispatch, siteURL, state));
 
-    return {websocketHandlers, dispatch};
+    return {websocketHandlers, dispatch, registry};
 }
 
 // Lets the floating fetch promises inside initialize()/the handlers settle.
@@ -191,6 +196,80 @@ describe('bots cache websocket handlers', () => {
         await flush();
 
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: BotsHandler}));
+    });
+});
+
+describe('dictation', () => {
+    const available = {enabled: true, available: true, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc'};
+    const unlicensed = {enabled: true, available: false, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc', reason: 'license'};
+
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIBots.mockReset();
+        mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+        mockGetDictationAvailability.mockReset();
+    });
+
+    test('registers the dictation button in every message box and loads availability', async () => {
+        mockGetDictationAvailability.mockResolvedValue(available);
+        const {registry, dispatch} = await initializePlugin();
+        await flush();
+
+        // eslint-disable-next-line global-require
+        const DictationButton = require('./components/dictation/dictation_button').default;
+        expect(registry.registerPostEditorActionComponent).toHaveBeenCalledWith(DictationButton);
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: available});
+    });
+
+    test.each([
+        ['config_changed'],
+        ['license_changed'],
+        ['custom_mattermost-ai_bots_invalidate'],
+    ])('%s refreshes availability', async (event) => {
+        mockGetDictationAvailability.mockResolvedValue(available);
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        await flush();
+        dispatch.mockClear();
+
+        mockGetDictationAvailability.mockResolvedValue(unlicensed);
+        fireWebSocketEvent(websocketHandlers, event);
+        await flush();
+
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
+    });
+
+    test('a failed refresh hides the button instead of keeping a stale availability', async () => {
+        mockGetDictationAvailability.mockResolvedValue(available);
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        await flush();
+        dispatch.mockClear();
+
+        mockGetDictationAvailability.mockRejectedValue(new Error('network'));
+        fireWebSocketEvent(websocketHandlers, 'license_changed');
+        await flush();
+
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: null});
+    });
+
+    test('a superseded response is dropped', async () => {
+        mockGetDictationAvailability.mockResolvedValue(available);
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        await flush();
+        dispatch.mockClear();
+
+        let resolveFirst: (v: unknown) => void = () => { /* set below */ };
+        mockGetDictationAvailability.mockReturnValueOnce(new Promise((resolve) => {
+            resolveFirst = resolve;
+        }));
+        mockGetDictationAvailability.mockResolvedValueOnce(unlicensed);
+        fireWebSocketEvent(websocketHandlers, 'config_changed');
+        fireWebSocketEvent(websocketHandlers, 'license_changed');
+        await flush();
+        resolveFirst(available);
+        await flush();
+
+        const dictationDispatches = dispatch.mock.calls.filter(([a]) => a.type === SetDictationAvailability);
+        expect(dictationDispatches).toEqual([[{type: SetDictationAvailability, availability: unlicensed}]]);
     });
 });
 

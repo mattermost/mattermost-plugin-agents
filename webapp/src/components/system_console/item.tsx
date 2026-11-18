@@ -236,6 +236,7 @@ export type ComboboxItemProps = {
     placeholder?: string
     helptext?: string
     isClearable?: boolean
+    error?: string
     onChange: (value: string) => void
 };
 
@@ -267,6 +268,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                         zIndex={PORTALED_MENU_Z_INDEX}
                     />
                 </FieldControlRow>
+                {props.error && <ErrorMessage message={props.error}/>}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }

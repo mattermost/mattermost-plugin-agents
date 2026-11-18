@@ -429,6 +429,65 @@ describe('Config agent version retention', () => {
     });
 });
 
+describe('Config dictation', () => {
+    const savedServices = [
+        {id: 'svc-anthropic', name: 'Claude', type: 'anthropic'},
+        {id: 'svc-openai', name: 'Whisper', type: 'openai'},
+    ];
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getAIBots as jest.Mock).mockResolvedValue({bots: []});
+        (savePluginConfig as jest.Mock).mockImplementation(async (cfg) => cfg);
+    });
+
+    async function save(registerSaveAction: jest.Mock) {
+        const action = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        let result: {error?: {message?: string}} = {};
+        await act(async () => {
+            result = await action();
+        });
+        return result;
+    }
+
+    it('pre-fills the model for a server that has never saved dictation settings', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:Claude:svc-anthropic');
+
+        expect(await save(registerSaveAction)).toEqual({});
+        expect((savePluginConfig as jest.Mock).mock.calls.at(-1)[0].dictation).toEqual({
+            enabled: false,
+            serviceID: '',
+            model: 'gpt-live-transcribe',
+            language: '',
+        });
+    });
+
+    it.each([
+        {name: 'no service', dictation: {enabled: true, serviceID: '', model: 'gpt-live-transcribe'}},
+        {name: 'a service of another type', dictation: {enabled: true, serviceID: 'svc-anthropic', model: 'gpt-live-transcribe'}},
+        {name: 'a deleted service', dictation: {enabled: true, serviceID: 'svc-gone', model: 'gpt-live-transcribe'}},
+    ])('refuses to save dictation enabled with $name', async ({dictation}) => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:Claude:svc-anthropic');
+
+        expect((await save(registerSaveAction)).error).toBeTruthy();
+        expect(savePluginConfig).not.toHaveBeenCalled();
+    });
+
+    it('saves dictation on an OpenAI service while agents use another service', async () => {
+        const dictation = {enabled: true, serviceID: 'svc-openai', model: 'gpt-4o-transcribe', language: 'de'};
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:Claude:svc-anthropic');
+
+        expect(await save(registerSaveAction)).toEqual({});
+        expect((savePluginConfig as jest.Mock).mock.calls.at(-1)[0].dictation).toEqual(dictation);
+    });
+});
+
 describe('withSavedMCPServer', () => {
     const server = (id: string, policy: 'ask' | 'auto_run_in_dm' = 'ask', baseURL = `https://${id}.example.com`) => ({
         id,

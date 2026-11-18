@@ -10,6 +10,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
+import type {DictationAvailability, DictationSession} from '@/dictation/types';
 import {
     UserAgent,
     CreateAgentRequest,
@@ -585,6 +586,42 @@ export async function getAIBots() {
 
     throw new ClientError(Client4.url, {
         message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getDictationAvailability(): Promise<DictationAvailability> {
+    const url = `${baseRoute()}/dictation/availability`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+// The returned client secret is a short-lived provider credential: never log
+// it or keep it after the connection is made.
+export async function createDictationSession(): Promise<DictationSession> {
+    const url = `${baseRoute()}/dictation/session`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
         status_code: response.status,
         url,
     });
