@@ -131,20 +131,20 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         setErrorReason(null);
         setStatus('requesting_permission');
 
-        const onTranscript = (update: TranscriptUpdate) => {
+        // Recorded even while stopping: stop delivers the last segment's final
+        // text, which finish then writes.
+        transport.onTranscript((update: TranscriptUpdate) => {
+            session.latest = update;
             if (sessionRef.current !== session) {
                 return;
             }
-            session.latest = update;
             scheduleWrite(
                 session,
                 update.text,
                 () => sessionRef.current === session,
                 (message) => updateTextRef.current(message),
             );
-        };
-        transport.onPartial(onTranscript);
-        transport.onFinal(onTranscript);
+        });
         transport.onConnecting(() => {
             if (sessionRef.current === session) {
                 setStatus('connecting');

@@ -308,9 +308,6 @@ const Config = (props: Props) => {
     // Register save action that PUTs config to plugin API
     useEffect(() => {
         const save = async () => {
-            if (Object.keys(validateDictationConfig(localConfig.dictation ?? defaultDictationConfig, localConfig.services ?? [], intl)).length > 0) {
-                return {error: {message: intl.formatMessage({defaultMessage: 'Fix the Dictation settings before saving.'})}};
-            }
             try {
                 const saved = await savePluginConfig(localConfig);
 

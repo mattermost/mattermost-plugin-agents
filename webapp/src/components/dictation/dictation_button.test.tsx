@@ -37,8 +37,7 @@ const {useDictationAvailable} = jest.requireMock('@/dictation/availability') as 
 const {isDictationSupported} = jest.requireMock('@/dictation/webrtc_transcriber') as {isDictationSupported: jest.Mock};
 
 class FakeTransport implements DictationTransport {
-    partial: (u: TranscriptUpdate) => void = () => { /* set by hook */ };
-    final: (u: TranscriptUpdate) => void = () => { /* set by hook */ };
+    transcript: (u: TranscriptUpdate) => void = () => { /* set by hook */ };
     error: (e: DictationError) => void = () => { /* set by hook */ };
     idle: () => void = () => { /* set by hook */ };
     connecting: () => void = () => { /* set by hook */ };
@@ -53,12 +52,8 @@ class FakeTransport implements DictationTransport {
         });
     }
 
-    onPartial(h: (u: TranscriptUpdate) => void) {
-        this.partial = h;
-    }
-
-    onFinal(h: (u: TranscriptUpdate) => void) {
-        this.final = h;
+    onTranscript(h: (u: TranscriptUpdate) => void) {
+        this.transcript = h;
     }
 
     onError(h: (e: DictationError) => void) {
@@ -173,14 +168,30 @@ describe('DictationButton', () => {
         const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, 5);
         await startListening(() => transports[0]);
 
-        act(() => transports[0].partial({text: 'big', finalText: ''}));
+        act(() => transports[0].transcript({text: 'big', finalText: ''}));
         await waitFor(() => expect(draft()).toBe('Hello big world'));
 
-        act(() => transports[0].final({text: 'big brave', finalText: 'big'}));
+        act(() => transports[0].transcript({text: 'big brave', finalText: 'big'}));
         await waitFor(() => expect(draft()).toBe('Hello big brave world'));
 
         fireEvent.click(button());
         await waitFor(() => expect(draft()).toBe('Hello big world'));
+    });
+
+    test('keeps the last phrase when stopping right after speaking', async () => {
+        const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, 5);
+        await startListening(() => transports[0]);
+        act(() => transports[0].transcript({text: 'big brave', finalText: 'big'}));
+        await waitFor(() => expect(draft()).toBe('Hello big brave world'));
+
+        // Like the WebRTC transport, stop commits the last segment and emits its final before resolving.
+        transports[0].stop.mockImplementation(async () => {
+            transports[0].transcript({text: 'big brave', finalText: 'big brave'});
+        });
+        fireEvent.click(button());
+
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+        expect(draft()).toBe('Hello big brave world');
     });
 
     test('coalesces updates into one write per frame', async () => {
@@ -188,9 +199,9 @@ describe('DictationButton', () => {
         await startListening(() => transports[0]);
 
         act(() => {
-            transports[0].partial({text: 'a', finalText: ''});
-            transports[0].partial({text: 'a b', finalText: ''});
-            transports[0].partial({text: 'a b c', finalText: ''});
+            transports[0].transcript({text: 'a', finalText: ''});
+            transports[0].transcript({text: 'a b', finalText: ''});
+            transports[0].transcript({text: 'a b c', finalText: ''});
         });
         await waitFor(() => expect(draft()).toBe('a b c'));
         expect(updateText).toHaveBeenCalledTimes(1);
@@ -199,14 +210,14 @@ describe('DictationButton', () => {
     test('a user edit stops dictation and keeps the edit', async () => {
         const {transports, controls, draft} = renderButton({message: '', channelId: 'c1'});
         await startListening(() => transports[0]);
-        act(() => transports[0].partial({text: 'hello', finalText: ''}));
+        act(() => transports[0].transcript({text: 'hello', finalText: ''}));
         await waitFor(() => expect(draft()).toBe('hello'));
 
         act(() => controls.setDraft((d) => ({...d, message: 'hello!'})));
         await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
         expect(transports[0].stop).toHaveBeenCalled();
 
-        act(() => transports[0].partial({text: 'hello there', finalText: ''}));
+        act(() => transports[0].transcript({text: 'hello there', finalText: ''}));
         await new Promise((r) => setTimeout(r, 50));
         expect(draft()).toBe('hello!');
     });
@@ -288,7 +299,7 @@ describe('DictationButton', () => {
     test('a provider error while listening keeps finalized text and shows the error', async () => {
         const {transports, draft} = renderButton({message: '', channelId: 'c1'});
         await startListening(() => transports[0]);
-        act(() => transports[0].final({text: 'kept partial', finalText: 'kept'}));
+        act(() => transports[0].transcript({text: 'kept partial', finalText: 'kept'}));
         await waitFor(() => expect(draft()).toBe('kept partial'));
 
         await act(async () => {

@@ -227,14 +227,12 @@ export default class Plugin {
             fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         };
 
+        // The plugin server announces dictation availability changes from plugin
+        // config and license changes itself, but not from server config changes,
+        // which can change the license level of a development server.
         registry.registerWebSocketEventHandler('config_changed', () => {
             refreshRuntimeBotsCache();
-            refreshDictationAvailability(store.dispatch);
-        });
-
-        // Availability includes the license check, so a license change can show or hide the mic.
-        registry.registerWebSocketEventHandler('license_changed', () => {
-            refreshDictationAvailability(store.dispatch);
+            scheduleDictationAvailabilityRefresh(store.dispatch);
         });
 
         registry.registerWebSocketEventHandler('custom_mattermost-ai_dictation_availability_changed', () => {
@@ -246,10 +244,7 @@ export default class Plugin {
         }
 
         // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', () => {
-            refreshRuntimeBotsCache();
-            refreshDictationAvailability(store.dispatch);
-        });
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);
 
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);

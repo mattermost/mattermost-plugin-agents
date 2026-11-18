@@ -86,8 +86,8 @@ export interface DictationTransport {
     // The microphone is granted and the connection is being made.
     onConnecting(handler: () => void): void;
 
-    onPartial(handler: (update: TranscriptUpdate) => void): void;
-    onFinal(handler: (update: TranscriptUpdate) => void): void;
+    // Every change to the transcript, partial or final.
+    onTranscript(handler: (update: TranscriptUpdate) => void): void;
 
     // An error after start resolved. The transport has already torn down.
     onError(handler: (error: DictationError) => void): void;

@@ -86,15 +86,19 @@ type ProviderEvent = {
     previous_item_id?: string | null;
     delta?: string;
     transcript?: string;
+    error?: {code?: string};
 };
+
+// Sent when a commit holds under 100 ms of audio, e.g. a stop right after a
+// forced commit. Nothing is lost.
+const COMMIT_EMPTY_ERROR = 'input_audio_buffer_commit_empty';
 
 // WebRTCTranscriber streams the microphone to OpenAI's realtime transcription
 // over WebRTC with an ephemeral key minted by the plugin server.
 export class WebRTCTranscriber implements DictationTransport {
     private readonly deps: TranscriberDeps;
     private readonly transcript = new Transcript();
-    private partialHandler: (update: TranscriptUpdate) => void = () => { /* unset */ };
-    private finalHandler: (update: TranscriptUpdate) => void = () => { /* unset */ };
+    private transcriptHandler: (update: TranscriptUpdate) => void = () => { /* unset */ };
     private errorHandler: (error: DictationError) => void = () => { /* unset */ };
     private idleHandler: () => void = () => { /* unset */ };
     private connectingHandler: () => void = () => { /* unset */ };
@@ -119,12 +123,8 @@ export class WebRTCTranscriber implements DictationTransport {
         this.connectingHandler = handler;
     }
 
-    onPartial(handler: (update: TranscriptUpdate) => void) {
-        this.partialHandler = handler;
-    }
-
-    onFinal(handler: (update: TranscriptUpdate) => void) {
-        this.finalHandler = handler;
+    onTranscript(handler: (update: TranscriptUpdate) => void) {
+        this.transcriptHandler = handler;
     }
 
     onError(handler: (error: DictationError) => void) {
@@ -282,7 +282,7 @@ export class WebRTCTranscriber implements DictationTransport {
         case 'conversation.item.input_audio_transcription.delta':
             if (itemId && event.delta) {
                 this.transcript.delta(itemId, event.delta);
-                this.partialHandler(this.transcript.snapshot());
+                this.transcriptHandler(this.transcript.snapshot());
             }
             return;
         case 'conversation.item.input_audio_transcription.completed':
@@ -298,6 +298,11 @@ export class WebRTCTranscriber implements DictationTransport {
             }
             return;
         case 'error':
+            // Once stopping, teardown is already under way; an error must not
+            // cut off the last segment's transcript.
+            if (this.stopping || event.error?.code === COMMIT_EMPTY_ERROR) {
+                return;
+            }
             this.fail(new DictationError('provider_error'));
             break;
         default:
@@ -306,7 +311,7 @@ export class WebRTCTranscriber implements DictationTransport {
     }
 
     private emitFinal() {
-        this.finalHandler(this.transcript.snapshot());
+        this.transcriptHandler(this.transcript.snapshot());
         if (this.finalWaiter && !this.transcript.hasPending()) {
             this.finalWaiter();
         }

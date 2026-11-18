@@ -178,20 +178,18 @@ describe('WebRTCTranscriber', () => {
     test('emits partial and final transcripts in speaking order', async () => {
         const {deps, pc} = setup();
         const transcriber = new WebRTCTranscriber(deps);
-        const partial = jest.fn();
-        const final = jest.fn();
-        transcriber.onPartial(partial);
-        transcriber.onFinal(final);
+        const onTranscript = jest.fn();
+        transcriber.onTranscript(onTranscript);
         await transcriber.start();
 
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'Hello'});
-        expect(partial).toHaveBeenLastCalledWith({text: 'Hello', finalText: ''});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'Hello', finalText: ''});
 
         pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
         pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'b', previous_item_id: 'a'});
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'b', transcript: 'world.'});
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'Hello'});
-        expect(final).toHaveBeenLastCalledWith({text: 'Hello world.', finalText: 'Hello world.'});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'Hello world.', finalText: 'Hello world.'});
     });
 
     test('commits segments on silence and on stop when the provider does no turn detection', async () => {
@@ -224,7 +222,7 @@ describe('WebRTCTranscriber', () => {
         const {deps, pc, track, meterClose} = setup();
         const transcriber = new WebRTCTranscriber(deps);
         const final = jest.fn();
-        transcriber.onFinal(final);
+        transcriber.onTranscript(final);
         await transcriber.start();
         pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'last'});
 
@@ -240,6 +238,43 @@ describe('WebRTCTranscriber', () => {
         expect(pc.close).toHaveBeenCalled();
         expect(track.stop).toHaveBeenCalled();
         expect(meterClose).toHaveBeenCalled();
+    });
+
+    test('a provider error while stopping still delivers the last segment', async () => {
+        const {deps, pc} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        const onError = jest.fn();
+        transcriber.onTranscript(onTranscript);
+        transcriber.onError(onError);
+        await transcriber.start();
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'last'});
+
+        const stopped = transcriber.stop();
+        pc.channel.receive({type: 'error', error: {type: 'invalid_request_error', code: 'input_audio_buffer_commit_empty'}});
+        pc.channel.receive({type: 'error', error: {type: 'server_error', code: 'other'}});
+        expect(pc.close).not.toHaveBeenCalled();
+
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'last words'});
+        await stopped;
+
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'last words', finalText: 'last words'});
+        expect(onError).not.toHaveBeenCalled();
+        expect(pc.close).toHaveBeenCalled();
+    });
+
+    test('an empty-buffer commit error while listening is not fatal', async () => {
+        const {deps, pc, track} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+
+        pc.channel.receive({type: 'error', error: {type: 'invalid_request_error', code: 'input_audio_buffer_commit_empty'}});
+
+        expect(onError).not.toHaveBeenCalled();
+        expect(pc.close).not.toHaveBeenCalled();
+        expect(track.stop).not.toHaveBeenCalled();
     });
 
     test('stop gives up waiting for a final transcript after the grace period', async () => {

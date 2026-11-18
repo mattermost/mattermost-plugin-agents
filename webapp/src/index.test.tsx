@@ -201,7 +201,11 @@ describe('bots cache websocket handlers', () => {
 
 describe('dictation', () => {
     const available = {enabled: true, available: true, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc'};
-    const unlicensed = {enabled: true, available: false, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc', reason: 'license'};
+    const unlicensed = {enabled: true, available: false, provider: '', model: '', transport: 'webrtc', reason: 'license'};
+    const afterDebounce = async () => {
+        await new Promise((resolve) => setTimeout(resolve, AVAILABILITY_REFRESH_DEBOUNCE_MS + 50));
+        await flush();
+    };
 
     beforeEach(() => {
         jest.resetModules();
@@ -220,16 +224,13 @@ describe('dictation', () => {
 
     test.each([
         ['config_changed'],
-        ['license_changed'],
-        ['custom_mattermost-ai_bots_invalidate'],
+        ['custom_mattermost-ai_dictation_availability_changed'],
     ])('%s refreshes availability', async (event) => {
         const {websocketHandlers, dispatch} = await initializePlugin();
-        await flush();
-        dispatch.mockClear();
-
         mockGetDictationAvailability.mockResolvedValue(unlicensed);
+
         fireWebSocketEvent(websocketHandlers, event);
-        await flush();
+        await afterDebounce();
 
         expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
     });
@@ -241,8 +242,7 @@ describe('dictation', () => {
         for (let i = 0; i < 3; i++) {
             fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
         }
-        await new Promise((resolve) => setTimeout(resolve, AVAILABILITY_REFRESH_DEBOUNCE_MS + 50));
-        await flush();
+        await afterDebounce();
 
         expect(mockGetDictationAvailability).toHaveBeenCalledTimes(1);
         expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
@@ -251,36 +251,16 @@ describe('dictation', () => {
     test('a failed refresh hides the button instead of keeping a stale availability', async () => {
         const {websocketHandlers, dispatch} = await initializePlugin();
         mockGetDictationAvailability.mockResolvedValue(available);
-        fireWebSocketEvent(websocketHandlers, 'config_changed');
-        await flush();
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
+        await afterDebounce();
         expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: available});
         dispatch.mockClear();
 
         mockGetDictationAvailability.mockRejectedValue(new Error('network'));
-        fireWebSocketEvent(websocketHandlers, 'license_changed');
-        await flush();
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
+        await afterDebounce();
 
         expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: null});
-    });
-
-    test('a superseded response is dropped', async () => {
-        const {websocketHandlers, dispatch} = await initializePlugin();
-        await flush();
-        dispatch.mockClear();
-
-        let resolveFirst: (v: unknown) => void = () => { /* set below */ };
-        mockGetDictationAvailability.mockReturnValueOnce(new Promise((resolve) => {
-            resolveFirst = resolve;
-        }));
-        mockGetDictationAvailability.mockResolvedValueOnce(unlicensed);
-        fireWebSocketEvent(websocketHandlers, 'config_changed');
-        fireWebSocketEvent(websocketHandlers, 'license_changed');
-        await flush();
-        resolveFirst(available);
-        await flush();
-
-        const dictationDispatches = dispatch.mock.calls.filter(([a]) => a.type === SetDictationAvailability);
-        expect(dictationDispatches).toEqual([[{type: SetDictationAvailability, availability: unlicensed}]]);
     });
 });
 

@@ -8,7 +8,7 @@ import {render, screen, waitFor} from '@testing-library/react';
 
 import manifest from '@/manifest';
 
-import {dictationAvailability, useDictationAvailable} from './availability';
+import {SetDictationAvailability, dictationAvailability, refreshDictationAvailability, useDictationAvailable} from './availability';
 
 const mockGetDictationAvailability = jest.fn();
 jest.mock('@/client', () => ({
@@ -51,5 +51,26 @@ describe('useDictationAvailable', () => {
         await waitFor(() => expect(screen.getAllByTestId('available')[0].textContent).toBe('true'));
         await new Promise((r) => setTimeout(r, 20));
         expect(mockGetDictationAvailability.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+});
+
+describe('refreshDictationAvailability', () => {
+    test('drops a response superseded by a newer request', async () => {
+        const stale = {enabled: true, available: true, provider: 'openai', model: 'm', transport: 'webrtc'};
+        const fresh = {enabled: true, available: false, provider: '', model: '', transport: 'webrtc', reason: 'disabled'};
+        let resolveFirst: (v: unknown) => void = () => { /* set below */ };
+        mockGetDictationAvailability.mockReset();
+        mockGetDictationAvailability.mockReturnValueOnce(new Promise((resolve) => {
+            resolveFirst = resolve;
+        }));
+        mockGetDictationAvailability.mockResolvedValueOnce(fresh);
+        const dispatch = jest.fn();
+
+        const first = refreshDictationAvailability(dispatch);
+        await refreshDictationAvailability(dispatch);
+        resolveFirst(stale);
+        await first;
+
+        expect(dispatch.mock.calls).toEqual([[{type: SetDictationAvailability, availability: fresh}]]);
     });
 });

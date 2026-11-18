@@ -464,19 +464,6 @@ describe('Config dictation', () => {
         });
     });
 
-    it.each([
-        {name: 'no service', dictation: {enabled: true, serviceID: '', model: 'gpt-live-transcribe'}},
-        {name: 'a service of another type', dictation: {enabled: true, serviceID: 'svc-anthropic', model: 'gpt-live-transcribe'}},
-        {name: 'a deleted service', dictation: {enabled: true, serviceID: 'svc-gone', model: 'gpt-live-transcribe'}},
-    ])('refuses to save dictation enabled with $name', async ({dictation}) => {
-        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation});
-        const {registerSaveAction} = renderConfig();
-        await screen.findByText('service:Claude:svc-anthropic');
-
-        expect((await save(registerSaveAction)).error).toBeTruthy();
-        expect(savePluginConfig).not.toHaveBeenCalled();
-    });
-
     it('shows the server\'s reason when it refuses the dictation settings', async () => {
         const dictation = {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'};
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation});
