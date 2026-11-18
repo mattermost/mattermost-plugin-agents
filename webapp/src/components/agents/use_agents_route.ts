@@ -40,13 +40,13 @@ export interface AgentsNavigation {
 }
 
 // Minimal slice of the host's history object. v4 passes (location, action) to
-// listeners and v5 passes ({location}); we ignore the arguments and re-read
+// listeners and v5 passes ({location, action}); most listeners ignore the arguments and re-read
 // `location`, so both work.
 export interface HostHistory {
     location?: {pathname: string};
     push: (path: string) => void;
     replace?: (path: string) => void;
-    listen?: (listener: () => void) => (() => void) | void;
+    listen?: (listener: (...args: unknown[]) => void) => (() => void) | void;
 }
 
 export const getHistory = (): HostHistory | undefined => {

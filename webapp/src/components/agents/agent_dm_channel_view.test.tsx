@@ -67,14 +67,14 @@ const makeStore = () => createStore((state: any) => state, {
 
 const channel = {id: 'dm1', type: 'D', name: 'agent1__me'} as Channel;
 
-const listeners = new Set<() => void>();
+const listeners = new Set<(...args: unknown[]) => void>();
 const history = {
     location: {pathname: '/team1/messages/@agent1-name'},
     push: jest.fn((path: string) => {
         history.location.pathname = path;
-        listeners.forEach((listener) => listener());
+        listeners.forEach((listener) => listener(history.location, 'PUSH'));
     }),
-    listen: (listener: () => void) => {
+    listen: (listener: (...args: unknown[]) => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
     },
@@ -82,6 +82,13 @@ const history = {
 
 // A navigation the host makes itself (the sidebar's chats, a permalink).
 const navigate = (path: string) => act(() => history.push(path));
+
+// The host rewriting the URL in place, as it does to a permalink's after a moment, reported the way
+// history v4 (location, action) or v5 ({location, action}) does.
+const replace = (path: string, report: 'v4' | 'v5') => act(() => {
+    history.location.pathname = path;
+    listeners.forEach((listener) => (report === 'v4' ? listener(history.location, 'REPLACE') : listener({location: history.location, action: 'REPLACE'})));
+});
 
 const DM = '/team1/messages/@agent1-name';
 
@@ -215,6 +222,28 @@ describe('AgentDMChannelView', () => {
         renderView('root1');
         expect(screen.getByTestId('chat-page').textContent).toBe('root1');
 
+        navigate(DM);
+        expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
+    });
+
+    test.each(['v4', 'v5'] as const)('the host tidying a permalink\'s URL keeps its chat open (history %s)', (_name) => {
+        const {rerender} = renderView('reply1');
+        expect(screen.getByTestId('chat-page').textContent).toBe('root1');
+
+        replace(DM, _name);
+        expect(screen.getByTestId('chat-page').textContent).toBe('root1');
+
+        // The host keeps focusedPostId; a new chat afterwards still starts one.
+        rerender(
+            <Provider store={makeStore()}>
+                <AgentDMChannelView
+                    channel={channel}
+                    channelId='dm1'
+                    teamId='team1'
+                    focusedPostId='reply1'
+                />
+            </Provider>,
+        );
         navigate(DM);
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
     });

@@ -24,14 +24,27 @@ export const dmChannelPath = (pathname: string | undefined): string => parseDMPa
 // a Channels DM route.
 const readDMPostId = (): string | null => parseDMPath(getHistory()?.location?.pathname)?.postId ?? null;
 
+// How the host's history listener reports the navigation: (location, action) on history v4,
+// ({location, action}) on v5.
+const navigationAction = (args: unknown[]): string | undefined => {
+    if (typeof args[1] === 'string') {
+        return args[1];
+    }
+    return (args[0] as {action?: string} | undefined)?.action;
+};
+
 // The post id in the DM URL, kept current as the host navigates. The URL is where a chat is opened
 // from outside the chat view (the sidebar's nested chats, a permalink) and where the view records
-// the chat it opened.
+// the chat it opened. A replace that drops the post id is the host tidying a permalink's URL a few
+// seconds after opening it, with the chat still open, so it keeps the id; a push is a navigation.
 export const useDMPostId = (): string | null => {
     const [postId, setPostId] = useState<string | null>(readDMPostId);
 
     useEffect(() => {
-        const sync = () => setPostId(readDMPostId());
+        const sync = (...args: unknown[]) => {
+            const next = readDMPostId();
+            setPostId((prev) => (next === '' && prev && navigationAction(args) === 'REPLACE' ? prev : next));
+        };
         sync();
         const unlisten = getHistory()?.listen?.(sync);
         return () => {

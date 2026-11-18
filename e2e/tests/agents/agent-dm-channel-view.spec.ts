@@ -144,6 +144,10 @@ test.describe('Agent DM channel view', () => {
         await expect(chatThread(page).getByText(LINK_CHAT.prompt, {exact: true})).toBeVisible();
         await expect(chatThread(page).getByTestId('reply_textbox')).toBeEnabled({timeout: 30000});
 
+        // The host drops the post id from the URL a few seconds after a permalink opens; the chat stays.
+        await expect(page).toHaveURL(new RegExp(`/${teamName}/messages/@${AIMOCK_BOT_NAME}$`), {timeout: 15000});
+        await expect(chatThread(page).getByText(LINK_CHAT.reply)).toBeVisible();
+
         // The host's permalink handling may also open the thread in its RHS (collapsed reply threads).
         test.info().annotations.push({type: 'host RHS thread open after reply permalink', description: String(await page.locator('#rhsContainer').getByText(LINK_CHAT.reply).isVisible())});
     });
