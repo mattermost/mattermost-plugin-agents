@@ -99,7 +99,11 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
             return invalidate;
         }
         setSelection({resolving: true});
-        getPost(postId).then((post) => select(post.root_id || post.id)).catch((error: unknown) => {
+        getPost(postId).then((post) => {
+            // The sidebar's nested chats read the post from the store to find the chat to highlight.
+            store.dispatch({type: 'RECEIVED_POST', data: post});
+            select(post.root_id || post.id);
+        }).catch((error: unknown) => {
             console.error('Failed to load the linked agent chat post:', error); // eslint-disable-line no-console
             select(postId);
         });

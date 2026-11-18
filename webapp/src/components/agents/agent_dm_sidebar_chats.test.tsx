@@ -4,12 +4,13 @@
 import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import {act, render, screen} from '@testing-library/react';
+import {act, render, screen, waitFor} from '@testing-library/react';
 
 import type {Channel} from '@mattermost/types/channels';
 
 import manifest from '@/manifest';
 
+import AgentDMChannelView from './agent_dm_channel_view';
 import AgentDMSidebarChats from './agent_dm_sidebar_chats';
 
 interface SectionProps {
@@ -28,8 +29,20 @@ jest.mock('./product_sidebar', () => ({
     },
 }));
 
+const mockGetPost = jest.fn();
 jest.mock('@/client', () => ({
     getAIBots: jest.fn(() => new Promise(() => null)),
+    getPost: (...args: unknown[]) => mockGetPost(...args),
+}));
+
+jest.mock('react-intl', () => ({
+    ...jest.requireActual('react-intl'),
+    useIntl: () => ({formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage}),
+}));
+
+jest.mock('./agent_chat_page', () => ({
+    __esModule: true,
+    default: () => <div data-testid='chat-page'/>,
 }));
 
 const makeBot = (id: string) => ({id, displayName: `Agent ${id}`, username: `${id}-name`, dmChannelID: ''});
@@ -128,5 +141,35 @@ describe('AgentDMSidebarChats', () => {
 
         act(() => lastSection().onNewChat('agent1'));
         expect(history.push).toHaveBeenLastCalledWith('/team1/messages/@agent1-name');
+    });
+
+    test('highlights the chat of a reply permalink the channel view had to fetch', async () => {
+        mockGetPost.mockResolvedValue({id: 'reply9', root_id: 'root9', channel_id: 'dm1'});
+        history.location.pathname = '/team1/messages/@agent1-name/reply9';
+
+        // The host's store: it learns of fetched posts from RECEIVED_POST.
+        const hostStore = createStore((state: any, action: any) => {
+            if (action.type === 'RECEIVED_POST') {
+                return {...state, entities: {...state.entities, posts: {posts: {...state.entities.posts.posts, [action.data.id]: action.data}}}};
+            }
+            return state;
+        }, store.getState());
+        render(
+            <Provider store={hostStore}>
+                <AgentDMChannelView
+                    channel={agentDM}
+                    channelId='dm1'
+                    teamId='team1'
+                    focusedPostId='reply9'
+                />
+                <AgentDMSidebarChats
+                    channel={agentDM}
+                    currentTeamName='team1'
+                    isCurrentChannel={true}
+                />
+            </Provider>,
+        );
+
+        await waitFor(() => expect(lastSection().activeRootId).toBe('root9'));
     });
 });
