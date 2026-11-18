@@ -123,8 +123,6 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     dispatch({
         type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
         channelArtifactsEnabled: Boolean(response.channelArtifactsEnabled),
-        channelArtifactDownloadEnabled: response.channelArtifactDownloadEnabled !== false,
-        channelArtifactRenderingEnabled: response.channelArtifactRenderingEnabled !== false,
     });
 
     return response.bots;

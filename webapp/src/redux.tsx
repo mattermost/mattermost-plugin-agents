@@ -5,7 +5,7 @@ import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
-import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
+import {ChannelArtifactEntry, getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
@@ -96,6 +96,68 @@ function channelArtifactsEnabled(state = false, action: any) {
     }
 }
 
+export type ChannelLibraryState = {
+    status: 'loading' | 'ready' | 'error';
+    entries: ChannelArtifactEntry[];
+    canAdd: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+    maxPerChannel: number;
+};
+
+export type ChannelArtifactLibrary = Record<string, ChannelLibraryState>;
+
+const emptyLibrary: ChannelLibraryState = {status: 'loading', entries: [], canAdd: false, canEdit: false, canDelete: false, maxPerChannel: 0};
+
+// One cached library per channel, shared by every card, panel and badge.
+// Websocket events and local changes keep it current; a failed load is kept so
+// the next consumer that asks retries it.
+function channelArtifactLibrary(state: ChannelArtifactLibrary = {}, action: any): ChannelArtifactLibrary {
+    switch (action.type) {
+    case 'CHANNEL_ARTIFACTS_LOADING': {
+        const current = state[action.channelId];
+        return {...state, [action.channelId]: {...(current || emptyLibrary), status: 'loading'}};
+    }
+    case 'CHANNEL_ARTIFACTS_LOADED':
+        return {
+            ...state,
+            [action.channelId]: {
+                status: 'ready',
+                entries: action.list.entries || [],
+                canAdd: Boolean(action.list.can_add),
+                canEdit: Boolean(action.list.can_edit),
+                canDelete: Boolean(action.list.can_delete),
+                maxPerChannel: action.list.max_per_channel || 0,
+            },
+        };
+    case 'CHANNEL_ARTIFACTS_FAILED': {
+        const current = state[action.channelId] || emptyLibrary;
+        return {...state, [action.channelId]: {...current, status: 'error'}};
+    }
+    case 'CHANNEL_ARTIFACT_UPSERT': {
+        const current = state[action.entry.channel_id];
+        if (!current || current.status === 'error') {
+            return state;
+        }
+        const others = current.entries.filter((entry) => entry.id !== action.entry.id);
+        const exists = others.length !== current.entries.length;
+        const entries = exists ? current.entries.map((entry) => (entry.id === action.entry.id ? action.entry : entry)) : [action.entry, ...others];
+        return {...state, [action.entry.channel_id]: {...current, entries}};
+    }
+    case 'CHANNEL_ARTIFACT_REMOVE': {
+        const current = state[action.channelId];
+        if (!current) {
+            return state;
+        }
+        return {...state, [action.channelId]: {...current, entries: current.entries.filter((entry) => entry.id !== action.id)}};
+    }
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactsEnabled ? state : {};
+    default:
+        return state;
+    }
+}
+
 function channelArtifactsLoaded(state = false, action: any) {
     switch (action.type) {
     case 'SET_CHANNEL_ARTIFACTS_ENABLED':
@@ -111,24 +173,6 @@ function channelArtifactsLoadFailed(state = false, action: any) {
         return false;
     case 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED':
         return true;
-    default:
-        return state;
-    }
-}
-
-function channelArtifactDownloadEnabled(state = true, action: any) {
-    switch (action.type) {
-    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
-        return action.channelArtifactDownloadEnabled !== false;
-    default:
-        return state;
-    }
-}
-
-function channelArtifactRenderingEnabled(state = true, action: any) {
-    switch (action.type) {
-    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
-        return action.channelArtifactRenderingEnabled !== false;
     default:
         return state;
     }
@@ -285,8 +329,7 @@ export const pluginReducer = combineReducers({
     channelArtifactsEnabled,
     channelArtifactsLoaded,
     channelArtifactsLoadFailed,
-    channelArtifactDownloadEnabled,
-    channelArtifactRenderingEnabled,
+    channelArtifactLibrary,
     customPrompts,
     pinnedPromptIds,
     showCustomPromptsModal,

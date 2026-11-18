@@ -4,7 +4,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import ReactDOM from 'react-dom';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {useSelector} from 'react-redux';
+import {useStore} from 'react-redux';
 import styled from 'styled-components';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
@@ -14,15 +14,12 @@ import {Tag} from '@mattermost/compass-ui/components/tag';
 import {CloseIcon, DownloadOutlineIcon, FileCodeOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
 import {
+    deleteChannelArtifactVersion,
     listChannelArtifactVersions,
     rollbackChannelArtifact,
     type ArtifactKind,
     type ChannelArtifactVersionRecord,
 } from '@/client';
-import {
-    getChannelArtifactDownloadEnabled,
-    getChannelArtifactRenderingEnabled,
-} from '@/selectors';
 
 import {cancelPendingConsent} from './artifact_broker';
 import ArtifactFrame, {ArtifactFrameHandle} from './artifact_frame';
@@ -38,10 +35,9 @@ interface Props {
     startedByClick?: boolean;
     onClose: () => void;
 
-    // Library viewer extras
-    canManage?: boolean;
-    downloadEnabled?: boolean;
-    renderEnabled?: boolean;
+    // Library viewer extras: what the viewer may do, and the entry's current version.
+    canEdit?: boolean;
+    canDelete?: boolean;
     headVersion?: number;
 }
 
@@ -76,9 +72,8 @@ const HTMLArtifactFullscreen = ({
     artifactKind = 'file',
     startedByClick = false,
     onClose,
-    canManage = false,
-    downloadEnabled: downloadEnabledProp,
-    renderEnabled: renderEnabledProp,
+    canEdit = false,
+    canDelete = false,
     headVersion = 1,
 }: Props) => {
     const intl = useIntl();
@@ -86,10 +81,7 @@ const HTMLArtifactFullscreen = ({
     const closeRef = useRef<HTMLButtonElement>(null);
     const frameRef = useRef<ArtifactFrameHandle>(null);
 
-    const downloadFromSelector = useSelector(getChannelArtifactDownloadEnabled);
-    const renderFromSelector = useSelector(getChannelArtifactRenderingEnabled);
-    const downloadEnabled = artifactKind === 'library' ? (downloadEnabledProp ?? downloadFromSelector) : true;
-    const renderEnabled = artifactKind === 'library' ? (renderEnabledProp ?? renderFromSelector) : true;
+    const store = useStore();
 
     const [versions, setVersions] = useState<ChannelArtifactVersionRecord[]>([]);
     const [viewVersion, setViewVersion] = useState<number>(headVersion);
@@ -97,6 +89,7 @@ const HTMLArtifactFullscreen = ({
     const followedHeadRef = useRef(headVersion);
     const [restoring, setRestoring] = useState(false);
     const [restoreError, setRestoreError] = useState(false);
+    const [removeError, setRemoveError] = useState(false);
 
     // Read before the frame mounts: a frame the viewer's click started takes
     // focus as it mounts.
@@ -166,15 +159,42 @@ const HTMLArtifactFullscreen = ({
     const closeLabel = intl.formatMessage({defaultMessage: 'Close'});
     const reloadLabel = intl.formatMessage({defaultMessage: 'Reload'});
     const viewingOlder = artifactKind === 'library' && viewVersion > 0 && viewVersion !== head;
+    const viewedRecord = versions.find((v) => v.version === viewVersion);
+
+    const onRemoveVersion = async () => {
+        // Destructive confirm: removes this version's record, not the original message.
+        if (!canDelete || versions.length < 2 || restoring) {
+            return;
+        }
+        if (!window.confirm(intl.formatMessage({defaultMessage: 'Remove this version from the artifact? The original message and file are not affected.'}))) { // eslint-disable-line no-alert
+            return;
+        }
+        setRestoring(true);
+        setRemoveError(false);
+        try {
+            const entry = await deleteChannelArtifactVersion(fileId, viewVersion);
+            store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
+            setHead(entry.version);
+            setViewVersion(entry.version);
+            const resp = await listChannelArtifactVersions(fileId);
+            setVersions((resp.versions || []).slice().sort((a, b) => b.version - a.version));
+            frameRef.current?.reload(true);
+        } catch {
+            setRemoveError(true);
+        } finally {
+            setRestoring(false);
+        }
+    };
 
     const onRestore = async () => {
-        if (!canManage || !viewingOlder || restoring) {
+        if (!canEdit || !viewingOlder || restoring) {
             return;
         }
         setRestoring(true);
         setRestoreError(false);
         try {
             const entry = await rollbackChannelArtifact(fileId, viewVersion);
+            store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
             const nextHead = entry.version || viewVersion;
             setHead(nextHead);
             setViewVersion(nextHead);
@@ -225,6 +245,7 @@ const HTMLArtifactFullscreen = ({
                         onChange={(e) => {
                             setViewVersion(Number(e.target.value));
                             setRestoreError(false);
+                            setRemoveError(false);
                         }}
                         data-testid='html-artifact-version-select'
                     >
@@ -233,23 +254,42 @@ const HTMLArtifactFullscreen = ({
                                 key={v.version}
                                 value={v.version}
                             >
-                                {`v${v.version} · ${new Date(v.update_at).toLocaleString()}${v.source_agent_display_name || v.updated_by ? ` · ${v.source_agent_display_name || v.updated_by}` : ''}${v.version === head ? ` · ${intl.formatMessage({defaultMessage: 'current'})}` : ''}`}
+                                {`v${v.version} · ${new Date(v.create_at).toLocaleString()}${v.source_agent_display_name ? ` · ${v.source_agent_display_name}` : ''}${v.version === head ? ` · ${intl.formatMessage({defaultMessage: 'current'})}` : ''}${v.available ? '' : ` · ${intl.formatMessage({defaultMessage: 'unavailable'})}`}`}
                             </option>
                         ))}
                     </VersionSelect>
                 )}
-                {viewingOlder && canManage && (
+                {viewingOlder && canEdit && (
                     <Button
                         emphasis='tertiary'
                         size='x-small'
                         onClick={onRestore}
-                        disabled={restoring}
+                        disabled={restoring || viewedRecord?.available === false}
                         data-testid='html-artifact-restore-version'
                     >
                         <FormattedMessage defaultMessage='Restore this version'/>
                     </Button>
                 )}
-                {viewingOlder && canManage && restoreError && (
+                {canDelete && artifactKind === 'library' && versions.length > 1 && (
+                    <Button
+                        emphasis='tertiary'
+                        size='x-small'
+                        onClick={onRemoveVersion}
+                        disabled={restoring}
+                        data-testid='html-artifact-remove-version'
+                    >
+                        <FormattedMessage defaultMessage='Remove this version'/>
+                    </Button>
+                )}
+                {removeError && (
+                    <RestoreError
+                        role='alert'
+                        data-testid='html-artifact-remove-version-error'
+                    >
+                        <FormattedMessage defaultMessage='Could not remove this version.'/>
+                    </RestoreError>
+                )}
+                {viewingOlder && canEdit && restoreError && (
                     <RestoreError
                         role='alert'
                         data-testid='html-artifact-restore-error'
@@ -260,30 +300,26 @@ const HTMLArtifactFullscreen = ({
                 <Spacer/>
                 <ArtifactNotice/>
                 <Divider/>
-                {downloadEnabled && (
-                    <IconButton
-                        size='small'
-                        icon={<Icon glyph={<DownloadOutlineIcon/>}/>}
-                        aria-label={downloadLabel}
-                        title={downloadLabel}
-                        onClick={() => downloadArtifact(
-                            fileId,
-                            artifactKind,
-                            artifactKind === 'library' ? viewVersion : 0,
-                        )}
-                        data-testid='html-artifact-fullscreen-download'
-                    />
-                )}
-                {renderEnabled && (
-                    <IconButton
-                        size='small'
-                        icon={<Icon glyph={<RefreshIcon/>}/>}
-                        aria-label={reloadLabel}
-                        title={reloadLabel}
-                        onClick={(e) => frameRef.current?.reload(e.nativeEvent.isTrusted)}
-                        data-testid='html-artifact-fullscreen-reload'
-                    />
-                )}
+                <IconButton
+                    size='small'
+                    icon={<Icon glyph={<DownloadOutlineIcon/>}/>}
+                    aria-label={downloadLabel}
+                    title={downloadLabel}
+                    onClick={() => downloadArtifact(
+                        fileId,
+                        artifactKind,
+                        artifactKind === 'library' ? viewVersion : 0,
+                    )}
+                    data-testid='html-artifact-fullscreen-download'
+                />
+                <IconButton
+                    size='small'
+                    icon={<Icon glyph={<RefreshIcon/>}/>}
+                    aria-label={reloadLabel}
+                    title={reloadLabel}
+                    onClick={(e) => frameRef.current?.reload(e.nativeEvent.isTrusted)}
+                    data-testid='html-artifact-fullscreen-reload'
+                />
                 <Divider/>
                 <IconButton
                     ref={closeRef}
@@ -296,26 +332,16 @@ const HTMLArtifactFullscreen = ({
                 />
             </Header>
             <Body>
-                {renderEnabled ? (
-                    <ArtifactFrame
-                        ref={frameRef}
-                        fileId={fileId}
-                        fileName={fileName}
-                        artifactKind={artifactKind}
-                        version={artifactKind === 'library' ? viewVersion : 0}
-                        downloadEnabled={downloadEnabled}
-                        displayMode='fullscreen'
-                        startedByClick={startedByClick}
-                        onEscape={onClose}
-                    />
-                ) : (
-                    <RenderDisabledNotice
-                        role='status'
-                        data-testid='html-artifact-render-disabled'
-                    >
-                        <FormattedMessage defaultMessage='Rendering of channel artifacts is disabled on this server. You can still download the HTML if downloads are allowed.'/>
-                    </RenderDisabledNotice>
-                )}
+                <ArtifactFrame
+                    ref={frameRef}
+                    fileId={fileId}
+                    fileName={fileName}
+                    artifactKind={artifactKind}
+                    version={artifactKind === 'library' ? viewVersion : 0}
+                    displayMode='fullscreen'
+                    startedByClick={startedByClick}
+                    onEscape={onClose}
+                />
             </Body>
             <FocusSentinel
                 tabIndex={0} // eslint-disable-line agents/no-noninteractive-tabindex -- focus-trap sentinel that wraps Tab back into the dialog
@@ -405,21 +431,6 @@ const VersionSelect = styled.select`
     color: var(--center-channel-color);
     font-size: 12px;
     line-height: 16px;
-`;
-
-const RenderDisabledNotice = styled.div`
-    display: flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    padding: var(--spacing-xl, 24px);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background: var(--center-channel-bg);
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    font-size: 14px;
-    line-height: 20px;
-    text-align: center;
 `;
 
 // Invisible tab stops at both ends of the dialog that send focus back inside.

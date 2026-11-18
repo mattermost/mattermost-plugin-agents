@@ -4,75 +4,120 @@
 package channelartifacts
 
 import (
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-// ChannelMemberLookup loads a channel membership for permission checks.
-type ChannelMemberLookup interface {
-	GetMember(channelID, userID string) (*model.ChannelMember, error)
+// BotDirectory identifies agents. Only files posted by an agent can be saved.
+type BotDirectory interface {
+	IsAnyBot(userID string) bool
+	// AgentDisplayName returns the agent's current display name, or "" when the
+	// user is not a known agent.
+	AgentDisplayName(userID string) string
 }
 
-// Service is the application layer for the channel artifact library.
+// Op is a kind of change to a channel's library. Each maps to the channel
+// bookmark permission of the same name.
+type Op int
+
+const (
+	OpAdd Op = iota
+	OpEdit
+	OpDelete
+)
+
+// Service applies the library rules: who may read and change a channel's
+// library, which files may be saved, and how a saved version is read back.
 type Service struct {
-	store   *Store
-	mm      mmapi.Client
-	members ChannelMemberLookup
+	store *Store
+	mm    mmapi.Client
+	bots  BotDirectory
 }
 
-func NewService(store *Store, mm mmapi.Client, members ChannelMemberLookup) *Service {
-	return &Service{store: store, mm: mm, members: members}
+func NewService(store *Store, mm mmapi.Client, bots BotDirectory) *Service {
+	return &Service{store: store, mm: mm, bots: bots}
 }
 
-// MembersFromPluginAPI adapts pluginapi.Client to ChannelMemberLookup.
-func MembersFromPluginAPI(api *pluginapi.Client) ChannelMemberLookup {
-	return channelMembers{api: api}
-}
-
-type channelMembers struct {
-	api *pluginapi.Client
-}
-
-func (c channelMembers) GetMember(channelID, userID string) (*model.ChannelMember, error) {
-	return c.api.Channel.GetMember(channelID, userID)
-}
-
-// CanManage reports whether userID may mutate the channel's artifact library.
-func (s *Service) CanManage(userID, channelID string) bool {
-	if userID == "" || channelID == "" {
-		return false
+func permissionFor(op Op, channelType model.ChannelType) *model.Permission {
+	private := channelType == model.ChannelTypePrivate
+	switch op {
+	case OpAdd:
+		if private {
+			return model.PermissionAddBookmarkPrivateChannel
+		}
+		return model.PermissionAddBookmarkPublicChannel
+	case OpEdit:
+		if private {
+			return model.PermissionEditBookmarkPrivateChannel
+		}
+		return model.PermissionEditBookmarkPublicChannel
+	default:
+		if private {
+			return model.PermissionDeleteBookmarkPrivateChannel
+		}
+		return model.PermissionDeleteBookmarkPublicChannel
 	}
-	if s.mm.HasPermissionTo(userID, model.PermissionManageSystem) {
-		return true
+}
+
+// Can reports whether userID may make the change in the channel. It follows the
+// permissions core channel bookmarks use, and checks them only after the
+// channel is known to exist and not be archived. Direct and group messages have
+// no bookmark permissions, so any non-guest member may manage them.
+func (s *Service) Can(userID, channelID string, op Op) bool {
+	if userID == "" || !model.IsValidId(channelID) {
+		return false
 	}
 	channel, err := s.mm.GetChannel(channelID)
 	if err != nil || channel == nil || channel.DeleteAt != 0 {
 		return false
 	}
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		return s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel)
-	}
-	member, err := s.members.GetMember(channelID, userID)
-	if err != nil || member == nil {
+	switch channel.Type {
+	case model.ChannelTypeDirect, model.ChannelTypeGroup:
+		if !s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel) {
+			return false
+		}
+		user, userErr := s.mm.GetUser(userID)
+		return userErr == nil && user != nil && !user.IsGuest()
+	case model.ChannelTypeOpen, model.ChannelTypePrivate:
+		return s.mm.HasPermissionToChannel(userID, channelID, permissionFor(op, channel.Type))
+	default:
 		return false
 	}
-	if member.SchemeGuest {
-		return false
-	}
-	return member.SchemeAdmin
 }
 
-// CanRead reports whether userID may list/open artifacts in the channel.
+// CanRead reports whether userID may list and open the channel's library.
 func (s *Service) CanRead(userID, channelID string) bool {
-	return s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel)
+	return userID != "" && s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel)
+}
+
+// authorize returns ErrNotFound to callers who cannot read the channel, so a
+// library's existence stays hidden, and ErrForbidden to readers who may not
+// make this change.
+func (s *Service) authorize(userID, channelID string, op Op) error {
+	if !s.CanRead(userID, channelID) {
+		return ErrNotFound
+	}
+	if !s.Can(userID, channelID, op) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func (s *Service) decorateEntry(entry *Entry) {
+	if s.bots != nil {
+		entry.SourceAgentDisplayName = s.bots.AgentDisplayName(entry.SourceBotUserID)
+	}
 }
 
 func (s *Service) List(userID, channelID string) (*ListResponse, error) {
@@ -86,16 +131,22 @@ func (s *Service) List(userID, channelID string) (*ListResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	if entries == nil {
-		entries = []*Entry{}
+	for _, entry := range entries {
+		s.decorateEntry(entry)
 	}
 	return &ListResponse{
 		Entries:   entries,
-		CanManage: s.CanManage(userID, channelID),
+		CanAdd:    s.Can(userID, channelID, OpAdd),
+		CanEdit:   s.Can(userID, channelID, OpEdit),
+		CanDelete: s.Can(userID, channelID, OpDelete),
 	}, nil
 }
 
+// GetReadable returns the entry when userID may read its channel.
 func (s *Service) GetReadable(userID, id string) (*Entry, error) {
+	if !model.IsValidId(id) {
+		return nil, ErrInvalidInput
+	}
 	entry, err := s.store.Get(id)
 	if err != nil {
 		return nil, err
@@ -103,466 +154,335 @@ func (s *Service) GetReadable(userID, id string) (*Entry, error) {
 	if !s.CanRead(userID, entry.ChannelID) {
 		return nil, ErrNotFound
 	}
+	s.decorateEntry(entry)
 	return entry, nil
 }
 
-func (s *Service) ReadContent(entry *Entry) ([]byte, error) {
-	return s.store.ReadContent(entry)
-}
-
-func (s *Service) ReadContentAt(entry *Entry, version int) ([]byte, error) {
-	return s.store.ReadContentAt(entry, version)
-}
-
-func (s *Service) ListVersions(userID, id string) ([]VersionRecord, error) {
+func (s *Service) Versions(userID, id string) ([]VersionRecord, error) {
 	entry, err := s.GetReadable(userID, id)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.ListVersions(entry.ID)
+	versions, err := s.store.Versions(entry.ID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range versions {
+		if s.bots != nil {
+			versions[i].SourceAgentDisplayName = s.bots.AgentDisplayName(versions[i].SourceBotUserID)
+		}
+	}
+	return versions, nil
+}
+
+// VersionOf returns one version of an entry the caller may already read.
+// version 0 means the current version.
+func (s *Service) VersionOf(entry *Entry, version int) (*VersionRecord, error) {
+	if version == 0 || version == entry.Version {
+		return &VersionRecord{
+			Version: entry.Version, SHA256: entry.SHA256, Size: entry.Size,
+			SourcePostID: entry.SourcePostID, SourceFileID: entry.SourceFileID,
+			SourceBotUserID: entry.SourceBotUserID, CreatedBy: entry.CreatedBy,
+			Head: true, Available: entry.Available,
+		}, nil
+	}
+	return s.store.Version(entry.ID, version)
+}
+
+// IsHTMLFile reports whether the file is an HTML document by extension.
+func IsHTMLFile(info *model.FileInfo) bool {
+	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
+	if ext == "" {
+		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(info.Name), "."))
+	}
+	return ext == "html" || ext == "htm"
 }
 
 func defaultTitle(fileName string) string {
-	base := fileName
-	if i := strings.LastIndex(base, "/"); i >= 0 {
-		base = base[i+1:]
-	}
-	if i := strings.LastIndex(base, "."); i > 0 {
-		base = base[:i]
-	}
-	base = strings.TrimSpace(base)
+	base := strings.TrimSpace(strings.TrimSuffix(fileName, filepath.Ext(fileName)))
 	if base == "" {
 		base = "Artifact"
 	}
 	if utf8.RuneCountInString(base) > MaxTitleRunes {
-		runes := []rune(base)
-		base = string(runes[:MaxTitleRunes])
+		base = string([]rune(base)[:MaxTitleRunes])
 	}
 	return base
 }
 
-// RootPostID returns post.RootId when set, otherwise post.Id.
-func RootPostID(post *model.Post) string {
-	if post == nil {
-		return ""
-	}
-	if post.RootId != "" {
-		return post.RootId
-	}
-	return post.Id
-}
-
-// CreateFromHTML copies HTML bytes into the channel library.
-func (s *Service) CreateFromHTML(
-	userID string,
-	req CreateRequest,
-	content []byte,
-	fileName string,
-	botUserID string,
-	agentDisplayName string,
-	teamID string,
-	sourceRootPostID string,
-	limits ContentLimits,
-) (*Entry, error) {
-	if !s.CanManage(userID, req.ChannelID) {
-		return nil, ErrNotFound
-	}
-	title := strings.TrimSpace(req.Title)
-	now := model.GetMillis()
-	if req.ReplaceID != "" {
-		return s.replaceLocked(userID, req.ReplaceID, req.ChannelID, req.PostID, req.FileID, fileName, botUserID, agentDisplayName, sourceRootPostID, content, title, strings.TrimSpace(req.Description), limits)
-	}
-	if title == "" {
-		title = defaultTitle(fileName)
-	}
-	entry := &Entry{
-		ID:                     model.NewId(),
-		ChannelID:              req.ChannelID,
-		TeamID:                 teamID,
-		Title:                  title,
-		Description:            strings.TrimSpace(req.Description),
-		SourcePostID:           req.PostID,
-		SourceFileID:           req.FileID,
-		SourceFileName:         fileName,
-		SourceBotUserID:        botUserID,
-		SourceAgentDisplayName: agentDisplayName,
-		SourceRootPostID:       sourceRootPostID,
-		CreatedBy:              userID,
-		CreateAt:               now,
-		UpdateAt:               now,
-		UpdatedBy:              userID,
-		Version:                1,
-	}
-	if err := s.store.Save(entry, content, limits.MaxSize, limits.MaxPerChannel, limits.MaxSitewide); err != nil {
-		return nil, err
-	}
-	return entry, nil
-}
-
-func (s *Service) replaceLocked(
-	userID, replaceID, channelID, postID, fileID, fileName, botUserID, agentDisplayName, sourceRootPostID string,
-	content []byte, title, description string, limits ContentLimits,
-) (*Entry, error) {
-	entry, err := s.store.Get(replaceID)
-	if err != nil {
-		return nil, err
-	}
-	if entry.ChannelID != channelID {
-		return nil, ErrNotFound
-	}
-	if !s.CanManage(userID, entry.ChannelID) {
-		return nil, ErrNotFound
-	}
-	if title != "" {
-		entry.Title = title
-	}
-	entry.Description = description
-	entry.UpdateAt = model.GetMillis()
-	entry.UpdatedBy = userID
-	// Reject content that cannot be stored before any metadata write. That
-	// write patches only the title and description, so a rename that landed
-	// after the load is kept when this call does not set a title. Source
-	// pointers are applied to the patched head and stored with the content
-	// write: writing them first would make a failed upload look already saved.
-	if _, shaErr := s.store.replacementSHA(entry, content, limits.MaxSize); shaErr != nil {
-		return nil, shaErr
-	}
-	updated, err := s.store.Patch(entry.ID, func(current *Entry) error {
-		if current.Purging {
-			return ErrConflict
-		}
-		if current.ChannelID != channelID {
-			return ErrNotFound
-		}
-		if title != "" {
-			current.Title = title
-		}
-		current.Description = description
-		current.UpdateAt = entry.UpdateAt
-		current.UpdatedBy = userID
-		if titleErr := validateTitle(current.Title); titleErr != nil {
-			return titleErr
-		}
-		if descriptionErr := validateDescription(current.Description); descriptionErr != nil {
-			return descriptionErr
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	updated.SourcePostID = postID
-	updated.SourceFileID = fileID
-	updated.SourceFileName = fileName
-	updated.SourceBotUserID = botUserID
-	updated.SourceAgentDisplayName = agentDisplayName
-	updated.SourceRootPostID = sourceRootPostID
-	if replaceErr := s.store.ReplaceContent(updated, content, limits.MaxSize, limits.VersionsToKeep); replaceErr != nil {
-		if errors.Is(replaceErr, ErrCleanupDeferred) {
-			return updated, replaceErr
-		}
-		return nil, replaceErr
-	}
-	return updated, nil
-}
-
-// ReplaceContent replaces the HTML of an existing library entry from a new file.
-func (s *Service) ReplaceContent(
-	userID, id string,
-	req ReplaceRequest,
-	content []byte,
-	fileName string,
-	botUserID string,
-	agentDisplayName string,
-	sourceRootPostID string,
-	limits ContentLimits,
-) (*Entry, error) {
-	entry, err := s.store.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	if !s.CanManage(userID, entry.ChannelID) {
-		return nil, ErrNotFound
-	}
-	entry.SourcePostID = req.PostID
-	entry.SourceFileID = req.FileID
-	entry.SourceFileName = fileName
-	entry.SourceBotUserID = botUserID
-	entry.SourceAgentDisplayName = agentDisplayName
-	entry.SourceRootPostID = sourceRootPostID
-	entry.UpdateAt = model.GetMillis()
-	entry.UpdatedBy = userID
-	if err := s.store.ReplaceContent(entry, content, limits.MaxSize, limits.VersionsToKeep); err != nil {
-		if errors.Is(err, ErrCleanupDeferred) {
-			return entry, err
-		}
-		return nil, err
-	}
-	return entry, nil
-}
-
-func (s *Service) Patch(userID, id string, req PatchRequest) (*Entry, error) {
-	return s.store.Patch(id, func(entry *Entry) error {
-		if !s.CanManage(userID, entry.ChannelID) {
-			return ErrNotFound
-		}
-		if entry.Purging {
-			return ErrConflict
-		}
-		if req.Title != nil {
-			entry.Title = strings.TrimSpace(*req.Title)
-		}
-		if req.Description != nil {
-			entry.Description = strings.TrimSpace(*req.Description)
-		}
-		if err := validateTitle(entry.Title); err != nil {
-			return err
-		}
-		if err := validateDescription(entry.Description); err != nil {
-			return err
-		}
-		entry.UpdateAt = model.GetMillis()
-		entry.UpdatedBy = userID
-		return nil
-	})
-}
-
-func stampUpdate(entry *Entry, userID string) {
-	entry.UpdatedBy = userID
-	entry.UpdateAt = model.GetMillis()
-}
-
-func (s *Service) Rollback(userID, id string, toVersion int) (*Entry, error) {
-	entry, err := s.store.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	if !s.CanManage(userID, entry.ChannelID) {
-		return nil, ErrNotFound
-	}
-	stampUpdate(entry, userID)
-	if err := s.store.Rollback(entry, toVersion); err != nil {
-		return nil, err
-	}
-	return entry, nil
-}
-
-// Delete removes the head version, or purges the artifact when purge is true
-// or only one version remains. A row already marked purging finishes that
-// purge without listing versions: the history key may already be gone.
-func (s *Service) Delete(userID, id string, purge bool) error {
-	entry, err := s.store.Get(id)
-	if err != nil {
-		return err
-	}
-	if !s.CanManage(userID, entry.ChannelID) {
-		return ErrNotFound
-	}
-	if purge || entry.Purging {
-		return s.store.Purge(entry)
-	}
-	stampUpdate(entry, userID)
-	versions, err := s.store.ListVersions(entry.ID)
-	if err != nil {
-		return err
-	}
-	if len(versions) <= 1 {
-		purgeErr := s.store.purgeIfHeadUnchanged(entry)
-		if errors.Is(purgeErr, ErrConflict) {
-			current, getErr := s.store.Get(entry.ID)
-			if getErr != nil {
-				return getErr
-			}
-			if current.Purging || current.Version == entry.Version {
-				return s.store.Purge(current)
-			}
-			stampUpdate(current, userID)
-			return s.store.DeleteHead(current)
-		}
-		return purgeErr
-	}
-	return s.store.DeleteHead(entry)
-}
-
-func (s *Service) DeleteHead(userID, id string) error {
-	return s.Delete(userID, id, false)
-}
-
-func (s *Service) Purge(userID, id string) error {
-	return s.Delete(userID, id, true)
-}
-
-// ListByTeam returns library entries for the team. A system admin sees every
-// channel. Anyone else only sees channels they can read.
-func (s *Service) ListByTeam(userID, teamID string) (*TeamListResponse, error) {
-	if !model.IsValidId(teamID) {
-		return nil, ErrInvalidInput
-	}
-	seeAll := userID != "" && s.mm.HasPermissionTo(userID, model.PermissionManageSystem)
-	out := make([]*Entry, 0)
-	err := s.store.ForEachChannelIndex(func(channelID string) error {
-		channel, err := s.mm.GetChannel(channelID)
-		if err != nil {
-			if mmapi.IsNotFound(err) {
-				return nil
-			}
-			return err
-		}
-		if channel == nil || channel.TeamId != teamID {
-			return nil
-		}
-		if !seeAll && !s.CanRead(userID, channelID) {
-			return nil
-		}
-		entries, err := s.store.List(channelID)
-		if err != nil {
-			return err
-		}
-		out = append(out, entries...)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &TeamListResponse{Entries: out}, nil
-}
-
-// PurgeChannel removes every artifact in a channel (deleted-channel cleanup).
-// It reads the channel index. List hides an entry whose purge already started,
-// and this sweep is what finishes that purge. The count is how many artifacts
-// this call purged. Deleting an empty index key is not counted.
-func (s *Service) PurgeChannel(channelID string) (int, error) {
-	if !model.IsValidId(channelID) {
-		return 0, ErrInvalidInput
-	}
-	idx, _, err := s.store.getIndex(channelID)
-	if err != nil {
-		return 0, err
-	}
-	removed := 0
-	for _, id := range idx.IDs {
-		entry, getErr := s.store.Get(id)
-		if errors.Is(getErr, ErrNotFound) {
-			if forgetErr := s.store.forgetIndexID(channelID, id); forgetErr != nil {
-				return removed, forgetErr
-			}
-			continue
-		}
-		if getErr != nil {
-			return removed, getErr
-		}
-		if purgeErr := s.store.Purge(entry); purgeErr != nil {
-			return removed, purgeErr
-		}
-		removed++
-	}
-	remaining, raw, err := s.store.getIndex(channelID)
-	if err != nil {
-		return removed, err
-	}
-	if len(remaining.IDs) == 0 && raw != nil {
-		if forgetErr := s.store.forgetIndexID(channelID, ""); forgetErr != nil {
-			return removed, forgetErr
-		}
-	}
-	return removed, nil
-}
-
-// FindLineageMatch prefers a source_file_id match, else the same SourceRootPostID.
-func (s *Service) FindLineageMatch(channelID, postID, fileID, rootID string) *Entry {
-	entries, err := s.store.List(channelID)
-	if err != nil {
-		return nil
-	}
-	if fileID != "" {
-		for _, entry := range entries {
-			if entry.SourceFileID == fileID {
-				return entry
-			}
-		}
-	}
-	matchRoot := rootID
-	if matchRoot == "" {
-		matchRoot = postID
-	}
-	if matchRoot == "" {
-		return nil
-	}
-	for _, entry := range entries {
-		if entry.SourceRootPostID == matchRoot {
-			return entry
-		}
+func validateTitle(title string) error {
+	if n := utf8.RuneCountInString(title); n == 0 || n > MaxTitleRunes {
+		return ErrInvalidInput
 	}
 	return nil
 }
 
-// ExportChannel returns every artifact in a channel with all version bodies.
-func (s *Service) ExportChannel(channelID string) (*ExportResponse, error) {
-	if !model.IsValidId(channelID) {
-		return nil, ErrInvalidInput
-	}
-	entries, err := s.store.List(channelID)
+type source struct {
+	sha256   string
+	size     int64
+	botID    string
+	fileName string
+}
+
+// readLimited reads at most limit bytes and fails with ErrTooLarge beyond that.
+func readLimited(r io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	out := &ExportResponse{Entries: make([]ExportEntry, 0, len(entries))}
-	for _, entry := range entries {
-		versions, err := s.store.ListVersions(entry.ID)
+	if int64(len(body)) > limit {
+		return nil, ErrTooLarge
+	}
+	return body, nil
+}
+
+func hashHex(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Service) openFile(reader mmapi.Client, fileID string) (io.ReadCloser, error) {
+	rc, err := reader.GetFile(fileID)
+	switch {
+	case err == nil:
+		return rc, nil
+	case errors.Is(err, mmapi.ErrFileActionForbidden):
+		return nil, ErrNotFound
+	case mmapi.IsNotFound(err):
+		return nil, ErrUnavailable
+	default:
+		return nil, err
+	}
+}
+
+// checkSource verifies the file is an HTML attachment of an agent's post in the
+// channel and records its SHA-256. reader decides whose file policy applies.
+func (s *Service) checkSource(reader mmapi.Client, channelID, postID, fileID string, maxSize int64) (*source, error) {
+	if !model.IsValidId(postID) || !model.IsValidId(fileID) {
+		return nil, ErrInvalidInput
+	}
+	info, err := reader.GetFileInfo(fileID)
+	switch {
+	case err == nil:
+	case errors.Is(err, mmapi.ErrFileActionForbidden), mmapi.IsNotFound(err):
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+	if info == nil || info.DeleteAt != 0 {
+		return nil, ErrNotFound
+	}
+	if !IsHTMLFile(info) || info.PostId != postID {
+		return nil, ErrIneligible
+	}
+	post, err := s.mm.GetPost(postID)
+	switch {
+	case err == nil:
+	case mmapi.IsNotFound(err):
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+	if post == nil || post.DeleteAt != 0 {
+		return nil, ErrNotFound
+	}
+	if post.ChannelId != channelID || !slices.Contains(post.FileIds, fileID) {
+		return nil, ErrIneligible
+	}
+	if s.bots == nil || !s.bots.IsAnyBot(post.UserId) {
+		return nil, ErrIneligible
+	}
+	if info.Size > maxSize {
+		return nil, ErrTooLarge
+	}
+	rc, err := s.openFile(reader, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	body, err := readLimited(rc, maxSize)
+	if err != nil {
+		return nil, err
+	}
+	return &source{sha256: hashHex(body), size: int64(len(body)), botID: post.UserId, fileName: info.Name}, nil
+}
+
+// Save registers the file as a new artifact in req.ChannelID, or as a new
+// current version of req.ArtifactID. Only a reference to the post and file is
+// stored. reader supplies the file policy the content is read under.
+func (s *Service) Save(userID string, reader mmapi.Client, req SaveRequest, lim Limits) (*Entry, error) {
+	if !model.IsValidId(req.ChannelID) || (req.ArtifactID != "" && !model.IsValidId(req.ArtifactID)) {
+		return nil, ErrInvalidInput
+	}
+	if req.ArtifactID != "" {
+		existing, err := s.store.Get(req.ArtifactID)
 		if err != nil {
 			return nil, err
 		}
-		bodies := make(map[string]string, len(versions))
-		for _, rec := range versions {
-			body, err := s.store.ReadContentAt(entry, rec.Version)
-			if err != nil {
-				return nil, err
-			}
-			bodies[VersionKeyString(rec.Version)] = base64.StdEncoding.EncodeToString(body)
+		if existing.ChannelID != req.ChannelID {
+			return nil, ErrNotFound
 		}
-		out.Entries = append(out.Entries, ExportEntry{
-			Meta:                   entry,
-			Versions:               versions,
-			ContentBase64ByVersion: bodies,
-		})
 	}
-	return out, nil
+	op := OpAdd
+	if req.ArtifactID != "" {
+		op = OpEdit
+	}
+	if err := s.authorize(userID, req.ChannelID, op); err != nil {
+		return nil, err
+	}
+	title := strings.TrimSpace(req.Title)
+	if title != "" {
+		if err := validateTitle(title); err != nil {
+			return nil, err
+		}
+	}
+	src, err := s.checkSource(reader, req.ChannelID, req.PostID, req.FileID, lim.MaxSize)
+	if err != nil {
+		return nil, err
+	}
+	version := NewVersion{
+		PostID: req.PostID, FileID: req.FileID, SHA256: src.sha256, Size: src.size,
+		SourceBotUserID: src.botID, UserID: userID, At: model.GetMillis(),
+	}
+	id := req.ArtifactID
+	if id == "" {
+		id = model.NewId()
+		if title == "" {
+			title = defaultTitle(src.fileName)
+		}
+		err = s.store.Create(id, req.ChannelID, title, version, resolveMax(lim.MaxPerChannel, DefaultMaxPerChannel))
+	} else {
+		err = s.store.AddVersion(id, version, resolveMax(lim.VersionsToKeep, DefaultVersionsToKeep))
+		if err == nil && title != "" {
+			err = s.store.Rename(id, title, userID, version.At)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetReadable(userID, id)
 }
 
-func (s *Service) Reorder(userID string, req OrderRequest) error {
-	if !s.CanManage(userID, req.ChannelID) {
-		return ErrNotFound
+func resolveMax(value, fallback int) int {
+	if value <= 0 {
+		return fallback
 	}
-	return s.store.Reorder(req.ChannelID, req.IDs)
+	return value
 }
 
-// Store exposes the underlying store for retention sweeps.
-func (s *Service) Store() *Store {
-	return s.store
+func (s *Service) Patch(userID, id string, req PatchRequest) (*Entry, error) {
+	entry, err := s.GetReadable(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorize(userID, entry.ChannelID, OpEdit); err != nil {
+		return nil, err
+	}
+	title := strings.TrimSpace(req.Title)
+	if err := validateTitle(title); err != nil {
+		return nil, err
+	}
+	if err := s.store.Rename(id, title, userID, model.GetMillis()); err != nil {
+		return nil, err
+	}
+	return s.GetReadable(userID, id)
 }
 
-// DuplicateID extracts the existing artifact id from an ErrDuplicate wrapped error.
-func DuplicateID(err error) string {
-	if err == nil || !errors.Is(err, ErrDuplicate) {
-		return ""
+// Rollback makes an earlier version current. It fails with ErrUnavailable when
+// that version's source is gone.
+func (s *Service) Rollback(userID, id string, version int) (*Entry, error) {
+	entry, err := s.GetReadable(userID, id)
+	if err != nil {
+		return nil, err
 	}
-	const prefix = "identical artifact already saved: "
-	_, rest, ok := strings.Cut(err.Error(), prefix)
-	if ok {
-		return strings.TrimSpace(rest)
+	if err = s.authorize(userID, entry.ChannelID, OpEdit); err != nil {
+		return nil, err
 	}
-	return ""
+	rec, err := s.store.Version(id, version)
+	if err != nil {
+		return nil, err
+	}
+	if !rec.Available {
+		return nil, ErrUnavailable
+	}
+	if err := s.store.SetHead(id, version, userID, model.GetMillis()); err != nil {
+		return nil, err
+	}
+	return s.GetReadable(userID, id)
+}
+
+// DeleteVersion removes one version's row. The source post and file are not
+// touched.
+func (s *Service) DeleteVersion(userID, id string, version int) (*Entry, error) {
+	entry, err := s.GetReadable(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorize(userID, entry.ChannelID, OpDelete); err != nil {
+		return nil, err
+	}
+	if err := s.store.DeleteVersion(id, version, userID, model.GetMillis()); err != nil {
+		return nil, err
+	}
+	return s.GetReadable(userID, id)
+}
+
+// Delete removes the artifact and its version rows. The source posts and files
+// are not touched.
+func (s *Service) Delete(userID, id string) (*Entry, error) {
+	entry, err := s.GetReadable(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorize(userID, entry.ChannelID, OpDelete); err != nil {
+		return nil, err
+	}
+	if err := s.store.Purge(id); err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+// ReadContent reads one version's HTML from its source file under sessionID's
+// file download policy. version 0 means the current version. It fails closed:
+// a denied policy is ErrNotFound, a deleted source or changed content is
+// ErrUnavailable.
+func (s *Service) ReadContent(sessionID string, entry *Entry, version int, maxSize int64) ([]byte, error) {
+	rec, err := s.VersionOf(entry, version)
+	if err != nil {
+		return nil, err
+	}
+	if !rec.Available {
+		return nil, ErrUnavailable
+	}
+	rc, err := s.openFile(mmapi.WithFilePolicy(s.mm, sessionID), rec.SourceFileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	body, err := readLimited(rc, maxSize)
+	if err != nil {
+		return nil, err
+	}
+	if hashHex(body) != rec.SHA256 {
+		return nil, ErrUnavailable
+	}
+	return body, nil
+}
+
+// SweepDeletedChannels removes the rows of artifacts in permanently deleted
+// channels. Content is never deleted by the library.
+func (s *Service) SweepDeletedChannels() (int64, error) {
+	return s.store.SweepDeletedChannels()
 }
 
 // Publish broadcasts a channel-scoped websocket event. Event names are short;
 // the plugin ID is prefixed by the server. Payloads are JSON-round-tripped so
 // only gob-safe values cross the plugin RPC boundary (structs in map[string]any
 // crash the plugin process).
-func (s *Service) Publish(event string, channelID string, payload map[string]any) {
+func (s *Service) Publish(event, channelID string, payload map[string]any) {
 	safe := map[string]any{}
-	if payload != nil {
-		if raw, err := json.Marshal(payload); err == nil {
-			_ = json.Unmarshal(raw, &safe)
-		}
+	if raw, err := json.Marshal(payload); err == nil {
+		_ = json.Unmarshal(raw, &safe)
 	}
 	if safe == nil {
 		safe = map[string]any{}

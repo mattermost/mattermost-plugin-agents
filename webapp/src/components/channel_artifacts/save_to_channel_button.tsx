@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useStore} from 'react-redux';
 import styled from 'styled-components';
@@ -17,13 +17,13 @@ import {PinIcon, PinOutlineIcon} from '@mattermost/compass-icons/components';
 import {
     ChannelArtifactEntry,
     createChannelArtifact,
-    listChannelArtifacts,
 } from '@/client';
 import {getChannelArtifactsEnabled} from '@/selectors';
 
 import {AnimatedModalShell} from '../animated_modal_shell';
 
 import {canAddChannelBookmarks, pinLibraryArtifactBookmark} from './bookmark';
+import {useChannelLibrary} from './library';
 
 interface Props {
     fileId: string;
@@ -51,44 +51,21 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
     const store = useStore<GlobalState>();
     const enabled = useSelector(getChannelArtifactsEnabled);
     const canPin = useSelector<GlobalState, boolean>((state) => canAddChannelBookmarks(state, channelId));
+    const library = useChannelLibrary(channelId);
     const [open, setOpen] = useState(false);
-    const [canManage, setCanManage] = useState(false);
-    const [existing, setExisting] = useState<ChannelArtifactEntry[]>([]);
     const [title, setTitle] = useState('');
     const [replaceId, setReplaceId] = useState('');
     const [ackUpdate, setAckUpdate] = useState(false);
     const [pinBookmark, setPinBookmark] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [savedId, setSavedId] = useState<string | null>(null);
     const [error, setError] = useState('');
 
-    useEffect(() => {
-        if (!enabled || !channelId) {
-            return undefined; // eslint-disable-line no-undefined
-        }
-        let cancelled = false;
-        listChannelArtifacts(channelId).then((resp) => {
-            if (cancelled) {
-                return;
-            }
-            setCanManage(Boolean(resp.can_manage));
-            const entries = resp.entries || [];
-            setExisting(entries);
-            const match = pickReplaceTarget(entries, fileId);
-            if (match) {
-                setSavedId(match.id);
-            }
-        }, () => {
-            if (!cancelled) {
-                setCanManage(false);
-            }
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [enabled, channelId, fileId]);
+    const existing = library.entries;
+    const savedId = pickReplaceTarget(existing, fileId)?.id ?? null;
 
-    if (!enabled || !channelId || !postId || !canManage) {
+    // The server decides who may save. Show the control once it says someone
+    // may, and also after a failed load so a click can retry.
+    if (!enabled || !channelId || !postId || !(library.status === 'error' || library.canAdd || library.canEdit)) {
         return null;
     }
 
@@ -99,6 +76,10 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
 
     const openModal = (e: React.MouseEvent) => {
         if (!e.nativeEvent.isTrusted || saving) {
+            return;
+        }
+        if (library.status === 'error') {
+            library.reload();
             return;
         }
         const nextTitle = defaultTitle();
@@ -117,11 +98,27 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         setOpen(true);
     };
 
+    const saveErrorMessage = (err: any): string => {
+        switch (err?.status_code) {
+        case 403:
+            return intl.formatMessage({defaultMessage: "You don't have permission to save artifacts in this channel."});
+        case 404:
+            return intl.formatMessage({defaultMessage: 'The message or file is no longer available.'});
+        case 409:
+            return intl.formatMessage({defaultMessage: "This channel's artifact library is full. Remove one first."});
+        case 413:
+            return intl.formatMessage({defaultMessage: 'This artifact is too large to save.'});
+        case 422:
+            return intl.formatMessage({defaultMessage: 'Only HTML files posted by an agent can be saved.'});
+        default:
+            return intl.formatMessage({defaultMessage: 'Could not save artifact.'});
+        }
+    };
+
     const onSave = async () => {
         setSaving(true);
         setError('');
         const pinSaved = async (id: string, savedTitle: string) => {
-            setSavedId(id);
             if (!pinBookmark) {
                 setOpen(false);
                 return;
@@ -145,7 +142,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 title: title.trim() || defaultTitle(),
                 ...(replaceId ? {replace_id: replaceId} : {}),
             });
-            setExisting((prev) => [...prev.filter((item) => item.id !== entry.id), entry]);
+            store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
             await pinSaved(entry.id, entry.title);
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.startsWith('duplicate:')) {
@@ -156,10 +153,8 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 }
                 const stored = existing.find((entry) => entry.id === id);
                 await pinSaved(id, stored?.title || title.trim() || defaultTitle());
-            } else if (err?.status_code === 403 || err?.status_code === 404) {
-                setError(intl.formatMessage({defaultMessage: 'Only channel admins can save artifacts.'}));
             } else {
-                setError(intl.formatMessage({defaultMessage: 'Could not save artifact.'}));
+                setError(saveErrorMessage(err));
             }
         } finally {
             setSaving(false);
@@ -206,9 +201,9 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                     <div data-testid='channel-artifact-save-modal'>
                         <ModalCopy>
                             {updating ? (
-                                <FormattedMessage defaultMessage="This creates a new version of the library copy. Older versions stay available up to this channel's version limit."/>
+                                <FormattedMessage defaultMessage="This adds a new version to the saved artifact. Older versions stay available up to the server's version limit, for as long as the messages they came from exist."/>
                             ) : (
-                                <FormattedMessage defaultMessage='Keep this HTML app in the channel library so everyone can open it later. Optionally pin it to channel bookmarks below, or add it later from Bookmarks → Add channel artifact. Channel admins can rename or replace it anytime.'/>
+                                <FormattedMessage defaultMessage='Save this HTML app to the channel so everyone can open it later. The channel keeps a link to this message, not a copy, so the app is available only while this message exists. You can also pin it to channel bookmarks below.'/>
                             )}
                         </ModalCopy>
                         <FieldLabel htmlFor='channel-artifact-title'>
@@ -222,7 +217,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                             data-testid='channel-artifact-title-input'
                             autoFocus={true}
                         />
-                        {existing.length > 0 && (
+                        {existing.length > 0 && library.canEdit && (
                             <>
                                 <FieldLabel htmlFor='channel-artifact-replace'>
                                     <FormattedMessage defaultMessage='Library entry'/>
@@ -250,12 +245,12 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                                             value={entry.id}
                                         >
                                             {entry.title}
-                                            {entry.version && entry.version > 1 ? ` (v${entry.version})` : ''}
+                                            {entry.version > 1 ? ` (v${entry.version})` : ''}
                                         </option>
                                     ))}
                                 </FieldSelect>
                                 <FieldHint>
-                                    <FormattedMessage defaultMessage='Pick an existing entry to refresh it in place (same id, version bumps). Leave on “Create a new artifact” to add another.'/>
+                                    <FormattedMessage defaultMessage='Pick an existing entry to add a new version to it. Leave on “Create a new artifact” to save a separate one.'/>
                                 </FieldHint>
                             </>
                         )}
@@ -267,8 +262,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                                 <SupersedeMeta>
                                     <strong>{replaceEntry.title}</strong>
                                     {' · '}
-                                    {replaceEntry.source_agent_display_name || replaceEntry.updated_by || 'Agent'}
-                                    {' · '}
+                                    {replaceEntry.source_agent_display_name ? `${replaceEntry.source_agent_display_name} · ` : ''}
                                     {new Date(replaceEntry.update_at || replaceEntry.create_at).toLocaleString()}
                                     {replaceEntry.sha256 ? ` · ${shaPrefix(replaceEntry.sha256)}` : ''}
                                 </SupersedeMeta>
@@ -277,7 +271,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                                     onChange={(e) => setAckUpdate(e.target.checked)}
                                     data-testid='channel-artifact-update-ack'
                                 >
-                                    <FormattedMessage defaultMessage='I understand this supersedes the current library copy (older versions stay available up to the version limit)'/>
+                                    <FormattedMessage defaultMessage='I understand this replaces the current version (older versions stay available up to the version limit)'/>
                                 </Checkbox>
                             </SupersedeBox>
                         )}

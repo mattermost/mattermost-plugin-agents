@@ -200,6 +200,13 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	// State-changing tools are listed and callable when allowStateChangingTools
 	// reports they are available (Enterprise and above).
 	mcpServer.AddReceivingMiddleware(stateChangingToolsMiddleware(stateChanging, p.allowStateChangingTools))
+	mcpServer.AddReceivingMiddleware(channelArtifactsToolsMiddleware(p.channelArtifactsEnabled))
+}
+
+// channelArtifactsEnabled reports whether the channel artifact tools are on.
+// Without a service they are off.
+func (p *MattermostToolProvider) channelArtifactsEnabled() bool {
+	return p.channelArtifactsService != nil && p.channelArtifactsService.Enabled()
 }
 
 // stateChangingAllowed reports whether state-changing tools are available.

@@ -6,11 +6,7 @@ package api
 import (
 	"context"
 	"errors"
-	"net/http"
-	"slices"
-	"unicode/utf8"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
@@ -18,25 +14,10 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-const (
-	defaultMCPArtifactContentLimit = 8000
-	maxMCPArtifactContentLimit     = 20000
-)
-
 var errChannelArtifactsUnavailable = errors.New("channel artifacts are not available")
-
-// mcpStatusError carries the HTTP status the callback routes answer with and
-// the message the MCP tool shows when the same check runs in process.
-type mcpStatusError struct {
-	status  int
-	message string
-}
-
-func (e *mcpStatusError) Error() string { return e.message }
 
 type mcpArtifactConfig interface {
 	EnableChannelArtifacts() bool
-	DisableHumanChannelArtifacts() bool
 }
 
 // MCPChannelArtifacts serves the channel artifact MCP tools in process, so
@@ -47,27 +28,27 @@ type MCPChannelArtifacts struct {
 	svc    *channelartifacts.Service
 	mm     mmapi.Client
 	config mcpArtifactConfig
-	bots   *bots.MMBots
 }
 
 var _ tools.ChannelArtifactsService = (*MCPChannelArtifacts)(nil)
 
 // NewMCPChannelArtifacts returns the in-process channel artifact MCP service.
-func NewMCPChannelArtifacts(svc *channelartifacts.Service, mm mmapi.Client, config Config, botRegistry *bots.MMBots) *MCPChannelArtifacts {
-	return &MCPChannelArtifacts{svc: svc, mm: mm, config: config, bots: botRegistry}
+func NewMCPChannelArtifacts(svc *channelartifacts.Service, mm mmapi.Client, config Config) *MCPChannelArtifacts {
+	return &MCPChannelArtifacts{svc: svc, mm: mm, config: config}
 }
 
 func (a *API) mcpChannelArtifacts() *MCPChannelArtifacts {
-	return &MCPChannelArtifacts{svc: a.channelArtifacts, mm: a.mmClient, config: a.config, bots: a.bots}
+	return &MCPChannelArtifacts{svc: a.channelArtifacts, mm: a.mmClient, config: a.config}
 }
 
-func (m *MCPChannelArtifacts) available() bool {
+// Enabled reports whether the library is on.
+func (m *MCPChannelArtifacts) Enabled() bool {
 	return m.svc != nil && m.config.EnableChannelArtifacts()
 }
 
 // List returns the entries userID may read in channelID.
 func (m *MCPChannelArtifacts) List(_ context.Context, userID, channelID string) ([]*channelartifacts.Entry, error) {
-	if !m.available() {
+	if !m.Enabled() {
 		return nil, errChannelArtifactsUnavailable
 	}
 	if !model.IsValidId(channelID) {
@@ -80,9 +61,10 @@ func (m *MCPChannelArtifacts) List(_ context.Context, userID, channelID string) 
 	return resp.Entries, nil
 }
 
-// Get returns one entry userID may read, with its HTML truncated to contentLimit runes.
-func (m *MCPChannelArtifacts) Get(_ context.Context, userID, artifactID string, includeContent bool, contentLimit int) (tools.ChannelArtifactContent, error) {
-	if !m.available() {
+// Get returns one entry userID may read. With content, the HTML is read from
+// the source file under the caller's session file policy and windowed.
+func (m *MCPChannelArtifacts) Get(ctx context.Context, userID, artifactID string, opts tools.ChannelArtifactReadOptions) (tools.ChannelArtifactContent, error) {
+	if !m.Enabled() {
 		return tools.ChannelArtifactContent{}, errChannelArtifactsUnavailable
 	}
 	if !model.IsValidId(artifactID) {
@@ -92,66 +74,14 @@ func (m *MCPChannelArtifacts) Get(_ context.Context, userID, artifactID string, 
 	if err != nil {
 		return tools.ChannelArtifactContent{}, err
 	}
-	out := tools.ChannelArtifactContent{Entry: entry}
-	if !includeContent {
-		return out, nil
+	if !opts.IncludeContent {
+		return tools.ChannelArtifactContent{Entry: entry}, nil
 	}
-	body, err := m.svc.ReadContent(entry)
+	body, err := m.svc.ReadContent(auth.SessionIDFromContext(ctx), entry, opts.Version, artifactRenderLimit(m.mm.GetConfig()))
 	if err != nil {
 		return tools.ChannelArtifactContent{}, err
 	}
-	out.Content, out.TotalRunes, out.Returned, out.HasMore = truncateUTF8(string(body), contentLimit)
-	out.ContentIncluded = true
+	out := tools.ChannelArtifactWindow(string(body), opts.Offset, opts.Limit)
+	out.Entry = entry
 	return out, nil
-}
-
-// CanSave reports whether userID may save the post attachment into the library.
-// The file policy comes from the session on ctx.
-func (m *MCPChannelArtifacts) CanSave(ctx context.Context, userID, postID, fileID string) error {
-	if !m.available() || m.mm == nil {
-		return errChannelArtifactsUnavailable
-	}
-	if !model.IsValidId(postID) || !model.IsValidId(fileID) {
-		return &mcpStatusError{http.StatusBadRequest, "a valid post_id and file_id are required"}
-	}
-	client := mmapi.WithFilePolicy(m.mm, auth.SessionIDFromContext(ctx))
-	info, err := client.GetFileInfo(fileID)
-	if err != nil || info == nil {
-		return &mcpStatusError{http.StatusNotFound, "not found"}
-	}
-	post, err := client.GetPost(postID)
-	if err != nil || post == nil {
-		return &mcpStatusError{http.StatusNotFound, "not found"}
-	}
-	if !client.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
-		return &mcpStatusError{http.StatusNotFound, "not found"}
-	}
-	if !isArtifactExtension(info) {
-		return &mcpStatusError{http.StatusNotFound, "file is not an HTML artifact"}
-	}
-	if info.PostId == "" || info.PostId != postID || !slices.Contains(post.FileIds, fileID) {
-		return &mcpStatusError{http.StatusNotFound, "file is not attached to the post"}
-	}
-	if m.config.DisableHumanChannelArtifacts() && (m.bots == nil || !m.bots.IsAnyBot(post.UserId)) {
-		return &mcpStatusError{http.StatusForbidden, "channel artifacts only accept files posted by agents"}
-	}
-	if info.Size > artifactRenderLimit(m.mm.GetConfig()) {
-		return &mcpStatusError{http.StatusRequestEntityTooLarge, "artifact too large"}
-	}
-	return nil
-}
-
-func truncateUTF8(s string, limit int) (text string, total, returned int, hasMore bool) {
-	total = utf8.RuneCountInString(s)
-	if limit <= 0 {
-		limit = defaultMCPArtifactContentLimit
-	}
-	if limit > maxMCPArtifactContentLimit {
-		limit = maxMCPArtifactContentLimit
-	}
-	if total <= limit {
-		return s, total, total, false
-	}
-	runes := []rune(s)
-	return string(runes[:limit]), total, limit, true
 }

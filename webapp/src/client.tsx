@@ -148,31 +148,36 @@ export async function getArtifactTokenFor(ref: ArtifactRef, nonce: string, versi
 export type ChannelArtifactEntry = {
     id: string;
     channel_id: string;
-    team_id: string;
     title: string;
-    description?: string;
+
+    // The current version number.
+    version: number;
+    sha256: string;
+    size: number;
     source_post_id: string;
     source_file_id: string;
-    source_file_name: string;
     source_bot_user_id: string;
     source_agent_display_name?: string;
-    source_root_post_id?: string;
     created_by: string;
     create_at: number;
+    updated_by: string;
     update_at: number;
-    updated_by?: string;
-    size: number;
-    sha256: string;
-    version?: number;
+
+    // False when the message or file the current version came from was deleted.
+    available: boolean;
 };
 
 export type ChannelArtifactList = {
     entries: ChannelArtifactEntry[];
-    can_manage: boolean;
-    max_per_channel?: number;
-    download_enabled?: boolean;
-    render_enabled?: boolean;
+    can_add: boolean;
+    can_edit: boolean;
+    can_delete: boolean;
+    max_per_channel: number;
 };
+
+function artifactError(url: string, response: Response): ClientError {
+    return new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
 
 export async function listChannelArtifacts(channelId: string): Promise<ChannelArtifactList> {
     const url = `${baseRoute()}/channel-artifacts?channel_id=${encodeURIComponent(channelId)}`;
@@ -180,25 +185,25 @@ export async function listChannelArtifacts(channelId: string): Promise<ChannelAr
     if (response.ok) {
         return response.json();
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
-/** Team catalog of library entries. A system admin sees every channel; a team admin sees channels they can read. */
-export async function listTeamChannelArtifacts(teamId: string): Promise<{entries: ChannelArtifactEntry[]}> {
-    const url = `${baseRoute()}/channel-artifacts/team?team_id=${encodeURIComponent(teamId)}`;
+export async function getChannelArtifact(id: string): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/info`;
     const response = await fetch(url, Client4.getOptions({method: 'GET'}));
     if (response.ok) {
         return response.json();
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
+// A 409 whose body names an artifact means identical content is already saved;
+// the error message is "duplicate:<id>". Any other 409 is the channel limit.
 export async function createChannelArtifact(body: {
     channel_id: string;
     post_id: string;
     file_id: string;
-    title: string;
-    description?: string;
+    title?: string;
     replace_id?: string;
 }): Promise<ChannelArtifactEntry> {
     const url = `${baseRoute()}/channel-artifacts`;
@@ -212,16 +217,14 @@ export async function createChannelArtifact(body: {
     if (response.status === 409) {
         const data: unknown = await response.json().catch(() => null);
         const artifactId = (data as {artifact_id?: string} | null)?.artifact_id;
-        throw new ClientError(Client4.url, {
-            message: artifactId ? `duplicate:${artifactId}` : 'duplicate',
-            status_code: response.status,
-            url,
-        });
+        if (artifactId) {
+            throw new ClientError(Client4.url, {message: `duplicate:${artifactId}`, status_code: response.status, url});
+        }
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
-export async function patchChannelArtifact(id: string, body: {title?: string; description?: string}): Promise<ChannelArtifactEntry> {
+export async function patchChannelArtifact(id: string, body: {title: string}): Promise<ChannelArtifactEntry> {
     const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PATCH',
@@ -230,29 +233,26 @@ export async function patchChannelArtifact(id: string, body: {title?: string; de
     if (response.ok) {
         return response.json();
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
-export async function replaceChannelArtifactContent(id: string, body: {post_id: string; file_id: string}): Promise<ChannelArtifactEntry> {
-    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/content`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'PUT',
-        body: JSON.stringify(body),
-    }));
+// Removes the library entry and its versions. The original message and file stay.
+export async function deleteChannelArtifact(id: string): Promise<void> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}`;
+    const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
+    if (response.ok) {
+        return;
+    }
+    throw artifactError(url, response);
+}
+
+export async function deleteChannelArtifactVersion(id: string, version: number): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/versions/${version}`;
+    const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
     if (response.ok) {
         return response.json();
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
-}
-
-export async function deleteChannelArtifact(id: string, opts?: {purge?: boolean}): Promise<void> {
-    const qs = opts?.purge ? '?purge=true' : '';
-    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}${qs}`;
-    const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
-    if (response.ok || response.status === 204) {
-        return;
-    }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
 export function channelArtifactDownloadURL(id: string, version?: number): string {
@@ -267,21 +267,17 @@ export type ChannelArtifactVersionRecord = {
     version: number;
     sha256: string;
     size: number;
-    chunk_count?: number;
-    source_post_id?: string;
-    source_file_id?: string;
-    source_file_name?: string;
-    source_bot_user_id?: string;
+    source_post_id: string;
+    source_file_id: string;
+    source_bot_user_id: string;
     source_agent_display_name?: string;
-    source_root_post_id?: string;
-    title?: string;
-    description?: string;
-    updated_by?: string;
-    update_at: number;
-};
+    created_by: string;
+    create_at: number;
+    head: boolean;
 
-/** Alias matching the backend VersionRecord JSON shape. */
-export type VersionRecord = ChannelArtifactVersionRecord;
+    // False when the message or file this version came from was deleted.
+    available: boolean;
+};
 
 export type ChannelArtifactVersionsResponse = {
     versions: ChannelArtifactVersionRecord[];
@@ -293,7 +289,7 @@ export async function listChannelArtifactVersions(id: string): Promise<ChannelAr
     if (response.ok) {
         return response.json();
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
 export async function rollbackChannelArtifact(id: string, version: number): Promise<ChannelArtifactEntry> {
@@ -305,7 +301,7 @@ export async function rollbackChannelArtifact(id: string, version: number): Prom
     if (response.ok) {
         return response.json();
     }
-    throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    throw artifactError(url, response);
 }
 
 export function fileDownloadURL(fileId: string): string {

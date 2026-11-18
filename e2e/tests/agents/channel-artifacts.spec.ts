@@ -234,10 +234,8 @@ test.describe('Channel artifacts', () => {
 
         acceptNextConfirm(page);
         await channelArtifactCard(rhsAgain, entry.id).getByTestId(`channel-artifact-delete-${entry.id}`).click();
-        const restored = channelArtifactCard(channelArtifactsRHS(page), entry.id);
-        await expect(restored).toBeVisible({timeout: 15000});
-        await expect(restored).toContainText('Sprint release notes');
-        await expect(channelArtifactsEmptyState(channelArtifactsRHS(page))).toHaveCount(0);
+        await expect(channelArtifactCard(channelArtifactsRHS(page), entry.id)).toHaveCount(0, {timeout: 15000});
+        await expect(channelArtifactsEmptyState(channelArtifactsRHS(page))).toBeVisible();
     });
 
     test('opens library from Channel Info and from Bookmarks → Add channel artifact', async ({page}) => {

@@ -31,6 +31,7 @@ import ChannelArtifactsRHS, {ChannelArtifactsRHSTitle} from './components/channe
 import ChannelArtifactsCountBadge from './components/channel_artifacts/channel_artifacts_count_badge';
 import ArtifactBookmarkPicker, {openArtifactBookmarkPicker} from './components/channel_artifacts/artifact_bookmark_picker';
 import LibraryArtifactDeepLink from './components/channel_artifacts/library_artifact_deep_link';
+import {applyLibraryEvent} from './components/channel_artifacts/library';
 import {getChannelArtifactsEnabled} from './selectors';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
@@ -233,6 +234,13 @@ export default class Plugin {
         const refreshRuntimeBotsCache = () => {
             fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         };
+
+        for (const event of ['created', 'updated', 'deleted']) {
+            registry.registerWebSocketEventHandler(
+                `custom_mattermost-ai_channel_artifact_${event}`,
+                (msg: {data?: Record<string, unknown>}) => applyLibraryEvent(store.dispatch as never, event, msg.data),
+            );
+        }
 
         registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
 

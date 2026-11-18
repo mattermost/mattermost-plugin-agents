@@ -8,10 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -25,12 +23,9 @@ import (
 )
 
 const (
-	WebsocketEventChannelArtifactCreated   = "channel_artifact_created"
-	WebsocketEventChannelArtifactUpdated   = "channel_artifact_updated"
-	WebsocketEventChannelArtifactDeleted   = "channel_artifact_deleted"
-	WebsocketEventChannelArtifactReordered = "channel_artifact_reordered"
-
-	artifactRenderingDisabledHTML = `<!doctype html><html><head><meta charset="utf-8"><title>Artifact unavailable</title></head><body><p>Channel artifact rendering is disabled by the system administrator.</p></body></html>`
+	WebsocketEventChannelArtifactCreated = "channel_artifact_created"
+	WebsocketEventChannelArtifactUpdated = "channel_artifact_updated"
+	WebsocketEventChannelArtifactDeleted = "channel_artifact_deleted"
 )
 
 // SetChannelArtifacts installs the channel artifact library service.
@@ -42,10 +37,10 @@ func (a *API) channelArtifactsEnabled() bool {
 	return a.config.EnableChannelArtifacts()
 }
 
-func (a *API) channelArtifactLimits() channelartifacts.ContentLimits {
-	return channelartifacts.ContentLimits{
+func (a *API) channelArtifactLimits(maxSize int64) channelartifacts.Limits {
+	return channelartifacts.Limits{
+		MaxSize:        maxSize,
 		MaxPerChannel:  a.config.ChannelArtifactsMaxPerChannel(),
-		MaxSitewide:    a.config.ChannelArtifactsMaxSitewide(),
 		VersionsToKeep: a.config.ChannelArtifactVersionsToKeep(),
 	}
 }
@@ -54,19 +49,24 @@ func (a *API) writeChannelArtifactError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, channelartifacts.ErrNotFound):
 		c.String(http.StatusNotFound, "not found")
-	case errors.Is(err, channelartifacts.ErrInvalidInput), errors.Is(err, channelartifacts.ErrNotPermutation):
+	case errors.Is(err, channelartifacts.ErrForbidden):
+		c.String(http.StatusForbidden, "forbidden")
+	case errors.Is(err, channelartifacts.ErrInvalidInput):
 		c.String(http.StatusBadRequest, "invalid request")
+	case errors.Is(err, channelartifacts.ErrIneligible):
+		c.String(http.StatusUnprocessableEntity, "this file cannot be saved as a channel artifact")
 	case errors.Is(err, channelartifacts.ErrLimitReached):
 		c.String(http.StatusConflict, "channel artifact limit reached")
 	case errors.Is(err, channelartifacts.ErrDuplicate):
-		c.JSON(http.StatusConflict, gin.H{
-			"error":       "duplicate",
-			"artifact_id": channelartifacts.DuplicateID(err),
-		})
+		body := gin.H{"error": "duplicate"}
+		if dup, ok := errors.AsType[*channelartifacts.DuplicateError](err); ok {
+			body["artifact_id"] = dup.ArtifactID
+		}
+		c.JSON(http.StatusConflict, body)
 	case errors.Is(err, channelartifacts.ErrTooLarge):
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
-	case errors.Is(err, channelartifacts.ErrConflict):
-		c.String(http.StatusConflict, "conflict")
+	case errors.Is(err, channelartifacts.ErrUnavailable):
+		c.String(http.StatusGone, "the source message or file is no longer available")
 	default:
 		if a.pluginAPI != nil {
 			a.pluginAPI.Log.Error("channel artifact operation failed", "error", err)
@@ -88,11 +88,32 @@ func bindChannelArtifactJSON(c *gin.Context, out any) bool {
 	return true
 }
 
-func (a *API) handleListChannelArtifacts(c *gin.Context) {
+// beginChannelArtifactRoute sets the response headers every library route
+// shares and reports whether the library is on. Disabled libraries answer 404.
+func (a *API) beginChannelArtifactRoute(c *gin.Context) bool {
 	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
 	c.Writer.Header().Set("Cache-Control", "private, no-store")
 	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
 		c.String(http.StatusNotFound, "not found")
+		return false
+	}
+	return true
+}
+
+// channelArtifactIDParam returns the validated :id route parameter and adds it
+// to the audit record.
+func (a *API) channelArtifactIDParam(c *gin.Context) (string, bool) {
+	id := c.Param("id")
+	if !model.IsValidId(id) {
+		c.String(http.StatusBadRequest, "invalid id")
+		return "", false
+	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
+	return id, true
+}
+
+func (a *API) handleListChannelArtifacts(c *gin.Context) {
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
 	channelID := c.Query("channel_id")
@@ -106,83 +127,58 @@ func (a *API) handleListChannelArtifacts(c *gin.Context) {
 		return
 	}
 	resp.MaxPerChannel = a.config.ChannelArtifactsMaxPerChannel()
-	resp.DownloadEnabled = !a.config.DisableChannelArtifactDownload()
-	resp.RenderEnabled = !a.config.DisableChannelArtifactRendering()
 	c.JSON(http.StatusOK, resp)
 }
 
+// handleCreateChannelArtifact saves an agent's HTML attachment as a new library
+// entry, or as a new version of the entry named by replace_id.
 func (a *API) handleCreateChannelArtifact(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
-	var req channelartifacts.CreateRequest
+	var req channelartifacts.SaveRequest
 	if !bindChannelArtifactJSON(c, &req) {
 		return
 	}
-	if !model.IsValidId(req.ChannelID) || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
-		c.String(http.StatusBadRequest, "invalid request")
-		return
-	}
-	if req.ReplaceID != "" && !model.IsValidId(req.ReplaceID) {
+	if !model.IsValidId(req.ChannelID) || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) ||
+		(req.ArtifactID != "" && !model.IsValidId(req.ArtifactID)) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelID, req.ChannelID)
-	if req.ReplaceID != "" {
+	if req.ArtifactID != "" {
 		if rec := auditRec(c); rec != nil {
 			rec.EventName = AuditEventReplaceChannelArtifact
 		}
-		audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, req.ReplaceID)
+		audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, req.ArtifactID)
 	}
-
-	userID := c.GetHeader("Mattermost-User-Id")
-	read, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, req.ChannelID)
-	if !ok {
+	if a.mmClient == nil || !a.config.EnableHTMLArtifacts() {
+		c.String(http.StatusNotFound, "not found")
 		return
 	}
 
-	limits := a.channelArtifactLimits()
-	limits.MaxSize = read.limit
-	entry, err := a.channelArtifacts.CreateFromHTML(
-		userID,
+	reader := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
+	entry, err := a.channelArtifacts.Save(
+		c.GetHeader("Mattermost-User-Id"),
+		reader,
 		req,
-		read.body,
-		read.info.Name,
-		read.sourceBotUserID,
-		read.authorDisplay,
-		read.teamID,
-		channelartifacts.RootPostID(read.post),
-		limits,
+		a.channelArtifactLimits(artifactRenderLimit(a.mmClient.GetConfig())),
 	)
-	if err != nil && !errors.Is(err, channelartifacts.ErrCleanupDeferred) {
+	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	if errors.Is(err, channelartifacts.ErrCleanupDeferred) && a.pluginAPI != nil {
-		a.pluginAPI.Log.Warn("channel artifact version prune deferred", "artifact_id", entry.ID, "error", err.Error())
-	}
-	event := WebsocketEventChannelArtifactCreated
-	status := http.StatusCreated
-	if req.ReplaceID != "" {
-		event = WebsocketEventChannelArtifactUpdated
-		status = http.StatusOK
-	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, entry.ID)
-	audit.AddParam(auditRec(c), audit.KeyChannelID, entry.ChannelID)
-	a.channelArtifacts.Publish(event, entry.ChannelID, map[string]any{
-		"artifact": entry,
-	})
+	event, status := WebsocketEventChannelArtifactCreated, http.StatusCreated
+	if req.ArtifactID != "" {
+		event, status = WebsocketEventChannelArtifactUpdated, http.StatusOK
+	}
+	a.channelArtifacts.Publish(event, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(status, entry)
 }
 
-func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+func (a *API) handleGetChannelArtifactInfo(c *gin.Context) {
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
 	id := c.Param("id")
@@ -190,134 +186,22 @@ func (a *API) handleReplaceChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
-	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
-	var req channelartifacts.ReplaceRequest
-	if !bindChannelArtifactJSON(c, &req) {
-		return
-	}
-	if !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) {
-		c.String(http.StatusBadRequest, "invalid request")
-		return
-	}
-	userID := c.GetHeader("Mattermost-User-Id")
-	entry, err := a.channelArtifacts.GetReadable(userID, id)
+	entry, err := a.channelArtifacts.GetReadable(c.GetHeader("Mattermost-User-Id"), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	read, ok := a.readPostArtifactBody(c, userID, req.FileID, req.PostID, entry.ChannelID)
-	if !ok {
-		return
-	}
-	limits := a.channelArtifactLimits()
-	limits.MaxSize = read.limit
-	updated, err := a.channelArtifacts.ReplaceContent(
-		userID,
-		id,
-		req,
-		read.body,
-		read.info.Name,
-		read.sourceBotUserID,
-		read.authorDisplay,
-		channelartifacts.RootPostID(read.post),
-		limits,
-	)
-	if err != nil && !errors.Is(err, channelartifacts.ErrCleanupDeferred) {
-		a.writeChannelArtifactError(c, err)
-		return
-	}
-	if errors.Is(err, channelartifacts.ErrCleanupDeferred) && a.pluginAPI != nil {
-		a.pluginAPI.Log.Warn("channel artifact version prune deferred", "artifact_id", updated.ID, "error", err.Error())
-	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, updated.ChannelID, map[string]any{
-		"artifact": updated,
-	})
-	c.JSON(http.StatusOK, updated)
-}
-
-// postArtifactBody is an authorized HTML attachment read for a library write.
-type postArtifactBody struct {
-	body []byte
-	info *model.FileInfo
-	post *model.Post
-	// sourceBotUserID and authorDisplay are set only when an agent authored the
-	// post; people who save their own attachments are not recorded as agents.
-	sourceBotUserID string
-	authorDisplay   string
-	teamID          string
-	limit           int64
-}
-
-// readPostArtifactBody authorizes an HTML attachment and reads it.
-func (a *API) readPostArtifactBody(c *gin.Context, userID, fileID, postID, channelID string) (postArtifactBody, bool) {
-	client, info, post, ok := a.lookupPostArtifact(c, userID, fileID)
-	if !ok {
-		return postArtifactBody{}, false
-	}
-	if post.Id != postID || post.ChannelId != channelID {
-		c.String(http.StatusNotFound, "not found")
-		return postArtifactBody{}, false
-	}
-	limit := artifactRenderLimit(client.GetConfig())
-	if info.Size > limit {
-		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
-		return postArtifactBody{}, false
-	}
-	reader, err := client.GetFile(fileID)
-	if err != nil {
-		a.writeChannelArtifactError(c, err)
-		return postArtifactBody{}, false
-	}
-	defer reader.Close()
-	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil {
-		a.writeChannelArtifactError(c, err)
-		return postArtifactBody{}, false
-	}
-	if int64(len(body)) > limit {
-		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
-		return postArtifactBody{}, false
-	}
-	var sourceBotUserID, authorDisplay string
-	if a.bots != nil {
-		if bot := a.bots.GetBotByIDOrUsername(post.UserId, ""); bot != nil {
-			sourceBotUserID = post.UserId
-			authorDisplay = bot.GetMMBot().DisplayName
-		}
-	}
-	var teamID string
-	channel, err := client.GetChannel(channelID)
-	if err != nil {
-		a.writeChannelArtifactError(c, err)
-		return postArtifactBody{}, false
-	}
-	if channel != nil {
-		teamID = channel.TeamId
-	}
-	return postArtifactBody{
-		body:            body,
-		info:            info,
-		post:            post,
-		sourceBotUserID: sourceBotUserID,
-		authorDisplay:   authorDisplay,
-		teamID:          teamID,
-		limit:           limit,
-	}, true
+	c.JSON(http.StatusOK, entry)
 }
 
 func (a *API) handlePatchChannelArtifact(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
-	id := c.Param("id")
-	if !model.IsValidId(id) {
-		c.String(http.StatusBadRequest, "invalid id")
+	id, ok := a.channelArtifactIDParam(c)
+	if !ok {
 		return
 	}
-	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.PatchRequest
 	if !bindChannelArtifactJSON(c, &req) {
 		return
@@ -327,25 +211,18 @@ func (a *API) handlePatchChannelArtifact(c *gin.Context) {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{
-		"artifact": entry,
-	})
+	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(http.StatusOK, entry)
 }
 
 func (a *API) handleRollbackChannelArtifact(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
-	id := c.Param("id")
-	if !model.IsValidId(id) {
-		c.String(http.StatusBadRequest, "invalid id")
+	id, ok := a.channelArtifactIDParam(c)
+	if !ok {
 		return
 	}
-	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
 	var req channelartifacts.RollbackRequest
 	if !bindChannelArtifactJSON(c, &req) {
 		return
@@ -354,113 +231,63 @@ func (a *API) handleRollbackChannelArtifact(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
 	}
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactVersion, strconv.Itoa(req.Version))
 	entry, err := a.channelArtifacts.Rollback(c.GetHeader("Mattermost-User-Id"), id, req.Version)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{
-		"artifact": entry,
-	})
+	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(http.StatusOK, entry)
 }
 
+// handleDeleteChannelArtifact removes the library entry and its version rows.
+// The source posts and files are not touched.
 func (a *API) handleDeleteChannelArtifact(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
-	id := c.Param("id")
-	if !model.IsValidId(id) {
-		c.String(http.StatusBadRequest, "invalid id")
+	id, ok := a.channelArtifactIDParam(c)
+	if !ok {
 		return
 	}
-	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, id)
-	userID := c.GetHeader("Mattermost-User-Id")
-	entry, err := a.channelArtifacts.GetReadable(userID, id)
+	entry, err := a.channelArtifacts.Delete(c.GetHeader("Mattermost-User-Id"), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	channelID := entry.ChannelID
-	rawPurge, ok := strictQueryValue(c, "purge")
+	audit.AddParam(auditRec(c), audit.KeyChannelID, entry.ChannelID)
+	a.channelArtifacts.Publish(WebsocketEventChannelArtifactDeleted, entry.ChannelID, map[string]any{"id": id})
+	c.Status(http.StatusNoContent)
+}
+
+// handleDeleteChannelArtifactVersion removes one version row. Removing the
+// current version makes the newest remaining one current.
+func (a *API) handleDeleteChannelArtifactVersion(c *gin.Context) {
+	if !a.beginChannelArtifactRoute(c) {
+		return
+	}
+	id, ok := a.channelArtifactIDParam(c)
 	if !ok {
 		return
 	}
-	purge, purgeErr := purgeQuery(rawPurge)
-	if purgeErr != nil {
-		c.String(http.StatusBadRequest, "invalid purge")
+	version, err := strconv.Atoi(c.Param("version"))
+	if err != nil || version < 1 {
+		c.String(http.StatusBadRequest, "invalid version")
 		return
 	}
-	if err := a.channelArtifacts.Delete(userID, id, purge); err != nil {
+	audit.AddParam(auditRec(c), audit.KeyChannelArtifactVersion, strconv.Itoa(version))
+	entry, err := a.channelArtifacts.DeleteVersion(c.GetHeader("Mattermost-User-Id"), id, version)
+	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	updated, getErr := a.channelArtifacts.GetReadable(userID, id)
-	if getErr == nil {
-		a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, channelID, map[string]any{
-			"artifact": updated,
-		})
-		c.JSON(http.StatusOK, updated)
-		return
-	}
-	if !errors.Is(getErr, channelartifacts.ErrNotFound) {
-		if a.pluginAPI != nil {
-			a.pluginAPI.Log.Warn("channel artifact delete committed but the follow-up read failed", "artifact_id", id, "error", getErr.Error())
-		}
-		c.Status(http.StatusNoContent)
-		return
-	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactDeleted, channelID, map[string]any{
-		"id": id,
-	})
-	c.Status(http.StatusNoContent)
-}
-
-func purgeQuery(value string) (bool, error) {
-	switch strings.ToLower(value) {
-	case "", "false", "0":
-		return false, nil
-	case "true", "1":
-		return true, nil
-	default:
-		return false, errors.New("invalid purge")
-	}
-}
-
-func (a *API) handleReorderChannelArtifacts(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
-		return
-	}
-	var req channelartifacts.OrderRequest
-	if !bindChannelArtifactJSON(c, &req) {
-		return
-	}
-	if !model.IsValidId(req.ChannelID) {
-		c.String(http.StatusBadRequest, "invalid request")
-		return
-	}
-	audit.AddParam(auditRec(c), audit.KeyChannelID, req.ChannelID)
-	if err := a.channelArtifacts.Reorder(c.GetHeader("Mattermost-User-Id"), req); err != nil {
-		a.writeChannelArtifactError(c, err)
-		return
-	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactReordered, req.ChannelID, map[string]any{
-		"ids": req.IDs,
-	})
-	c.Status(http.StatusNoContent)
+	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{"artifact": entry})
+	c.JSON(http.StatusOK, entry)
 }
 
 func (a *API) handleListChannelArtifactVersions(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+	if !a.beginChannelArtifactRoute(c) {
 		return
 	}
 	id := c.Param("id")
@@ -468,68 +295,12 @@ func (a *API) handleListChannelArtifactVersions(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
-	versions, err := a.channelArtifacts.ListVersions(c.GetHeader("Mattermost-User-Id"), id)
+	versions, err := a.channelArtifacts.Versions(c.GetHeader("Mattermost-User-Id"), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"versions": versions})
-}
-
-func (a *API) handleExportChannelArtifacts(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
-		return
-	}
-	userID := c.GetHeader("Mattermost-User-Id")
-	if !isSystemAdmin(a.pluginAPI, userID) {
-		c.String(http.StatusForbidden, "forbidden")
-		return
-	}
-	channelID := c.Query("channel_id")
-	if !model.IsValidId(channelID) {
-		c.String(http.StatusBadRequest, "invalid channel id")
-		return
-	}
-	audit.AddParam(auditRec(c), audit.KeyChannelID, channelID)
-	resp, err := a.channelArtifacts.ExportChannel(channelID)
-	if err != nil {
-		a.writeChannelArtifactError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, resp)
-}
-
-func (a *API) handleListTeamChannelArtifacts(c *gin.Context) {
-	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
-		return
-	}
-	teamID := c.Query("team_id")
-	if !model.IsValidId(teamID) {
-		c.String(http.StatusBadRequest, "invalid team id")
-		return
-	}
-	userID := c.GetHeader("Mattermost-User-Id")
-	if a.pluginAPI == nil {
-		c.String(http.StatusInternalServerError, "internal error")
-		return
-	}
-	if !isSystemAdmin(a.pluginAPI, userID) &&
-		!a.pluginAPI.User.HasPermissionToTeam(userID, teamID, model.PermissionManageTeam) {
-		c.String(http.StatusForbidden, "forbidden")
-		return
-	}
-	resp, err := a.channelArtifacts.ListByTeam(userID, teamID)
-	if err != nil {
-		a.writeChannelArtifactError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, resp)
 }
 
 // libraryArtifactBridgeToken authenticates bridge messages for a library entry.
@@ -540,12 +311,7 @@ func libraryArtifactBridgeToken(secret []byte, userID, artifactID, nonce string)
 }
 
 func (a *API) authorizeLibraryArtifact(c *gin.Context) (*channelartifacts.Entry, bool) {
-	h := c.Writer.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "private, no-store")
-
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
-		c.String(http.StatusNotFound, "not found")
+	if !a.beginChannelArtifactRoute(c) {
 		return nil, false
 	}
 	id := c.Param("id")
@@ -594,10 +360,6 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if a.config.DisableChannelArtifactRendering() {
-		c.String(http.StatusForbidden, "channel artifact rendering is disabled")
-		return
-	}
 	nonce, ok := artifactNonceAllowing(c, "version")
 	if !ok {
 		return
@@ -612,35 +374,23 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	size := entry.Size
-	if version > 0 {
-		rec, err := a.channelArtifacts.Store().VersionRecord(entry, version)
-		if err != nil {
-			a.logArtifactError("Failed to load channel artifact version", err, entry.ID)
-			a.writeChannelArtifactError(c, err)
-			return
-		}
-		size = rec.Size
+	rec, err := a.channelArtifacts.VersionOf(entry, version)
+	if err != nil {
+		a.logArtifactError("Failed to load channel artifact version", err, entry.ID)
+		a.writeChannelArtifactError(c, err)
+		return
+	}
+	if !rec.Available {
+		a.writeChannelArtifactError(c, channelartifacts.ErrUnavailable)
+		return
 	}
 	token := libraryArtifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), entry.ID, nonce)
-	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": size > artifactRenderLimit(a.mmClient.GetConfig())})
+	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": rec.Size > artifactRenderLimit(a.mmClient.GetConfig())})
 }
 
 func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	entry, ok := a.authorizeLibraryArtifact(c)
 	if !ok {
-		return
-	}
-
-	if a.config.DisableChannelArtifactRendering() {
-		if !strings.EqualFold(c.GetHeader("Sec-Fetch-Dest"), "iframe") || !strings.EqualFold(c.GetHeader("Sec-Fetch-Site"), "same-origin") {
-			h := c.Writer.Header()
-			h.Set("Content-Security-Policy", artifactInterstitialCSP)
-			h.Set("Referrer-Policy", "no-referrer")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(artifactRenderingDisabledHTML))
-			return
-		}
-		c.String(http.StatusForbidden, "channel artifact rendering is disabled")
 		return
 	}
 
@@ -656,7 +406,6 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	if !ok {
 		return
 	}
-
 	// Library frames pass ?n=&version=; allow version beside the nonce.
 	nonce, ok := artifactNonceAllowing(c, "version")
 	if !ok {
@@ -664,12 +413,6 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	}
 
 	cfg := a.mmClient.GetConfig()
-	limit := artifactRenderLimit(cfg)
-	if entry.Size > limit && version == 0 {
-		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
-		return
-	}
-
 	secret, err := a.artifactSecret()
 	if err != nil {
 		a.logArtifactError("Failed to load artifact bridge secret", err, entry.ID)
@@ -678,14 +421,10 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	}
 	token := libraryArtifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), entry.ID, nonce)
 
-	body, err := a.channelArtifacts.ReadContentAt(entry, version)
+	body, err := a.channelArtifacts.ReadContent(auth.SessionIDFromContext(c.Request.Context()), entry, version, artifactRenderLimit(cfg))
 	if err != nil {
 		a.logArtifactError("Failed to read channel artifact", err, entry.ID)
 		a.writeChannelArtifactError(c, err)
-		return
-	}
-	if int64(len(body)) > limit {
-		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
 		return
 	}
 
@@ -704,37 +443,18 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if a.config.DisableChannelArtifactDownload() {
-		c.String(http.StatusForbidden, "channel artifact download is disabled")
-		return
-	}
 	version, ok := parseArtifactVersionQuery(c)
 	if !ok {
 		return
 	}
-	name := entry.SourceFileName
-	if version > 0 {
-		rec, recErr := a.channelArtifacts.Store().VersionRecord(entry, version)
-		if recErr != nil {
-			a.logArtifactError("Failed to read channel artifact version", recErr, entry.ID)
-			a.writeChannelArtifactError(c, recErr)
-			return
-		}
-		if rec.SourceFileName != "" {
-			name = rec.SourceFileName
-		}
-	}
-	body, err := a.channelArtifacts.ReadContentAt(entry, version)
+	body, err := a.channelArtifacts.ReadContent(auth.SessionIDFromContext(c.Request.Context()), entry, version, artifactRenderLimit(a.mmClient.GetConfig()))
 	if err != nil {
 		a.logArtifactError("Failed to read channel artifact", err, entry.ID)
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	if name == "" {
-		name = entry.Title + ".html"
-	}
 	h := c.Writer.Header()
-	h.Set("Content-Disposition", attachmentDisposition(name))
+	h.Set("Content-Disposition", attachmentDisposition(entry.Title+".html"))
 	h.Set("X-Content-Type-Options", "nosniff")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
 }
@@ -750,51 +470,4 @@ func attachmentDisposition(name string) string {
 		cleaned = "artifact.html"
 	}
 	return `attachment; filename="` + cleaned + `"`
-}
-
-// lookupPostArtifact runs the same authorization as authorizeArtifact but
-// returns the post as well. On failure it writes the response.
-func (a *API) lookupPostArtifact(c *gin.Context, userID, fileID string) (client mmapi.Client, info *model.FileInfo, post *model.Post, ok bool) {
-	h := c.Writer.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "private, no-store")
-
-	if !a.config.EnableHTMLArtifacts() {
-		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, false
-	}
-	if !model.IsValidId(fileID) {
-		c.String(http.StatusBadRequest, "invalid file id")
-		return nil, nil, nil, false
-	}
-	if a.mmClient == nil {
-		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, false
-	}
-	client = mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
-	info, err := client.GetFileInfo(fileID)
-	if err != nil || info == nil || !isArtifactExtension(info) {
-		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, false
-	}
-	if info.PostId == "" {
-		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, false
-	}
-	post, err = client.GetPost(info.PostId)
-	if err != nil || post == nil || !slices.Contains(post.FileIds, fileID) {
-		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, false
-	}
-	if !client.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
-		c.String(http.StatusNotFound, "not found")
-		return nil, nil, nil, false
-	}
-	if a.config.DisableHumanChannelArtifacts() {
-		if a.bots == nil || !a.bots.IsAnyBot(post.UserId) {
-			c.String(http.StatusNotFound, "not found")
-			return nil, nil, nil, false
-		}
-	}
-	return client, info, post, true
 }

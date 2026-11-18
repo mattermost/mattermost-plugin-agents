@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useStore} from 'react-redux';
 import styled from 'styled-components';
@@ -9,7 +9,6 @@ import styled from 'styled-components';
 import {GlobalState} from '@mattermost/types/store';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {Button} from '@mattermost/compass-ui/components/button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {
     ArrowExpandIcon,
@@ -22,7 +21,6 @@ import {
 import {
     ChannelArtifactEntry,
     deleteChannelArtifact,
-    listChannelArtifacts,
     patchChannelArtifact,
 } from '@/client';
 import {getChannelArtifactsEnabled} from '@/selectors';
@@ -30,6 +28,7 @@ import {getChannelArtifactsEnabled} from '@/selectors';
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
 import {syncLibraryArtifactBookmarkTitle, unpinLibraryArtifactBookmark} from './bookmark';
+import {useChannelLibrary} from './library';
 
 export const ChannelArtifactsRHSTitle = () => (
     <FormattedMessage defaultMessage='Channel artifacts'/>
@@ -40,64 +39,23 @@ const ChannelArtifactsRHS = () => {
     const store = useStore<GlobalState>();
     const enabled = useSelector(getChannelArtifactsEnabled);
     const channelId = useSelector<GlobalState, string>((state) => state.entities.channels.currentChannelId);
-    const [entries, setEntries] = useState<ChannelArtifactEntry[]>([]);
-    const [canManage, setCanManage] = useState(false);
-    const [downloadEnabled, setDownloadEnabled] = useState(true);
-    const [renderEnabled, setRenderEnabled] = useState(true);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(false);
+    const library = useChannelLibrary(channelId);
     const [bookmarkWarning, setBookmarkWarning] = useState(false);
     const [deleteError, setDeleteError] = useState(false);
     const [openId, setOpenId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
-    const refreshSeq = useRef(0);
     const renamePending = useRef(false);
     const skipRenameBlur = useRef(false);
 
-    const refresh = useCallback(() => {
-        const seq = ++refreshSeq.current;
-        if (!enabled || !channelId) {
-            setEntries([]);
-            return;
-        }
-        setLoading(true);
-        setError(false);
-        listChannelArtifacts(channelId).then((resp) => {
-            if (seq !== refreshSeq.current) {
-                return;
-            }
-            setEntries(resp.entries || []);
-            setCanManage(Boolean(resp.can_manage));
-            setDownloadEnabled(resp.download_enabled !== false);
-            setRenderEnabled(resp.render_enabled !== false);
-        }, () => {
-            if (seq !== refreshSeq.current) {
-                return;
-            }
-            setError(true);
-            setEntries([]);
-        }).finally(() => {
-            if (seq === refreshSeq.current) {
-                setLoading(false);
-            }
-        });
-    }, [enabled, channelId]);
-
-    useEffect(() => {
-        refresh();
-    }, [refresh]);
-
-    useEffect(() => {
+    const [lastChannelId, setLastChannelId] = useState(channelId);
+    if (lastChannelId !== channelId) {
+        setLastChannelId(channelId);
         setBookmarkWarning(false);
         setDeleteError(false);
-    }, [channelId]);
-
-    useEffect(() => {
-        const onCreated = () => refresh();
-        window.addEventListener('focus', onCreated);
-        return () => window.removeEventListener('focus', onCreated);
-    }, [refresh]);
+        setOpenId(null);
+        setEditingId(null);
+    }
 
     if (!enabled) {
         return (
@@ -107,6 +65,9 @@ const ChannelArtifactsRHS = () => {
         );
     }
 
+    const entries = library.entries;
+    const loading = library.status === 'loading';
+    const error = library.status === 'error';
     const openEntry = entries.find((e) => e.id === openId) || null;
 
     const startRename = (entry: ChannelArtifactEntry) => {
@@ -128,6 +89,7 @@ const ChannelArtifactsRHS = () => {
         setBookmarkWarning(false);
         try {
             const entry = await patchChannelArtifact(id, {title: next});
+            store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
             if (channelId) {
                 try {
                     await syncLibraryArtifactBookmarkTitle(store.getState(), channelId, id, entry.title || next, store.dispatch);
@@ -135,86 +97,31 @@ const ChannelArtifactsRHS = () => {
                     setBookmarkWarning(true);
                 }
             }
-            refresh();
         } catch {
-            // best effort
+            // The title stays as it was; the list is unchanged.
         } finally {
             renamePending.current = false;
             setEditingId(null);
         }
     };
 
-    const unpinRemoved = async (id: string) => {
-        if (!channelId) {
+    const onDelete = async (entry: ChannelArtifactEntry) => {
+        // Destructive confirm: removes the entry and every version record.
+        if (!window.confirm(intl.formatMessage({defaultMessage: 'Remove this artifact from the channel? The original message and file are not affected.'}))) { // eslint-disable-line no-alert
             return;
         }
-        try {
-            await unpinLibraryArtifactBookmark(store.getState(), channelId, id, store.dispatch);
-        } catch {
-            // The library row is already gone; the pin is removed on the next open.
-        }
-    };
-
-    const onDelete = async (entry: ChannelArtifactEntry, e: React.MouseEvent) => {
-        const version = entry.version || 1;
-        const purge = e.shiftKey || (e.nativeEvent as MouseEvent).altKey;
-
-        if (purge) {
-            // Destructive confirm: intentional for purge-all.
-            if (!window.confirm(intl.formatMessage({defaultMessage: 'Permanently delete this artifact and all versions? This cannot be undone.'}))) { // eslint-disable-line no-alert
-                return;
-            }
-            setDeleteError(false);
-            try {
-                await deleteChannelArtifact(entry.id, {purge: true});
-                await unpinRemoved(entry.id);
-                if (openId === entry.id) {
-                    setOpenId(null);
-                }
-                refresh();
-            } catch {
-                setDeleteError(true);
-            }
-            return;
-        }
-
-        if (version > 1) {
-            // Destructive confirm: revert head to previous version.
-            if (!window.confirm(intl.formatMessage({defaultMessage: 'Remove current version and restore the previous one?'}))) { // eslint-disable-line no-alert
-                return;
-            }
-        } else if (!window.confirm(intl.formatMessage({defaultMessage: 'Remove this artifact from the channel? The original message is not affected.'}))) { // eslint-disable-line no-alert -- sole version
-            return;
-        }
-
         setDeleteError(false);
         try {
             await deleteChannelArtifact(entry.id);
-            if (version <= 1) {
-                await unpinRemoved(entry.id);
-            }
+            store.dispatch({type: 'CHANNEL_ARTIFACT_REMOVE', channelId, id: entry.id});
             if (openId === entry.id) {
                 setOpenId(null);
             }
-            refresh();
-        } catch {
-            setDeleteError(true);
-        }
-    };
-
-    const onPurge = async (entry: ChannelArtifactEntry) => {
-        // Destructive confirm: purge every version.
-        if (!window.confirm(intl.formatMessage({defaultMessage: 'Permanently delete this artifact and all versions? This cannot be undone.'}))) { // eslint-disable-line no-alert
-            return;
-        }
-        setDeleteError(false);
-        try {
-            await deleteChannelArtifact(entry.id, {purge: true});
-            await unpinRemoved(entry.id);
-            if (openId === entry.id) {
-                setOpenId(null);
+            try {
+                await unpinLibraryArtifactBookmark(store.getState(), channelId, entry.id, store.dispatch);
+            } catch {
+                // The entry is already gone; a leftover pin explains itself when opened.
             }
-            refresh();
         } catch {
             setDeleteError(true);
         }
@@ -223,7 +130,7 @@ const ChannelArtifactsRHS = () => {
     return (
         <Container data-testid='channel-artifacts-rhs'>
             <Intro>
-                <FormattedMessage defaultMessage='Shared interactive HTML apps built by agents. Open one anytime — like a Claude Artifact pinned to this channel. Replacing content keeps prior versions you can restore from the fullscreen viewer.'/>
+                <FormattedMessage defaultMessage="Interactive HTML apps saved to this channel. The channel keeps a link to each app's original message, not a copy, so an app is available only while that message exists. Open one to see earlier versions."/>
             </Intro>
             <Toolbar>
                 <Count>
@@ -236,7 +143,7 @@ const ChannelArtifactsRHS = () => {
                     size='x-small'
                     icon={<Icon glyph={<RefreshIcon/>}/>}
                     aria-label={intl.formatMessage({defaultMessage: 'Refresh'})}
-                    onClick={refresh}
+                    onClick={library.reload}
                     data-testid='channel-artifacts-refresh'
                 />
             </Toolbar>
@@ -258,7 +165,7 @@ const ChannelArtifactsRHS = () => {
             )}
             {!loading && !error && entries.length === 0 && (
                 <Empty data-testid='channel-artifacts-empty'>
-                    <FormattedMessage defaultMessage='No artifacts yet. When an agent builds something useful, a channel admin can pin it from the artifact card.'/>
+                    <FormattedMessage defaultMessage='No artifacts yet. When an agent builds something useful, select the pin on its artifact card to save it here.'/>
                 </Empty>
             )}
             <List>
@@ -301,7 +208,7 @@ const ChannelArtifactsRHS = () => {
                                 <Title
                                     title={entry.title}
                                     onDoubleClick={() => {
-                                        if (canManage) {
+                                        if (library.canEdit) {
                                             startRename(entry);
                                         }
                                     }}
@@ -312,10 +219,23 @@ const ChannelArtifactsRHS = () => {
                             <Sub>
                                 {entry.source_agent_display_name ? `${entry.source_agent_display_name} · ` : ''}
                                 {new Date(entry.update_at || entry.create_at).toLocaleString()}
-                                {entry.version && entry.version > 1 ? ` · v${entry.version}` : ''}
+                                {entry.version > 1 ? ` · v${entry.version}` : ''}
+                                {!entry.available && (
+                                    <>
+                                        {' · '}
+                                        <Unavailable data-testid={`channel-artifact-unavailable-${entry.id}`}>
+                                            <FormattedMessage defaultMessage='Unavailable'/>
+                                        </Unavailable>
+                                    </>
+                                )}
                             </Sub>
+                            {!entry.available && (
+                                <Sub>
+                                    <FormattedMessage defaultMessage='The original message or file was deleted. Open it to see earlier versions that still exist.'/>
+                                </Sub>
+                            )}
                         </Meta>
-                        {(entry.version || 1) > 1 && (
+                        {entry.version > 1 && (
                             <Tag
                                 size='x-small'
                                 type='info'
@@ -330,38 +250,26 @@ const ChannelArtifactsRHS = () => {
                                 onClick={() => setOpenId(entry.id)}
                                 data-testid={`channel-artifact-open-${entry.id}`}
                             />
-                            {canManage && (
-                                <>
-                                    <IconButton
-                                        size='x-small'
-                                        icon={<Icon glyph={<PencilOutlineIcon/>}/>}
-                                        aria-label={intl.formatMessage({defaultMessage: 'Rename'})}
-                                        onClick={() => startRename(entry)}
-                                        data-testid={`channel-artifact-edit-${entry.id}`}
-                                    />
-                                    <IconButton
-                                        size='x-small'
-                                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                                        aria-label={intl.formatMessage({defaultMessage: 'Remove'})}
-                                        title={intl.formatMessage({defaultMessage: 'Remove current version (Shift+click to purge all)'})}
-                                        onClick={(e) => onDelete(entry, e)}
-                                        data-testid={`channel-artifact-delete-${entry.id}`}
-                                    />
-                                </>
+                            {library.canEdit && (
+                                <IconButton
+                                    size='x-small'
+                                    icon={<Icon glyph={<PencilOutlineIcon/>}/>}
+                                    aria-label={intl.formatMessage({defaultMessage: 'Rename'})}
+                                    onClick={() => startRename(entry)}
+                                    data-testid={`channel-artifact-edit-${entry.id}`}
+                                />
+                            )}
+                            {library.canDelete && (
+                                <IconButton
+                                    size='x-small'
+                                    icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                                    aria-label={intl.formatMessage({defaultMessage: 'Remove'})}
+                                    title={intl.formatMessage({defaultMessage: 'Remove from the channel'})}
+                                    onClick={() => onDelete(entry)}
+                                    data-testid={`channel-artifact-delete-${entry.id}`}
+                                />
                             )}
                         </Actions>
-                        {canManage && (entry.version || 1) > 1 && (
-                            <PurgeRow>
-                                <Button
-                                    emphasis='tertiary'
-                                    size='x-small'
-                                    onClick={() => onPurge(entry)}
-                                    data-testid={`channel-artifact-purge-${entry.id}`}
-                                >
-                                    <FormattedMessage defaultMessage='Delete all versions…'/>
-                                </Button>
-                            </PurgeRow>
-                        )}
                     </Card>
                 ))}
             </List>
@@ -371,16 +279,15 @@ const ChannelArtifactsRHS = () => {
                     fileName={openEntry.title}
                     artifactKind='library'
                     startedByClick={true}
-                    canManage={canManage}
-                    downloadEnabled={downloadEnabled}
-                    renderEnabled={renderEnabled}
-                    headVersion={openEntry.version || 1}
+                    canEdit={library.canEdit}
+                    canDelete={library.canDelete}
+                    headVersion={openEntry.version}
                     onClose={() => setOpenId(null)}
                 />
             )}
-            {canManage && (
+            {library.canAdd && (
                 <Hint>
-                    <FormattedMessage defaultMessage='Tip: save a new agent HTML file and choose the library entry to update it in place. Use the pin checkbox when saving, or Bookmarks → Add channel artifact.'/>
+                    <FormattedMessage defaultMessage='Tip: select the pin on an agent HTML artifact to save it here. Saving a revised file adds a new version. Ask an agent to save or update one for you.'/>
                 </Hint>
             )}
         </Container>
@@ -475,12 +382,6 @@ const Actions = styled.div`
     gap: var(--spacing-xxs, 4px);
 `;
 
-const PurgeRow = styled.div`
-    flex: 1 0 100%;
-    display: flex;
-    justify-content: flex-end;
-`;
-
 const Empty = styled.div`
     padding: var(--spacing-xl, 24px) var(--spacing-xs, 8px);
     color: rgba(var(--center-channel-color-rgb), 0.72);
@@ -502,4 +403,9 @@ const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.56);
     font-size: 12px;
     line-height: 16px;
+`;
+
+const Unavailable = styled.span`
+    color: var(--error-text);
+    font-weight: 600;
 `;

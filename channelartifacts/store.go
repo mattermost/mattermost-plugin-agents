@@ -4,410 +4,339 @@
 package channelartifacts
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
-	"strconv"
-	"unicode/utf8"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/jmoiron/sqlx"
 )
 
-const (
-	keyPrefixIdx          = "cart_idx_"
-	keyPrefixMeta         = "cart_meta_"
-	keyPrefixBlob         = "cart_blob_"
-	keyPrefixSHA          = "cart_sha_"
-	keyPrefixHist         = "cart_hist_"
-	keySiteCount          = "cart_site_count"
-	keyRetentionCursor    = "cart_retention_cursor"
-	retentionPageSize     = 100
-	defaultRetentionBatch = 100
-)
+// sourceAvailable is true when the version's source file still exists on its
+// post and neither the file nor the post is deleted. It reads Mattermost's own
+// tables, so source deletion and data retention show up without any copy here.
+const sourceAvailable = `EXISTS (
+	SELECT 1 FROM FileInfo f JOIN Posts p ON p.Id = f.PostId
+	WHERE f.Id = v.FileID AND f.PostId = v.PostID AND f.DeleteAt = 0 AND p.DeleteAt = 0)`
 
-var (
-	ErrNotFound        = errors.New("channel artifact not found")
-	ErrConflict        = errors.New("channel artifact index conflict")
-	ErrLimitReached    = errors.New("channel artifact limit reached")
-	ErrDuplicate       = errors.New("identical artifact already saved")
-	ErrInvalidInput    = errors.New("invalid channel artifact input")
-	ErrTooLarge        = errors.New("channel artifact too large")
-	ErrNotPermutation  = errors.New("order is not a permutation of current ids")
-	ErrCleanupDeferred = errors.New("channel artifact cleanup deferred")
-)
+const entrySelect = `
+SELECT a.ID, a.ChannelID, a.Title, a.HeadVersion AS Version, v.SHA256, v.Size,
+	v.PostID AS SourcePostID, v.FileID AS SourceFileID, v.SourceBotUserID,
+	a.CreatedBy, a.CreateAt, a.UpdatedBy, a.UpdateAt, ` + sourceAvailable + ` AS Available
+FROM Agents_ChannelArtifacts a
+JOIN Agents_ChannelArtifactVersions v ON v.ArtifactID = a.ID AND v.Version = a.HeadVersion`
 
-// Store persists channel artifact catalog entries and gzipped HTML blobs in plugin KV.
+const versionSelect = `
+SELECT v.Version, v.SHA256, v.Size, v.PostID AS SourcePostID, v.FileID AS SourceFileID,
+	v.SourceBotUserID, v.CreatedBy, v.CreateAt, (v.Version = a.HeadVersion) AS Head,
+	` + sourceAvailable + ` AS Available
+FROM Agents_ChannelArtifactVersions v
+JOIN Agents_ChannelArtifacts a ON a.ID = v.ArtifactID`
+
+// Store persists artifact metadata and per-version source references in
+// Postgres. It never holds artifact content.
 type Store struct {
-	kv mmapi.Client
+	db *sqlx.DB
 }
 
-func NewStore(kv mmapi.Client) *Store {
-	return &Store{kv: kv}
+func NewStore(db *sqlx.DB) *Store {
+	return &Store{db: db}
 }
 
-func indexKey(channelID string) string { return keyPrefixIdx + channelID }
-func metaKey(id string) string         { return keyPrefixMeta + id }
-func histKey(id string) string         { return keyPrefixHist + id }
-func shaKey(channelID, sha string) string {
-	return keyPrefixSHA + channelID + "_" + sha
+// NewVersion is the source reference recorded for one version.
+type NewVersion struct {
+	PostID          string
+	FileID          string
+	SHA256          string
+	Size            int64
+	SourceBotUserID string
+	UserID          string
+	At              int64
 }
 
-func validateTitle(title string) error {
-	n := utf8.RuneCountInString(title)
-	if n == 0 || n > MaxTitleRunes {
-		return ErrInvalidInput
+func (s *Store) tx(fn func(tx *sqlx.Tx) error) error {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
 }
 
-func validateDescription(description string) error {
-	if utf8.RuneCountInString(description) > MaxDescriptionRunes {
-		return ErrInvalidInput
+// lockChannel serializes writes that count or compare a channel's artifacts.
+func lockChannel(tx *sqlx.Tx, channelID string) error {
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, "channelartifacts:"+channelID); err != nil {
+		return fmt.Errorf("failed to lock channel artifacts: %w", err)
 	}
 	return nil
 }
 
-func resolveMaxPerChannel(maxPerChannel int) int {
-	if maxPerChannel <= 0 {
-		return DefaultMaxPerChannel
+func (s *Store) List(channelID string) ([]*Entry, error) {
+	entries := []*Entry{}
+	if err := s.db.Select(&entries, entrySelect+` WHERE a.ChannelID = $1 ORDER BY a.CreateAt DESC, a.ID`, channelID); err != nil {
+		return nil, fmt.Errorf("failed to list channel artifacts: %w", err)
 	}
-	return maxPerChannel
+	return entries, nil
 }
 
 func (s *Store) Get(id string) (*Entry, error) {
 	var entry Entry
-	err := s.kv.KVGet(metaKey(id), &entry)
-	if mmapi.IsKVNotFound(err) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
+	if err := s.db.Get(&entry, entrySelect+` WHERE a.ID = $1`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get channel artifact: %w", err)
 	}
 	return &entry, nil
 }
 
-// Save writes a new artifact: blobs, meta, history, sha index, and channel index.
-// maxPerChannel 0 uses DefaultMaxPerChannel. maxSitewide 0 means unlimited.
-func (s *Store) Save(entry *Entry, content []byte, maxSize int64, maxPerChannel, maxSitewide int) error {
-	if entry == nil || !model.IsValidId(entry.ChannelID) || !model.IsValidId(entry.ID) {
-		return ErrInvalidInput
+func (s *Store) Versions(id string) ([]VersionRecord, error) {
+	versions := []VersionRecord{}
+	if err := s.db.Select(&versions, versionSelect+` WHERE v.ArtifactID = $1 ORDER BY v.Version DESC`, id); err != nil {
+		return nil, fmt.Errorf("failed to list channel artifact versions: %w", err)
 	}
-	if err := validateTitle(entry.Title); err != nil {
-		return err
-	}
-	if err := validateDescription(entry.Description); err != nil {
-		return err
-	}
-	if int64(len(content)) == 0 {
-		return ErrInvalidInput
-	}
-	if int64(len(content)) > maxSize {
-		return ErrTooLarge
-	}
-	maxPerChannel = resolveMaxPerChannel(maxPerChannel)
+	return versions, nil
+}
 
-	sum := sha256.Sum256(content)
-	sha := hex.EncodeToString(sum[:])
-	if existing, err := s.FindBySHA(entry.ChannelID, sha); err == nil && existing != "" {
-		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
-	} else if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
+func (s *Store) Version(id string, version int) (*VersionRecord, error) {
+	var rec VersionRecord
+	if err := s.db.Get(&rec, versionSelect+` WHERE v.ArtifactID = $1 AND v.Version = $2`, id, version); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get channel artifact version: %w", err)
 	}
+	return &rec, nil
+}
 
-	chunks, err := gzipChunks(content)
+// headWithSHA returns the artifact in the channel whose current version has sha.
+func headWithSHA(tx *sqlx.Tx, channelID, sha string) (string, error) {
+	var id string
+	err := tx.Get(&id, `
+		SELECT a.ID FROM Agents_ChannelArtifacts a
+		JOIN Agents_ChannelArtifactVersions v ON v.ArtifactID = a.ID AND v.Version = a.HeadVersion
+		WHERE a.ChannelID = $1 AND v.SHA256 = $2 LIMIT 1`, channelID, sha)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
 	if err != nil {
-		return err
+		return "", fmt.Errorf("failed to look up identical channel artifact: %w", err)
 	}
+	return id, nil
+}
 
-	if entry.Version < 1 {
-		entry.Version = 1
-	}
-	entry.Size = int64(len(content))
-	entry.SHA256 = sha
-	entry.Encoding = "gzip"
-	entry.ChunkCount = len(chunks)
-	entry.SchemaVersion = schemaVersion
-
-	if err := s.writeVersionBlobs(entry.ID, entry.Version, chunks); err != nil {
-		return err
-	}
-	hist := &VersionHistory{
-		Versions:    []VersionRecord{versionRecordFromEntry(entry, false)},
-		NextVersion: entry.Version + 1,
-		HeadVersion: entry.Version,
-	}
-	if err := s.saveHistory(entry.ID, hist); err != nil {
-		s.deleteVersionBlobs(hist.Versions[0], entry.ID)
-		return err
-	}
-	if err := s.kv.KVSet(metaKey(entry.ID), entry); err != nil {
-		s.deleteAllVersionBlobs(hist, entry.ID)
-		_ = s.kv.KVDelete(histKey(entry.ID))
-		return err
-	}
-	claimed, claimErr := s.kv.KVCompareAndSet(shaKey(entry.ChannelID, sha), nil, entry.ID)
-	if claimErr != nil || !claimed {
-		_ = s.kv.KVDelete(metaKey(entry.ID))
-		s.deleteAllVersionBlobs(hist, entry.ID)
-		_ = s.kv.KVDelete(histKey(entry.ID))
-		if claimErr != nil {
-			return claimErr
-		}
-		existing, findErr := s.FindBySHA(entry.ChannelID, sha)
-		if findErr != nil || existing == "" {
-			return ErrDuplicate
-		}
-		return fmt.Errorf("%w: %s", ErrDuplicate, existing)
-	}
-
-	if err := s.commitNewArtifact(entry, maxPerChannel, maxSitewide); err != nil {
-		idx, _, indexErr := s.getIndex(entry.ChannelID)
-		if indexErr != nil || !slices.Contains(idx.IDs, entry.ID) {
-			_ = s.deleteSHAIfOwner(entry.ChannelID, sha, entry.ID)
-			_ = s.kv.KVDelete(metaKey(entry.ID))
-			s.deleteAllVersionBlobs(hist, entry.ID)
-			_ = s.kv.KVDelete(histKey(entry.ID))
-		}
-		return err
+func insertVersion(tx *sqlx.Tx, id string, version int, v NewVersion) error {
+	_, err := tx.Exec(`
+		INSERT INTO Agents_ChannelArtifactVersions
+			(ArtifactID, Version, PostID, FileID, SHA256, Size, SourceBotUserID, CreatedBy, CreateAt)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, version, v.PostID, v.FileID, v.SHA256, v.Size, v.SourceBotUserID, v.UserID, v.At)
+	if err != nil {
+		return fmt.Errorf("failed to insert channel artifact version: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) loadMetaRaw(id string) (*Entry, []byte, error) {
-	var raw []byte
-	err := s.kv.KVGet(metaKey(id), &raw)
-	if mmapi.IsKVNotFound(err) {
-		return nil, nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	var entry Entry
-	if err := json.Unmarshal(raw, &entry); err != nil {
-		return nil, nil, err
-	}
-	return &entry, raw, nil
+// Create inserts a new artifact with version 1. It fails with ErrLimitReached
+// when the channel already holds maxPerChannel artifacts, and with a
+// DuplicateError when a current version in the channel has the same SHA-256.
+func (s *Store) Create(id, channelID, title string, v NewVersion, maxPerChannel int) error {
+	return s.tx(func(tx *sqlx.Tx) error {
+		if err := lockChannel(tx, channelID); err != nil {
+			return err
+		}
+		var count int
+		if err := tx.Get(&count, `SELECT COUNT(*) FROM Agents_ChannelArtifacts WHERE ChannelID = $1`, channelID); err != nil {
+			return fmt.Errorf("failed to count channel artifacts: %w", err)
+		}
+		if count >= maxPerChannel {
+			return ErrLimitReached
+		}
+		dup, err := headWithSHA(tx, channelID, v.SHA256)
+		if err != nil {
+			return err
+		}
+		if dup != "" {
+			return &DuplicateError{ArtifactID: dup}
+		}
+		_, err = tx.Exec(`
+			INSERT INTO Agents_ChannelArtifacts (ID, ChannelID, Title, HeadVersion, CreatedBy, CreateAt, UpdatedBy, UpdateAt)
+			VALUES ($1, $2, $3, 1, $4, $5, $4, $5)`, id, channelID, title, v.UserID, v.At)
+		if err != nil {
+			return fmt.Errorf("failed to insert channel artifact: %w", err)
+		}
+		return insertVersion(tx, id, 1, v)
+	})
 }
 
-func (s *Store) saveMetaCAS(id string, oldRaw []byte, entry *Entry) error {
-	var old any
-	if oldRaw != nil {
-		old = oldRaw
-	}
-	ok, err := s.kv.KVCompareAndSet(metaKey(id), old, entry)
+// AddVersion records v as the next version of the artifact and makes it
+// current. Versions beyond the newest versionsToKeep are deleted, never the
+// current one. A DuplicateError is returned when a current version in the
+// channel, including this artifact's own, already has the same SHA-256.
+func (s *Store) AddVersion(id string, v NewVersion, versionsToKeep int) error {
+	return s.tx(func(tx *sqlx.Tx) error {
+		var channelID string
+		if err := tx.Get(&channelID, `SELECT ChannelID FROM Agents_ChannelArtifacts WHERE ID = $1`, id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("failed to get channel artifact: %w", err)
+		}
+		if err := lockChannel(tx, channelID); err != nil {
+			return err
+		}
+		dup, err := headWithSHA(tx, channelID, v.SHA256)
+		if err != nil {
+			return err
+		}
+		if dup != "" {
+			return &DuplicateError{ArtifactID: dup}
+		}
+		var next int
+		if err = tx.Get(&next, `SELECT COALESCE(MAX(Version), 0) + 1 FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id); err != nil {
+			return fmt.Errorf("failed to number channel artifact version: %w", err)
+		}
+		if err = insertVersion(tx, id, next, v); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE Agents_ChannelArtifacts SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4 WHERE ID = $1`, id, next, v.UserID, v.At); err != nil {
+			return fmt.Errorf("failed to update channel artifact: %w", err)
+		}
+		_, err = tx.Exec(`
+			DELETE FROM Agents_ChannelArtifactVersions
+			WHERE ArtifactID = $1 AND Version <> $2
+			AND Version NOT IN (
+				SELECT Version FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1 ORDER BY Version DESC LIMIT $3)`,
+			id, next, versionsToKeep)
+		if err != nil {
+			return fmt.Errorf("failed to prune channel artifact versions: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Store) Rename(id, title, userID string, at int64) error {
+	ok, err := s.execRows(`UPDATE Agents_ChannelArtifacts SET Title = $2, UpdatedBy = $3, UpdateAt = $4 WHERE ID = $1`, id, title, userID, at)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return ErrConflict
+		return ErrNotFound
 	}
 	return nil
 }
 
-// casContentHead writes content fields onto the stored head. Title and
-// description stay as stored, so a patch that landed during the upload is kept.
-func (s *Store) casContentHead(expectedVersion int, expectedSHA string, entry *Entry) error {
-	for range 8 {
-		stored, raw, err := s.loadMetaRaw(entry.ID)
-		if err != nil {
-			return err
-		}
-		if stored.Purging || stored.Version != expectedVersion || stored.SHA256 != expectedSHA {
-			return ErrConflict
-		}
-		title, description := stored.Title, stored.Description
-		stored.VersionSnapshot = entry.VersionSnapshot
-		stored.Title = title
-		stored.Description = description
-		stored.Encoding = entry.Encoding
-		stored.SchemaVersion = entry.SchemaVersion
-		if err := s.saveMetaCAS(entry.ID, raw, stored); err != nil {
-			if errors.Is(err, ErrConflict) {
-				continue
-			}
-			return err
-		}
-		*entry = *stored
-		return nil
-	}
-	return ErrConflict
-}
-
-// casHead writes entry only while the stored head still has expectedVersion and
-// expectedSHA. A newer content write returns ErrConflict instead of being overwritten.
-func (s *Store) casHead(expectedVersion int, expectedSHA string, entry *Entry) error {
-	for range 8 {
-		stored, raw, err := s.loadMetaRaw(entry.ID)
-		if err != nil {
-			return err
-		}
-		if stored.Purging || stored.Version != expectedVersion || stored.SHA256 != expectedSHA {
-			return ErrConflict
-		}
-		if err := s.saveMetaCAS(entry.ID, raw, entry); err != nil {
-			if errors.Is(err, ErrConflict) {
-				continue
-			}
-			return err
-		}
-		return nil
-	}
-	return ErrConflict
-}
-
-// Patch applies a rename to the current head and retries when the metadata
-// compare-and-set loses. apply reports a permanent error, including a
-// validation failure, and that error is returned without another attempt.
-func (s *Store) Patch(id string, apply func(*Entry) error) (*Entry, error) {
-	if apply == nil {
-		return nil, ErrInvalidInput
-	}
-	for range 8 {
-		entry, raw, err := s.loadMetaRaw(id)
-		if err != nil {
-			return nil, err
-		}
-		if applyErr := apply(entry); applyErr != nil {
-			return nil, applyErr
-		}
-		if saveErr := s.saveMetaCAS(id, raw, entry); saveErr != nil {
-			if errors.Is(saveErr, ErrConflict) {
-				continue
-			}
-			return nil, saveErr
-		}
-		return entry, nil
-	}
-	return nil, ErrConflict
-}
-
-func (s *Store) UpdateMeta(entry *Entry) error {
-	if entry == nil || !model.IsValidId(entry.ID) {
-		return ErrInvalidInput
-	}
-	if err := validateTitle(entry.Title); err != nil {
+// SetHead makes an existing version current.
+func (s *Store) SetHead(id string, version int, userID string, at int64) error {
+	ok, err := s.execRows(`
+		UPDATE Agents_ChannelArtifacts SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4
+		WHERE ID = $1 AND EXISTS (SELECT 1 FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1 AND Version = $2)`,
+		id, version, userID, at)
+	if err != nil {
 		return err
 	}
-	if err := validateDescription(entry.Description); err != nil {
-		return err
-	}
-	return s.casHead(entry.Version, entry.SHA256, entry)
-}
-
-// Purge removes the artifact, every version blob, history, and sha index entry.
-func (s *Store) Purge(entry *Entry) error {
-	if entry == nil {
-		return ErrInvalidInput
-	}
-	if err := s.markPurging(entry, 0); err != nil {
-		return err
-	}
-	return s.finishPurge(entry)
-}
-
-// purgeIfHeadUnchanged purges only while the stored head is still entry.Version.
-// A replacement that committed after the caller counted one version returns
-// ErrConflict instead of deleting that replacement with the artifact.
-func (s *Store) purgeIfHeadUnchanged(entry *Entry) error {
-	if entry == nil {
-		return ErrInvalidInput
-	}
-	if err := s.markPurging(entry, entry.Version); err != nil {
-		return err
-	}
-	return s.finishPurge(entry)
-}
-
-func (s *Store) finishPurge(entry *Entry) error {
-	hist, histErr := s.loadHistory(entry.ID)
-	if histErr != nil && !errors.Is(histErr, ErrNotFound) {
-		return histErr
-	}
-	if hist != nil {
-		if err := s.deleteAllVersionBlobKeys(hist, entry.ID); err != nil {
-			return err
-		}
-	} else {
-		if err := s.deleteVersionBlobKeys(versionRecordFromEntry(entry, true), entry.ID); err != nil {
-			return err
-		}
-		if err := s.deleteVersionBlobKeys(versionRecordFromEntry(entry, false), entry.ID); err != nil {
-			return err
-		}
-	}
-	if err := s.deleteSHAIfOwner(entry.ChannelID, entry.SHA256, entry.ID); err != nil {
-		return err
-	}
-	if err := s.kv.KVDelete(histKey(entry.ID)); err != nil {
-		return err
-	}
-	// Drop the index id before the metadata row. A failed count puts the id
-	// back while the row still exists, so a retry can load it. A row delete
-	// that fails after the drop puts the id and the count back for the sweep.
-	dropped, indexErr := s.finishPurgeIndex(entry)
-	if indexErr != nil {
-		return indexErr
-	}
-	if deleteErr := s.kv.KVDelete(metaKey(entry.ID)); deleteErr != nil {
-		if !dropped {
-			return deleteErr
-		}
-		if putErr := s.restorePurgedIndexID(entry.ChannelID, entry.ID); putErr != nil {
-			return errors.Join(deleteErr, putErr)
-		}
-		if countErr := s.adjustSiteCount(1); countErr != nil {
-			if dropErr := s.dropIndexID(entry.ChannelID, entry.ID); dropErr != nil {
-				return errors.Join(deleteErr, countErr, dropErr)
-			}
-			return errors.Join(deleteErr, countErr)
-		}
-		return deleteErr
+	if !ok {
+		return ErrNotFound
 	}
 	return nil
 }
 
-// markPurging sets the purge flag. expectedVersion 0 accepts any head. Any
-// other value refuses a head that has since moved, so the caller can delete
-// that head instead of purging the artifact.
-func (s *Store) markPurging(entry *Entry, expectedVersion int) error {
-	for range 8 {
-		stored, raw, err := s.loadMetaRaw(entry.ID)
-		if errors.Is(err, ErrNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if expectedVersion != 0 && stored.Version != expectedVersion {
-			return ErrConflict
-		}
-		if stored.Purging {
-			*entry = *stored
-			return nil
-		}
-		stored.Purging = true
-		if err := s.saveMetaCAS(entry.ID, raw, stored); err != nil {
-			if errors.Is(err, ErrConflict) {
-				continue
+// DeleteVersion removes one version row. When it was the current version the
+// newest remaining one becomes current. The last remaining version cannot be
+// deleted; purge the artifact instead.
+func (s *Store) DeleteVersion(id string, version int, userID string, at int64) error {
+	return s.tx(func(tx *sqlx.Tx) error {
+		var head int
+		if err := tx.Get(&head, `SELECT HeadVersion FROM Agents_ChannelArtifacts WHERE ID = $1 FOR UPDATE`, id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
 			}
-			return err
+			return fmt.Errorf("failed to get channel artifact: %w", err)
 		}
-		*entry = *stored
+		var count int
+		if err := tx.Get(&count, `SELECT COUNT(*) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id); err != nil {
+			return fmt.Errorf("failed to count channel artifact versions: %w", err)
+		}
+		res, err := tx.Exec(`DELETE FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1 AND Version = $2`, id, version)
+		if err != nil {
+			return fmt.Errorf("failed to delete channel artifact version: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		if count <= 1 {
+			return ErrInvalidInput
+		}
+		if version != head {
+			return nil
+		}
+		_, err = tx.Exec(`
+			UPDATE Agents_ChannelArtifacts
+			SET HeadVersion = (SELECT MAX(Version) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1),
+				UpdatedBy = $2, UpdateAt = $3
+			WHERE ID = $1`, id, userID, at)
+		if err != nil {
+			return fmt.Errorf("failed to move channel artifact head: %w", err)
+		}
 		return nil
+	})
+}
+
+// Purge deletes the artifact and all of its version rows. Source files and
+// posts are untouched.
+func (s *Store) Purge(id string) error {
+	return s.tx(func(tx *sqlx.Tx) error {
+		res, err := tx.Exec(`DELETE FROM Agents_ChannelArtifacts WHERE ID = $1`, id)
+		if err != nil {
+			return fmt.Errorf("failed to delete channel artifact: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(`DELETE FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id); err != nil {
+			return fmt.Errorf("failed to delete channel artifact versions: %w", err)
+		}
+		return nil
+	})
+}
+
+// SweepDeletedChannels deletes the rows of artifacts whose channel no longer
+// exists in Mattermost. Archived channels keep their library. It returns the
+// number of artifacts removed.
+func (s *Store) SweepDeletedChannels() (int64, error) {
+	var removed int64
+	err := s.tx(func(tx *sqlx.Tx) error {
+		if _, err := tx.Exec(`
+			DELETE FROM Agents_ChannelArtifactVersions WHERE ArtifactID IN (
+				SELECT a.ID FROM Agents_ChannelArtifacts a
+				WHERE NOT EXISTS (SELECT 1 FROM Channels c WHERE c.Id = a.ChannelID))`); err != nil {
+			return fmt.Errorf("failed to sweep channel artifact versions: %w", err)
+		}
+		res, err := tx.Exec(`
+			DELETE FROM Agents_ChannelArtifacts a
+			WHERE NOT EXISTS (SELECT 1 FROM Channels c WHERE c.Id = a.ChannelID)`)
+		if err != nil {
+			return fmt.Errorf("failed to sweep channel artifacts: %w", err)
+		}
+		removed, _ = res.RowsAffected()
+		return nil
+	})
+	return removed, err
+}
+
+func (s *Store) execRows(query string, args ...any) (bool, error) {
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to update channel artifact: %w", err)
 	}
-	return ErrConflict
-}
-
-// Delete removes all versions of the artifact (alias for Purge).
-func (s *Store) Delete(entry *Entry) error {
-	return s.Purge(entry)
-}
-
-// VersionKeyString formats a version int for export maps.
-func VersionKeyString(version int) string {
-	return strconv.Itoa(version)
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	return n > 0, nil
 }

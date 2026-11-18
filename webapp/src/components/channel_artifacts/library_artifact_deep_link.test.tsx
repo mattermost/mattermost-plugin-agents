@@ -7,13 +7,14 @@ import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {combineReducers, createStore, type Store} from 'redux';
 
-import {listChannelArtifacts, type ChannelArtifactEntry, type ChannelArtifactList} from '@/client';
+import {getChannelArtifact, listChannelArtifacts, type ChannelArtifactEntry} from '@/client';
 import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 
 import LibraryArtifactDeepLink from './library_artifact_deep_link';
 
 jest.mock('@/client', () => ({
+    getChannelArtifact: jest.fn(),
     listChannelArtifacts: jest.fn(),
 }));
 
@@ -37,15 +38,15 @@ const channelId = 'channelid0123456789012345';
 const entry = {
     id: artifactId,
     channel_id: channelId,
-    team_id: 'teamid01234567890123456789',
     title: 'Notes',
     source_post_id: 'postid01234567890123456789',
     source_file_id: 'fileid01234567890123456789',
-    source_file_name: 'notes.html',
     source_bot_user_id: 'botid012345678901234567890',
     created_by: 'userid0123456789012345678',
     create_at: 1,
+    updated_by: 'userid0123456789012345678',
     update_at: 1,
+    available: true,
     size: 12,
     sha256: 'abc',
     version: 1,
@@ -90,31 +91,25 @@ function renderLink(): Store {
 
 describe('LibraryArtifactDeepLink', () => {
     beforeEach(() => {
+        jest.mocked(getChannelArtifact).mockReset();
         jest.mocked(listChannelArtifacts).mockReset();
+        jest.mocked(listChannelArtifacts).mockResolvedValue({entries: [], can_add: true, can_edit: true, can_delete: true, max_per_channel: 50});
         window.history.replaceState({}, '', `/test/channels/off-topic?mm_ai_library_artifact=${artifactId}`);
     });
 
     test('opens a library link after the feature flag and channel arrive', async () => {
-        const list: ChannelArtifactList = {
-            entries: [entry],
-            can_manage: true,
-            download_enabled: true,
-            render_enabled: true,
-        };
-        jest.mocked(listChannelArtifacts).mockResolvedValue(list);
+        jest.mocked(getChannelArtifact).mockResolvedValue(entry);
         const store = renderLink();
-        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(getChannelArtifact).not.toHaveBeenCalled();
         expect(window.location.search).toContain(artifactId);
 
         act(() => {
             store.dispatch({
                 type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
                 channelArtifactsEnabled: true,
-                channelArtifactDownloadEnabled: true,
-                channelArtifactRenderingEnabled: true,
             });
         });
-        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(getChannelArtifact).not.toHaveBeenCalled();
         expect(window.location.search).toContain(artifactId);
 
         act(() => {
@@ -122,7 +117,7 @@ describe('LibraryArtifactDeepLink', () => {
         });
         const viewer = await screen.findByTestId('html-artifact-fullscreen');
         expect(viewer.textContent).toBe(artifactId);
-        expect(listChannelArtifacts).toHaveBeenCalledWith(channelId);
+        expect(getChannelArtifact).toHaveBeenCalledWith(artifactId);
         await waitFor(() => expect(window.location.search).not.toContain('mm_ai_library_artifact'));
     });
 
@@ -141,18 +136,12 @@ describe('LibraryArtifactDeepLink', () => {
             });
         });
         expect(await screen.findByText('Channel artifacts are disabled on this server.')).toBeTruthy();
-        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(getChannelArtifact).not.toHaveBeenCalled();
         expect(window.location.search).not.toContain('mm_ai_library_artifact');
     });
 
     test('retries a library link after the list request fails', async () => {
-        const list: ChannelArtifactList = {
-            entries: [entry],
-            can_manage: true,
-            download_enabled: true,
-            render_enabled: true,
-        };
-        jest.mocked(listChannelArtifacts).mockRejectedValueOnce(new Error('down')).mockResolvedValue(list);
+        jest.mocked(getChannelArtifact).mockRejectedValueOnce(new Error('down')).mockResolvedValue(entry);
         const store = renderLink();
         act(() => {
             store.dispatch({
@@ -169,7 +158,7 @@ describe('LibraryArtifactDeepLink', () => {
         });
         expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
         expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
-        expect(listChannelArtifacts).toHaveBeenCalledTimes(2);
+        expect(getChannelArtifact).toHaveBeenCalledTimes(2);
     });
 
     test('shows the unavailable notice when the feature flag request fails', async () => {
@@ -179,19 +168,13 @@ describe('LibraryArtifactDeepLink', () => {
             store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
         });
         expect(await screen.findByText('This channel artifact is unavailable.')).toBeTruthy();
-        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(getChannelArtifact).not.toHaveBeenCalled();
         expect(window.location.search).not.toContain('mm_ai_library_artifact');
         expect(screen.queryByText('Channel artifacts are disabled on this server.')).toBeNull();
     });
 
     test('opens a library link when a refresh fails after the feature is known', async () => {
-        const list: ChannelArtifactList = {
-            entries: [entry],
-            can_manage: true,
-            download_enabled: true,
-            render_enabled: true,
-        };
-        jest.mocked(listChannelArtifacts).mockResolvedValue(list);
+        jest.mocked(getChannelArtifact).mockResolvedValue(entry);
         const store = renderLink();
         act(() => {
             store.dispatch({
@@ -203,16 +186,10 @@ describe('LibraryArtifactDeepLink', () => {
         });
         expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
         expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
-        expect(listChannelArtifacts).toHaveBeenCalledWith(channelId);
+        expect(getChannelArtifact).toHaveBeenCalledWith(artifactId);
     });
 
     test('opens the same library link again after the feature flag request recovers', async () => {
-        const list: ChannelArtifactList = {
-            entries: [entry],
-            can_manage: true,
-            download_enabled: true,
-            render_enabled: true,
-        };
         const listeners: Array<(location: {search?: string}) => void> = [];
         const previous = window.WebappUtils;
         window.WebappUtils = {
@@ -229,7 +206,7 @@ describe('LibraryArtifactDeepLink', () => {
                 replace: (next: string) => window.history.replaceState({}, '', next),
             },
         };
-        jest.mocked(listChannelArtifacts).mockResolvedValue(list);
+        jest.mocked(getChannelArtifact).mockResolvedValue(entry);
         try {
             const store = renderLink();
             act(() => {
@@ -253,17 +230,12 @@ describe('LibraryArtifactDeepLink', () => {
         }
     });
 
-    test('ignores a list response after the channel changes', async () => {
+    test('ignores an artifact response after the channel changes', async () => {
         const otherChannelId = 'otherchannel012345678901234';
-        let resolveFirst: ((value: ChannelArtifactList) => void) | null = null;
-        jest.mocked(listChannelArtifacts).mockImplementation((id: string) => {
-            if (id === channelId) {
-                return new Promise((resolve) => {
-                    resolveFirst = resolve;
-                });
-            }
-            return Promise.resolve({entries: [], can_manage: false, download_enabled: true, render_enabled: true});
-        });
+        let resolveFirst: ((value: ChannelArtifactEntry) => void) | null = null;
+        jest.mocked(getChannelArtifact).mockImplementation(() => new Promise((resolve) => {
+            resolveFirst = resolve;
+        }));
         const store = renderLink();
         act(() => {
             store.dispatch({
@@ -272,31 +244,20 @@ describe('LibraryArtifactDeepLink', () => {
             });
             store.dispatch({type: 'SET_CHANNEL', id: channelId});
         });
-        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledWith(channelId));
+        await waitFor(() => expect(getChannelArtifact).toHaveBeenCalledWith(artifactId));
 
         act(() => {
             store.dispatch({type: 'SET_CHANNEL', id: otherChannelId});
         });
         await act(async () => {
-            resolveFirst?.({
-                entries: [entry],
-                can_manage: true,
-                download_enabled: true,
-                render_enabled: true,
-            });
+            resolveFirst?.(entry);
         });
         expect(screen.queryByTestId('html-artifact-fullscreen')).toBeNull();
-        expect(listChannelArtifacts).toHaveBeenCalledWith(otherChannelId);
     });
 
     test('waits to open when the url names a channel redux has not selected', async () => {
         const townSquareId = 'townsquare012345678901234';
-        jest.mocked(listChannelArtifacts).mockResolvedValue({
-            entries: [entry],
-            can_manage: true,
-            download_enabled: true,
-            render_enabled: true,
-        });
+        jest.mocked(getChannelArtifact).mockResolvedValue(entry);
         const store = renderLink();
         act(() => {
             store.dispatch({
@@ -310,7 +271,7 @@ describe('LibraryArtifactDeepLink', () => {
                 team: {id: 'team1', name: 'test'},
             });
         });
-        expect(listChannelArtifacts).not.toHaveBeenCalled();
+        expect(getChannelArtifact).not.toHaveBeenCalled();
         expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
         expect(window.location.search).toContain(artifactId);
 
@@ -323,13 +284,13 @@ describe('LibraryArtifactDeepLink', () => {
             });
         });
         expect((await screen.findByTestId('html-artifact-fullscreen')).textContent).toBe(artifactId);
-        expect(listChannelArtifacts).toHaveBeenCalledTimes(1);
-        expect(listChannelArtifacts).toHaveBeenCalledWith(channelId);
+        expect(getChannelArtifact).toHaveBeenCalledTimes(1);
+        expect(getChannelArtifact).toHaveBeenCalledWith(artifactId);
     });
 
-    test('keeps the query when the url changes before a miss comes back', async () => {
-        let resolveFirst: ((value: ChannelArtifactList) => void) | null = null;
-        jest.mocked(listChannelArtifacts).mockImplementation(() => new Promise((resolve) => {
+    test('keeps the query when the url changes before a response for another channel comes back', async () => {
+        let resolveFirst: ((value: ChannelArtifactEntry) => void) | null = null;
+        jest.mocked(getChannelArtifact).mockImplementation(() => new Promise((resolve) => {
             resolveFirst = resolve;
         }));
         const store = renderLink();
@@ -345,26 +306,16 @@ describe('LibraryArtifactDeepLink', () => {
                 team: {id: 'team1', name: 'test'},
             });
         });
-        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledWith(channelId));
+        await waitFor(() => expect(getChannelArtifact).toHaveBeenCalledWith(artifactId));
 
         window.history.replaceState({}, '', `/test/channels/town-square?mm_ai_library_artifact=${artifactId}`);
         await act(async () => {
-            resolveFirst?.({
-                entries: [],
-                can_manage: false,
-                download_enabled: true,
-                render_enabled: true,
-            });
+            resolveFirst?.({...entry, channel_id: 'townsquare012345678901234'});
         });
         expect(screen.queryByText('This channel artifact is unavailable.')).toBeNull();
         expect(window.location.search).toContain(artifactId);
 
-        jest.mocked(listChannelArtifacts).mockResolvedValue({
-            entries: [{...entry, channel_id: 'townsquare012345678901234'}],
-            can_manage: true,
-            download_enabled: true,
-            render_enabled: true,
-        });
+        jest.mocked(getChannelArtifact).mockResolvedValue({...entry, channel_id: 'townsquare012345678901234'});
         act(() => {
             store.dispatch({
                 type: 'SET_CHANNEL',
@@ -377,12 +328,7 @@ describe('LibraryArtifactDeepLink', () => {
     });
 
     test('reports unavailable when the open channel matches the url and the artifact is missing', async () => {
-        jest.mocked(listChannelArtifacts).mockResolvedValue({
-            entries: [],
-            can_manage: false,
-            download_enabled: true,
-            render_enabled: true,
-        });
+        jest.mocked(getChannelArtifact).mockRejectedValue({status_code: 404});
         const store = renderLink();
         act(() => {
             store.dispatch({

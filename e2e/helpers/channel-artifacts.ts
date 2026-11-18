@@ -45,19 +45,20 @@ export type ChannelArtifactEntry = {
     id: string;
     channel_id: string;
     title: string;
-    description?: string;
     source_post_id: string;
     source_file_id: string;
-    source_file_name: string;
     source_agent_display_name?: string;
     create_at: number;
     update_at: number;
     version: number;
+    available: boolean;
 };
 
 export type ChannelArtifactList = {
     entries: ChannelArtifactEntry[];
-    can_manage: boolean;
+    can_add: boolean;
+    can_edit: boolean;
+    can_delete: boolean;
 };
 
 /** The channel artifacts API as `username` sees it, over a bearer token (no CSRF header needed). */
@@ -67,7 +68,7 @@ export async function channelArtifactsApi(mattermost: MattermostContainer, usern
     const routes = mattermostAIPluginRoutes(mattermost.url());
     return {
         list: (channelId: string) => routes.getJson(`channel-artifacts?channel_id=${encodeURIComponent(channelId)}`, token) as Promise<ChannelArtifactList>,
-        patch: (id: string, body: {title?: string; description?: string}) => routes.request('PATCH', `channel-artifacts/${encodeURIComponent(id)}`, token, body),
+        patch: (id: string, body: {title: string}) => routes.request('PATCH', `channel-artifacts/${encodeURIComponent(id)}`, token, body),
         remove: (id: string) => routes.request('DELETE', `channel-artifacts/${encodeURIComponent(id)}`, token),
         request: (method: string, path: string, body?: unknown) => routes.request(method, path, token, body),
     };
@@ -234,7 +235,7 @@ export async function pinArtifactFromBookmarksMenu(page: Page, entry: {id: strin
     return true;
 }
 
-/** Accepts the next native confirm() dialog (used by the RHS delete action). Register before the click. */
+/** Accepts the next native confirm() dialog (used by the RHS remove action). Register before the click. */
 export function acceptNextConfirm(page: Page): void {
     page.once('dialog', (dialog) => dialog.accept());
 }

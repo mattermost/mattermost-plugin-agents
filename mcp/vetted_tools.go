@@ -201,6 +201,10 @@ var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"list_channel_artifacts",
 	"get_channel_artifact",
 
+	// Channel artifacts (saved HTML apps; reads go through the requester's permissions and file policy)
+	"list_channel_artifacts",
+	"get_channel_artifact",
+
 	// Users & profiles
 	"get_me",
 	"get_user",
