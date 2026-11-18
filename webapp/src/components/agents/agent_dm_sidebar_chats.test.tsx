@@ -8,6 +8,7 @@ import {act, render, screen, waitFor} from '@testing-library/react';
 
 import type {Channel} from '@mattermost/types/channels';
 
+import {agentDMOpenChat, setAgentDMOpenChat} from '@/agent_dm_open_chat';
 import manifest from '@/manifest';
 
 import AgentDMChannelView from './agent_dm_channel_view';
@@ -47,7 +48,15 @@ jest.mock('./agent_chat_page', () => ({
 
 const makeBot = (id: string) => ({id, displayName: `Agent ${id}`, username: `${id}-name`, dmChannelID: ''});
 
-const store = createStore((state: any) => state, {
+// The host's store, with this plugin's open-chat slice and RECEIVED_POST for the posts it fetches.
+const makeStore = () => createStore((state: any, action: any) => {
+    const plugin = state[`plugins-${manifest.id}`];
+    const next = {...state, [`plugins-${manifest.id}`]: {...plugin, agentDMOpenChat: agentDMOpenChat(plugin.agentDMOpenChat, action)}};
+    if (action.type === 'RECEIVED_POST') {
+        next.entities = {...state.entities, posts: {posts: {...state.entities.posts.posts, [action.data.id]: action.data}}};
+    }
+    return next;
+}, {
     [`plugins-${manifest.id}`]: {bots: [makeBot('agent1')]},
     entities: {
         users: {currentUserId: 'me'},
@@ -57,15 +66,16 @@ const store = createStore((state: any) => state, {
         }},
     },
 } as any);
+let store = makeStore();
 
-const listeners = new Set<() => void>();
+const listeners = new Set<(...args: unknown[]) => void>();
 const history = {
     location: {pathname: '/team1/messages/@agent1-name'},
     push: jest.fn((path: string) => {
         history.location.pathname = path;
-        listeners.forEach((listener) => listener());
+        listeners.forEach((listener) => listener(history.location, 'PUSH'));
     }),
-    listen: (listener: () => void) => {
+    listen: (listener: (...args: unknown[]) => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
     },
@@ -86,6 +96,7 @@ const renderChats = (channel = agentDM, isCurrentChannel = true) => render(
 
 beforeEach(() => {
     jest.clearAllMocks();
+    store = makeStore();
     listeners.clear();
     history.location.pathname = '/team1/messages/@agent1-name';
     window.WebappUtils = {browserHistory: history} as unknown as typeof window.WebappUtils;
@@ -109,28 +120,26 @@ describe('AgentDMSidebarChats', () => {
         expect(screen.queryByTestId('chat-list')).toBeNull();
     });
 
-    test.each([
-        ['a chat', '/team1/messages/@agent1-name/root1', 'root1'],
-        ['a reply, which belongs to its thread', '/team1/messages/@agent1-name/reply1', 'root1'],
-    ])('highlights the chat open in the DM URL: %s', (_name, pathname, expected) => {
-        history.location.pathname = pathname;
+    test('highlights the chat the DM view has open', () => {
         renderChats();
+        expect(lastSection().activeRootId).toBe('');
 
-        expect(lastSection().activeRootId).toBe(expected);
+        act(() => {
+            store.dispatch(setAgentDMOpenChat('dm1', 'root1'));
+        });
+        expect(lastSection().activeRootId).toBe('root1');
+
+        act(() => {
+            store.dispatch(setAgentDMOpenChat('dm1', ''));
+        });
+        expect(lastSection().activeRootId).toBe('');
     });
 
     test('highlights nothing in a DM that is not the open channel', () => {
-        history.location.pathname = '/team1/messages/@agent1-name/root1';
+        store.dispatch(setAgentDMOpenChat('dm1', 'root1'));
         renderChats(agentDM, false);
 
         expect(lastSection()).toMatchObject({activeBotId: undefined, activeRootId: ''}); // eslint-disable-line no-undefined
-    });
-
-    test('follows the host navigating to another chat', () => {
-        renderChats();
-
-        act(() => history.push('/team1/messages/@agent1-name/root1'));
-        expect(lastSection().activeRootId).toBe('root1');
     });
 
     test('opening a chat navigates to its DM URL, and a new chat to the DM', () => {
@@ -143,24 +152,14 @@ describe('AgentDMSidebarChats', () => {
         expect(history.push).toHaveBeenLastCalledWith('/team1/messages/@agent1-name');
     });
 
-    test('highlights the chat of a reply permalink the channel view had to fetch', async () => {
-        mockGetPost.mockResolvedValue({id: 'reply9', root_id: 'root9', channel_id: 'dm1'});
-        history.location.pathname = '/team1/messages/@agent1-name/reply9';
-
-        // The host's store: it learns of fetched posts from RECEIVED_POST.
-        const hostStore = createStore((state: any, action: any) => {
-            if (action.type === 'RECEIVED_POST') {
-                return {...state, entities: {...state.entities, posts: {posts: {...state.entities.posts.posts, [action.data.id]: action.data}}}};
-            }
-            return state;
-        }, store.getState());
-        render(
-            <Provider store={hostStore}>
+    describe('with the DM view', () => {
+        const renderBoth = (focusedPostId: string) => render(
+            <Provider store={store}>
                 <AgentDMChannelView
                     channel={agentDM}
                     channelId='dm1'
                     teamId='team1'
-                    focusedPostId='reply9'
+                    focusedPostId={focusedPostId}
                 />
                 <AgentDMSidebarChats
                     channel={agentDM}
@@ -170,6 +169,31 @@ describe('AgentDMSidebarChats', () => {
             </Provider>,
         );
 
-        await waitFor(() => expect(lastSection().activeRootId).toBe('root9'));
+        test('highlights the chat of a reply permalink the view had to fetch', async () => {
+            mockGetPost.mockResolvedValue({id: 'reply9', root_id: 'root9', channel_id: 'dm1'});
+            history.location.pathname = '/team1/messages/@agent1-name/reply9';
+            renderBoth('reply9');
+
+            await waitFor(() => expect(lastSection().activeRootId).toBe('root9'));
+        });
+
+        test('keeps highlighting a permalinked chat after the host drops the post id from the URL', () => {
+            history.location.pathname = '/team1/messages/@agent1-name/reply1';
+            renderBoth('reply1');
+            expect(lastSection().activeRootId).toBe('root1');
+
+            act(() => {
+                history.location.pathname = '/team1/messages/@agent1-name';
+                listeners.forEach((listener) => listener(history.location, 'REPLACE'));
+            });
+            expect(lastSection().activeRootId).toBe('root1');
+        });
+
+        test('follows a chat opened from the sidebar', () => {
+            renderBoth('');
+            act(() => lastSection().onSelectThread('agent1', 'root1'));
+
+            expect(lastSection().activeRootId).toBe('root1');
+        });
     });
 });

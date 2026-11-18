@@ -53,6 +53,7 @@ const makeBot = (id: string) => ({id, displayName: `Agent ${id}`, username: `${i
 
 const posts: Record<string, {id: string; root_id: string; channel_id: string}> = {
     root1: {id: 'root1', root_id: '', channel_id: 'dm1'},
+    root2: {id: 'root2', root_id: '', channel_id: 'dm1'},
     reply1: {id: 'reply1', root_id: 'root1', channel_id: 'dm1'},
 };
 
@@ -246,6 +247,31 @@ describe('AgentDMChannelView', () => {
         );
         navigate(DM);
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
+    });
+
+    test('a chat picked right after a permalink opens survives the host tidying the URL', () => {
+        renderView('reply1');
+        act(() => lastChatPage().toChat('agent1', 'root2'));
+        expect(screen.getByTestId('chat-page').textContent).toBe('root2');
+
+        // The host's tidy runs on a timer from the permalink and lands after the pick.
+        replace(DM, 'v4');
+        expect(screen.getByTestId('chat-page').textContent).toBe('root2');
+    });
+
+    test('the host resolving a permalink by replacing the URL with the post opens its chat', () => {
+        renderView();
+
+        replace(`${DM}/reply1`, 'v4');
+        expect(screen.getByTestId('chat-page').textContent).toBe('root1');
+    });
+
+    test('a reload of a chat\'s URL opens that chat', () => {
+        const {unmount} = renderView('root1');
+        unmount();
+
+        renderView(undefined, `${DM}/root1`); // eslint-disable-line no-undefined
+        expect(screen.getByTestId('chat-page').textContent).toBe('root1');
     });
 
     test('the same chat can be opened again after a new chat, from outside the view', () => {

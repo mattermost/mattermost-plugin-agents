@@ -8,10 +8,10 @@ import styled from 'styled-components';
 import type {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
+import {openChatRootId} from '@/agent_dm_open_chat';
 import {dmOtherUserId} from '@/agent_dm_view';
 import {useBotlist} from '@/bots';
 
-import {useDMPostId} from './agent_dm_route';
 import {AgentThreadsSection} from './product_sidebar';
 import {getHistory} from './use_agents_route';
 
@@ -23,7 +23,8 @@ export interface AgentDMSidebarChatsProps {
 
 // The agent's recent chats nested under its DM item in the host's channel sidebar
 // (registerSidebarChannelChildrenComponent), with the Agents product's "Show more". A chat opens by
-// navigating to the DM URL with its root post, which the agent DM view follows.
+// navigating to the DM URL with its root post, which the agent DM view opens; the open one is
+// highlighted.
 const AgentDMSidebarChats = ({channel, currentTeamName, isCurrentChannel}: AgentDMSidebarChatsProps) => {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const {bots} = useBotlist();
@@ -31,14 +32,7 @@ const AgentDMSidebarChats = ({channel, currentTeamName, isCurrentChannel}: Agent
     const bot = useMemo(() => bots?.find((b) => b.id === botId) ?? null, [bots, botId]);
     const listBots = useMemo(() => (bot ? [bot] : null), [bot]);
 
-    const urlPostId = useDMPostId();
-    const openRootId = useSelector<GlobalState, string>((state) => {
-        if (!isCurrentChannel || !urlPostId) {
-            return '';
-        }
-        const post = state.entities.posts.posts[urlPostId];
-        return post ? post.root_id || post.id : urlPostId;
-    });
+    const openRootId = useSelector<GlobalState, string>((state) => (isCurrentChannel ? openChatRootId(state, channel.id) : ''));
 
     const toChat = useCallback((_botId: string, rootId?: string) => {
         if (!bot) {

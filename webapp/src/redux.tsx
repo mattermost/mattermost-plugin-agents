@@ -4,6 +4,7 @@
 import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
+import {agentDMOpenChat} from './agent_dm_open_chat';
 import {agentDMRawView} from './agent_dm_view';
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
@@ -35,6 +36,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         pinnedPromptIds,
         showCustomPromptsModal,
         agentDMRawView,
+        agentDMOpenChat,
     });
     registry.registerReducer(reducer);
 

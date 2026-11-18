@@ -10,12 +10,13 @@ import type {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
+import {setAgentDMOpenChat} from '@/agent_dm_open_chat';
 import {dmOtherUserId} from '@/agent_dm_view';
 import {useBotlist} from '@/bots';
 import {getPost} from '@/client';
 
 import AgentChatPage from './agent_chat_page';
-import {dmChannelPath, useDMPostId} from './agent_dm_route';
+import {dmChannelPath, dmPostId, navigationAction} from './agent_dm_route';
 import {ALL_AGENTS_PATH, buildChatPath, getHistory} from './use_agents_route';
 
 // The props the host passes a registerChannelViewComponent component.
@@ -25,7 +26,7 @@ export interface AgentDMChannelViewProps {
     teamId: string;
 
     // A permalinked post in this DM (`/:team/messages/@agent/:postid`). The host keeps it after the
-    // id leaves the URL, until the channel changes; the view follows the URL itself where it can.
+    // id leaves the URL, until the channel changes; the view opens it when it changes.
     focusedPostId?: string;
 }
 
@@ -45,58 +46,61 @@ type Selection = {resolving: true} | {resolving: false; rootId?: string};
 // in place of the host's channel header. The host keeps its LHS and RHS around it, and marks the DM
 // read when this mounts. The agent's chats are listed under its item in the host's sidebar.
 //
-// The open chat follows the DM URL (`/:team/messages/@agent/:postId`), which the host's channel route
-// accepts without reloading the channel: the sidebar's chats and permalinks navigate to it, picking a
-// chat here puts its root in it, and a new chat drops it, so the chat survives a reload and can be
-// linked. A permalink may name a reply, whose chat is its thread. Where the location is not a Channels
-// DM route (the channel popout) the view uses the host's focusedPostId and keeps the pick locally.
+// The open chat is this component's own state, with one entry point, `open`. Requests to open a chat
+// come from the DM URL when the view mounts and on each navigation that names a post (the sidebar's
+// chats, permalinks, back/forward), from the host's focusedPostId when it changes (all the popout
+// has), and from the chat pane itself. The URL (`/:team/messages/@agent/:postId`, which the host's
+// channel route accepts without reloading the channel) is written from here so a chat survives a
+// reload and can be linked, but is not read back to decide what is open, because the host rewrites
+// it by itself: it drops a permalink's post id a few seconds after opening it. A permalink may name
+// a reply, whose chat is its thread.
 const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelViewProps) => {
     const intl = useIntl();
     const store = useStore<GlobalState>();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const {bots} = useBotlist();
     const botId = dmOtherUserId(channel.name, currentUserId);
-    const urlPostId = useDMPostId();
-    const postId = urlPostId ?? focusedPostId ?? '';
+    const channelId = channel.id;
 
-    const [selection, setSelection] = useState<Selection>(postId ? {resolving: true} : {resolving: false});
+    const [initialPostId] = useState(() => dmPostId(getHistory()?.location?.pathname) ?? focusedPostId ?? '');
+    const [selection, setSelection] = useState<Selection>(initialPostId ? {resolving: true} : {resolving: false});
 
-    // Bumped by every selection, so a permalink lookup that resolves after a newer one is dropped.
-    const selectionSeq = useRef(0);
+    // The post id last asked for ('' is a new chat), so the same request twice (the URL and
+    // focusedPostId both reporting one permalink, the URL echoing a pick made here) is not a second one.
+    const requested = useRef<string | null>(null);
 
-    // Picking a chat puts its root in the URL, which the host hands back as focusedPostId: that is
-    // not a permalink to look up.
-    const openRootId = useRef('');
-    openRootId.current = selection.resolving ? '' : selection.rootId ?? '';
+    // Bumped by every request, so a permalink lookup that resolves after a newer one is dropped.
+    const requestSeq = useRef(0);
 
-    const invalidate = useCallback(() => {
-        selectionSeq.current++;
-    }, []);
+    const mounted = useRef(false);
 
-    useEffect(() => {
+    // knownRootId is given when the chat is already known (picked here), so there is nothing to look up.
+    const open = useCallback((postId: string, knownRootId?: string) => {
+        if (postId === requested.current) {
+            return;
+        }
+        requested.current = postId;
+        const seq = ++requestSeq.current;
         if (!postId) {
-            // A DM URL without a post is a new chat, wherever the navigation came from.
-            if (urlPostId !== null) {
-                setSelection((prev) => (prev.resolving || prev.rootId ? {resolving: false} : prev));
-            }
-            return invalidate;
+            setSelection({resolving: false});
+            return;
         }
-        if (postId === openRootId.current) {
-            return invalidate;
-        }
-        const seq = ++selectionSeq.current;
         const select = (rootId: string) => {
-            if (seq === selectionSeq.current) {
+            if (mounted.current && seq === requestSeq.current) {
                 setSelection({resolving: false, rootId});
             }
         };
 
         // The chat is the post's thread. Whether it belongs to this agent's DM is checked by the chat
         // pane, which fails closed.
+        if (knownRootId) {
+            select(knownRootId);
+            return;
+        }
         const cached = store.getState().entities.posts.posts[postId];
         if (cached) {
             select(cached.root_id || cached.id);
-            return invalidate;
+            return;
         }
         setSelection({resolving: true});
         getPost(postId).then((post) => {
@@ -107,9 +111,43 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
             console.error('Failed to load the linked agent chat post:', error); // eslint-disable-line no-console
             select(postId);
         });
+    }, [store]);
 
-        return invalidate;
-    }, [postId, urlPostId, store, invalidate]);
+    useEffect(() => {
+        mounted.current = true;
+        open(initialPostId);
+        const unlisten = getHistory()?.listen?.((...args: unknown[]) => {
+            const urlPostId = dmPostId(getHistory()?.location?.pathname);
+
+            // A replace that drops the post id is the host tidying a permalink's URL; the chat stays.
+            if (urlPostId === null || (!urlPostId && navigationAction(args) === 'REPLACE')) {
+                return;
+            }
+            open(urlPostId);
+        });
+        return () => {
+            mounted.current = false;
+            if (typeof unlisten === 'function') {
+                unlisten();
+            }
+        };
+    }, [open, initialPostId]);
+
+    const lastFocusedPostId = useRef(focusedPostId);
+    useEffect(() => {
+        if (focusedPostId && focusedPostId !== lastFocusedPostId.current) {
+            open(focusedPostId);
+        }
+        lastFocusedPostId.current = focusedPostId;
+    }, [focusedPostId, open]);
+
+    const openRootId = selection.resolving ? '' : selection.rootId ?? '';
+    useEffect(() => {
+        store.dispatch(setAgentDMOpenChat(channelId, openRootId));
+        return () => {
+            store.dispatch(setAgentDMOpenChat(channelId, ''));
+        };
+    }, [store, channelId, openRootId]);
 
     const toChat = useCallback((targetBotId: string, rootId?: string) => {
         const history = getHistory();
@@ -122,13 +160,12 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
             return;
         }
 
-        selectionSeq.current++;
-        setSelection({resolving: false, rootId});
+        open(rootId ?? '', rootId);
         const path = rootId ? `${dmPath}/${encodeURIComponent(rootId)}` : dmPath;
         if (dmPath && path !== history?.location?.pathname) {
             history?.push(path);
         }
-    }, [botId, bots]);
+    }, [botId, bots, open]);
 
     const toAll = useCallback(() => getHistory()?.push(ALL_AGENTS_PATH), []);
 
