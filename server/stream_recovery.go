@@ -10,6 +10,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -57,7 +58,11 @@ func (p *Plugin) sweepAbandonedStreams(ctx context.Context) {
 	if p.store == nil || p.pluginAPI == nil {
 		return
 	}
-	recovered, err := streaming.RecoverAbandonedStreams(ctx, p.store, recoveryClient{api: p.pluginAPI}, streaming.DefaultRecoveryBatchSize)
+	var notifier notifications.Notifier
+	if p.notifications != nil {
+		notifier = p.notifications
+	}
+	recovered, err := streaming.RecoverAbandonedStreams(ctx, p.store, recoveryClient{api: p.pluginAPI}, notifier, streaming.DefaultRecoveryBatchSize)
 	if err != nil {
 		p.pluginAPI.Log.Warn("Abandoned stream recovery sweep failed", "error", err)
 	}
