@@ -2510,6 +2510,11 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
             );
             const {rerender} = render(ui());
 
+            // A remount refetches its cached streaming turn once; heartbeats
+            // after that must not trigger another.
+            expect(invalidateConversation).toHaveBeenCalledTimes(1);
+            (invalidateConversation as jest.Mock).mockClear();
+
             const heartbeatAfter = (ms: number) => act(() => {
                 jest.advanceTimersByTime(ms);
                 listener?.(postUpdateMessage({post_id: 'post_1', control: 'heartbeat'}));
