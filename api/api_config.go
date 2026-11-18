@@ -6,6 +6,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -56,11 +57,14 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
+	// Credentials are masked in the response; the admin console sends the mask back unchanged
+	// for the ones it does not edit.
+	c.JSON(http.StatusOK, config.RedactSecrets(normalizeAdminConfig(*cfg.Clone())))
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
+// It responds with the saved config, credentials masked as in GET.
 // PUT /admin/config
 func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
@@ -71,14 +75,29 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	cfg = normalizeAdminConfig(cfg)
 
+	// Best effort: a failed read of the prior config must not block the save.
+	// Without a prior config, masked credentials cannot be restored and are
+	// rejected below; typed values still save.
+	prev, prevErr := a.configStore.GetConfig()
+	if prevErr != nil {
+		prev = nil
+	}
+
+	// A masked credential means "keep the stored one"; any other value is what
+	// the admin typed, including an empty one that clears it.
+	cfg = config.RestoreSecrets(cfg, prev)
+	if fields := config.MaskedCredentialFields(cfg); len(fields) > 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("the configuration was not saved because these credentials hold a mask with no stored value to restore: %s. Reload the System Console to load the current configuration, then re-enter them", strings.Join(fields, ", ")),
+		})
+		return
+	}
+
 	// Audit which top-level config sections change — never their values,
-	// since services/webSearch/mcp carry credentials. Best effort: a failed
-	// read of the prior config must not block the save, so the record then
-	// simply omits changed_keys.
-	if rec := auditRec(c); rec != nil {
-		if prev, err := a.configStore.GetConfig(); err == nil {
-			audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
-		}
+	// since services/webSearch/mcp carry credentials. When the prior config
+	// was unreadable the diff is omitted, not fabricated.
+	if rec := auditRec(c); rec != nil && prevErr == nil {
+		audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
 	}
 
 	if err := a.configStore.SaveConfig(cfg); err != nil {
@@ -100,5 +119,5 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.Status(http.StatusOK)
+	c.JSON(http.StatusOK, config.RedactSecrets(cfg))
 }
