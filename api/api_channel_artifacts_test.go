@@ -447,6 +447,7 @@ func TestMCPChannelArtifactCallbacks(t *testing.T) {
 		assert.Equal(t, 1, got.Entry.Version)
 		assert.Equal(t, versioned.SHA256, got.Entry.SHA256)
 		assert.Equal(t, versioned.SourceFileID, got.Entry.SourceFileID)
+		assert.Equal(t, "Helper", got.Entry.SourceAgentDisplayName)
 
 		current := f.do(http.MethodPost, tools.ChannelArtifactsGetPath, `{"artifact_id":"`+versioned.ID+`"}`)
 		require.NoError(t, json.Unmarshal(current.Body.Bytes(), &got))
