@@ -276,6 +276,34 @@ describe('LLMBotPost streaming fallback rendering', () => {
         expect(screen.queryByText('Working...')).toBeNull();
     });
 
+    test('shows the answer once when the persisted turn lands before the end event', () => {
+        const answer = 'Posting the release notes now.';
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'complete', content: [{type: 'text', text: answer}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: answer}));
+        });
+
+        // The end empties the conversation cache until the refetch lands.
+        mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
+        });
+
+        expect(screen.getAllByText(answer)).toHaveLength(1);
+    });
+
     test('renders updated post message when the streaming text websocket was missed', async () => {
         const errorText = 'Sorry! An error occurred while accessing the LLM.';
         const {rerender} = renderPost(makePost());
@@ -2186,10 +2214,13 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         mockUseConversation.mockReturnValue(withStatus('streaming'));
         const {rerender} = render(ui());
 
+        // The mount refetch comes first; a missed end must not wait on the stale timer.
+        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+
         act(() => {
             jest.advanceTimersByTime(60000);
         });
-        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(invalidateConversation).toHaveBeenCalledTimes(2);
         expect(screen.queryByText(STALE_TEXT)).toBeNull();
 
         // The refetch empties the cache, then lands with the server's status.
@@ -2202,7 +2233,7 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
             jest.advanceTimersByTime(60000);
         });
         expect(Boolean(screen.queryByText(STALE_TEXT))).toBe(expectStale);
-        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(invalidateConversation).toHaveBeenCalledTimes(2);
     });
 
     test('a heartbeat post flush does not rewind live streamed text', () => {
@@ -2438,5 +2469,103 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
             jest.advanceTimersByTime(120000);
         });
         expect(screen.queryByText(STALE_TEXT)).toBeNull();
+    });
+
+    describe('approved tool calls', () => {
+        function approvalRunConversation(status: 'streaming' | 'interrupted') {
+            return {
+                conversation: makeConversation([
+                    makeTurn({id: 'u1', post_id: 'user_post', role: 'user', sequence: 1, content: [{type: 'text', text: 'what is MM-1?'}]}),
+                    makeTurn({
+                        id: 'anchor',
+                        sequence: 2,
+                        status,
+                        approval_state: 'done',
+                        content: [
+                            {type: 'text', text: 'Let me look that up.'},
+                            {type: 'tool_use', id: 'tc_1', name: 'jira__get_issue', status: 'accepted'},
+                        ],
+                    }),
+                ], 'user_1'),
+                loading: false,
+                error: null,
+            };
+        }
+
+        test('show as running, not stalled, while their run heartbeats', () => {
+            jest.useFakeTimers();
+            (invalidateConversation as jest.Mock).mockClear();
+            mockUseConversation.mockReturnValue(approvalRunConversation('streaming'));
+            let listener: PostUpdateHandler | undefined;
+            const ui = () => (
+                <IntlProvider locale='en'>
+                    <LLMBotPost
+                        post={{...makePost('Let me look that up.'), user_id: BOT_ID}}
+                        websocketRegister={(postID: string, listenerID: string, handler: PostUpdateHandler) => {
+                            listener = handler;
+                        }}
+                        websocketUnregister={jest.fn()}
+                    />
+                </IntlProvider>
+            );
+            const {rerender} = render(ui());
+
+            // A remount refetches its cached streaming turn once; heartbeats
+            // after that must not trigger another.
+            expect(invalidateConversation).toHaveBeenCalledTimes(1);
+            (invalidateConversation as jest.Mock).mockClear();
+
+            const heartbeatAfter = (ms: number) => act(() => {
+                jest.advanceTimersByTime(ms);
+                listener?.(postUpdateMessage({post_id: 'post_1', control: 'heartbeat'}));
+            });
+            for (let i = 0; i < 6; i++) {
+                heartbeatAfter(50000);
+            }
+            expect(screen.queryByText(STALE_TEXT)).toBeNull();
+            expect(screen.queryByTestId('llm-bot-post-interrupted')).toBeNull();
+            expect(screen.getByTestId('llm-bot-activity-spinner')).toBeTruthy();
+            expect(invalidateConversation).not.toHaveBeenCalled();
+
+            // The server refuses to regenerate over a live run, and it has no Stop.
+            expect(screen.queryByTestId('regenerate-button')).toBeNull();
+            expect(screen.queryByText('Stop Generating')).toBeNull();
+
+            // A run whose node died stops heartbeating: refetch once, then
+            // offer Regenerate until the recovery sweep marks the post.
+            act(() => {
+                jest.advanceTimersByTime(60000);
+            });
+            expect(invalidateConversation).toHaveBeenCalledTimes(1);
+            mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+            rerender(ui());
+            mockUseConversation.mockReturnValue(approvalRunConversation('streaming'));
+            rerender(ui());
+            act(() => {
+                jest.advanceTimersByTime(60000);
+            });
+            expect(within(screen.getByTestId('llm-bot-post-stale')).getByText('Regenerate')).toBeTruthy();
+        });
+
+        test.each([
+            ['shutdown', SHUTDOWN_TEXT],
+            ['lost', LOST_TEXT],
+        ])('show as interrupted, with Regenerate and no spinner, after a %s', (reason, text) => {
+            mockUseConversation.mockReturnValue(approvalRunConversation('interrupted'));
+            mockToolApprovalSet.mockClear();
+            renderPost(interruptedPost(reason, BOT_ID, 'Let me look that up.'));
+
+            const notice = screen.getByTestId('llm-bot-post-interrupted');
+            expect(within(notice).getByText(text)).toBeTruthy();
+            expect(within(notice).getByText('Regenerate')).toBeTruthy();
+            expect(screen.queryByTestId('llm-bot-activity-spinner')).toBeNull();
+            expect(screen.getByTestId('llm-bot-tool-activity-header').textContent).toMatch(/^Used /);
+            expect(within(screen.getByTestId('llm-bot-tool-activity-header')).getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('error');
+
+            expandToolActivity();
+            const lastCall = mockToolApprovalSet.mock.calls[mockToolApprovalSet.mock.calls.length - 1][0] as unknown as {approvalStage: string; toolCalls: Array<{status: ToolCallStatus; interrupted?: boolean}>};
+            expect(lastCall.approvalStage).toBe('done');
+            expect(lastCall.toolCalls).toEqual([expect.objectContaining({status: ToolCallStatus.Error, interrupted: true})]);
+        });
     });
 });
