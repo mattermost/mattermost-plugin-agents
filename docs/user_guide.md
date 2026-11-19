@@ -74,6 +74,7 @@ Ask the agent to put long output in a file, for example "the meeting notes as a 
 - In direct messages this is always available. In channels it needs the same admin setting as tools.
 - When an agent posts for you with `create_post`, `dm`, or `group_message`, it can attach text files to that post too.
 - If your admin enabled HTML artifacts, an `.html` file the agent creates renders as an interactive page in the reply after you select **Run**.
+- An artifact can offer to save a file it generated, such as an image, a CSV, or a report. Mattermost asks you to confirm each download and shows the file's name, type, and size first. Artifacts can save images, text, CSV, Markdown, JSON, and PDF files up to 25 MiB. Treat a downloaded file like any file from an untrusted source.
 
 ## What an agent sees and keeps
 
