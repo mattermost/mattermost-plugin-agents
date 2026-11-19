@@ -68,13 +68,13 @@ const MCPServerDescription = ({serverID, description, connectionSaved, onChange,
 
     let status: React.ReactNode = null;
     if (!canAutoFill) {
-        status = intl.formatMessage({defaultMessage: 'Save this server to auto-fill its description from the server.'});
+        status = intl.formatMessage({defaultMessage: 'Save the server first to auto-fill from it.'});
     } else if (autoFill.status === 'filled' && autoFill.source === 'description') {
-        status = intl.formatMessage({defaultMessage: 'Filled from the description the server reports. Edit it as needed, then save.'});
+        status = intl.formatMessage({defaultMessage: 'Filled from the server description. Edit as needed and save.'});
     } else if (autoFill.status === 'filled') {
-        status = intl.formatMessage({defaultMessage: 'The server has no description, so this was filled from its usage instructions. Edit it as needed, then save.'});
+        status = intl.formatMessage({defaultMessage: 'Filled from server usage instructions (no description provided). Edit as needed and save.'});
     } else if (autoFill.status === 'empty') {
-        status = intl.formatMessage({defaultMessage: "This server doesn't describe itself. Write a description instead."});
+        status = intl.formatMessage({defaultMessage: "This server doesn't provide a description."});
     } else if (autoFill.status === 'needsOAuth') {
         status = intl.formatMessage({defaultMessage: 'Connect your account to this server, then try again.'});
     } else if (autoFill.status === 'failed') {
@@ -91,7 +91,7 @@ const MCPServerDescription = ({serverID, description, connectionSaved, onChange,
                 maxLength={MAX_MCP_SERVER_DESCRIPTION_LENGTH}
                 onChange={(e) => onChange(e.target.value)}
                 helptext={intl.formatMessage(
-                    {defaultMessage: "Tells agents what this integration is for, so they can offer it to users who haven't connected it yet. {count}/{max} characters."},
+                    {defaultMessage: 'Helps agents recommend this integration to unconnected users. {count}/{max} characters.'},
                     {count: [...description].length, max: MAX_MCP_SERVER_DESCRIPTION_LENGTH},
                 )}
             />

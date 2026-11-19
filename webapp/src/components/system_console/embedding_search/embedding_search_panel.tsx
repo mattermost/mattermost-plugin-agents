@@ -165,7 +165,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
             title={<FormattedMessage defaultMessage='Embedding Search'/>}
             showBeta={true}
             betaLabel={intl.formatMessage({defaultMessage: 'EXPERIMENTAL'})}
-            subtitle={intl.formatMessage({defaultMessage: 'Configure embedding search settings. Note: The current implementation is experimental and subject to breaking changes. This includes having to reindex all posts.'})}
+            subtitle={intl.formatMessage({defaultMessage: 'Experimental and subject to breaking changes that may require a full reindex.'})}
         >
             <ItemList>
                 <BooleanItem
@@ -210,7 +210,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             });
                         }
                     }}
-                    helpText={intl.formatMessage({defaultMessage: 'Enable or disable embedding-based semantic search.'})}
+                    helpText={intl.formatMessage({defaultMessage: 'Turn on embedding-based semantic search.'})}
                 />
 
                 {isEnabled &&
@@ -282,7 +282,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     });
                                 }}
                                 min={1}
-                                helptext={intl.formatMessage({defaultMessage: 'The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Vector embedding dimensions (commonly 768, 1024, or 1536, depending on the model).'})}
                             />
                             <IntItem
                                 label={intl.formatMessage({defaultMessage: 'HNSW M'})}
@@ -291,7 +291,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 onChange={(hnswM) => onChange({...value, hnswM})}
                                 min={HNSW_DEFAULTS.min}
                                 max={HNSW_DEFAULTS.max}
-                                helptext={intl.formatMessage({defaultMessage: 'Graph connections per row. Lower uses less RAM and is slightly less accurate. Changing this rebuilds the vector index; it does not re-embed posts. Default 8.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Graph connections per row (default 8). Lower uses less RAM, slightly less accuracy. Requires Rebuild vector index, not re-embedding.'})}
                             />
                             <SelectionItem
                                 label={intl.formatMessage({defaultMessage: 'Vector precision'})}
@@ -300,7 +300,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     ...value,
                                     vectorElementType: normalizeVectorElementType(vectorElementType),
                                 })}
-                                helptext={intl.formatMessage({defaultMessage: 'Half precision uses less RAM and disk. Changing this drops the embeddings table; run a Full Reindex. Default is standard.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Half precision saves RAM and disk (default: standard). Changing drops the index; run Full Reindex.'})}
                                 options={[
                                     {value: VECTOR_ELEMENT_TYPE.vector, label: intl.formatMessage({defaultMessage: 'Standard (vector)'})},
                                     {value: VECTOR_ELEMENT_TYPE.halfvec, label: intl.formatMessage({defaultMessage: 'Half precision (halfvec)'})},
@@ -312,7 +312,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 value={value.indexRetentionDays ?? 0}
                                 onChange={(indexRetentionDays) => onChange({...value, indexRetentionDays})}
                                 min={0}
-                                helptext={intl.formatMessage({defaultMessage: '0 indexes all posts. A positive value limits how far back indexing looks. Raise it and run Catch Up to add older posts without re-embedding what is already indexed. Lowering it does not remove posts already in the index.'})}
+                                helptext={intl.formatMessage({defaultMessage: '0 indexes all posts; positive values limit how far back to index. Raise and run Catch Up to add older posts; lowering does not delete indexed posts.'})}
                             />
                         </IndexStorageGroup>
 
@@ -325,7 +325,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             label={intl.formatMessage({defaultMessage: 'Recency Bias'})}
                             value={value.recencyBiasEnabled ?? false}
                             onChange={(recencyBiasEnabled) => onChange({...value, recencyBiasEnabled})}
-                            helpText={intl.formatMessage({defaultMessage: 'Rank more recent messages higher in semantic search results. Results are still selected by relevance; recency influences their ordering.'})}
+                            helpText={intl.formatMessage({defaultMessage: 'Boosts newer messages in search ranking without changing relevance filtering.'})}
                         />
 
                         {value.recencyBiasEnabled && (
@@ -336,7 +336,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     value={normalizeRecencyValue(value.recencyHalfLifeDays, RECENCY_DEFAULTS.halfLifeDays)}
                                     onChange={(recencyHalfLifeDays) => onChange({...value, recencyHalfLifeDays})}
                                     min={0.1}
-                                    helptext={intl.formatMessage({defaultMessage: 'How quickly the recency boost fades. A message this many days old loses half of its recency boost. Lower values favor newer messages more strongly.'})}
+                                    helptext={intl.formatMessage({defaultMessage: 'Days until a message loses half its recency boost. Lower values favor newer messages.'})}
                                 />
 
                                 <FloatItem
@@ -346,7 +346,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     onChange={(recencyFloor) => onChange({...value, recencyFloor})}
                                     min={0.01}
                                     max={1}
-                                    helptext={intl.formatMessage({defaultMessage: 'Minimum score multiplier for old messages (0-1). Higher values preserve old but highly relevant results; 1 disables the recency effect.'})}
+                                    helptext={intl.formatMessage({defaultMessage: 'Minimum score multiplier for old messages (0–1). Higher preserves older relevant hits; 1 disables recency bias.'})}
                                 />
                             </>
                         )}
@@ -358,7 +358,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             onChange={(reindexWorkers) => onChange({...value, reindexWorkers})}
                             min={1}
                             max={REINDEX_DEFAULTS.maxWorkers}
-                            helptext={intl.formatMessage({defaultMessage: 'Number of concurrent workers used during bulk reindexing. Higher values speed up reindexing but increase load on the embedding provider and database. Lower this if you hit provider rate limits frequently.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Concurrent bulk reindex workers. Higher is faster but adds DB and provider load; lower if you hit rate limits.'})}
                         />
 
                         <IntItem
@@ -368,14 +368,14 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             onChange={(reindexBatchSize) => onChange({...value, reindexBatchSize})}
                             min={1}
                             max={REINDEX_DEFAULTS.maxBatchSize}
-                            helptext={intl.formatMessage({defaultMessage: 'Number of posts fetched and embedded per batch during bulk reindexing.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Posts fetched and embedded per bulk reindex batch.'})}
                         />
 
                         <SelectionItem
                             label={intl.formatMessage({defaultMessage: 'Reindex Index Strategy'})}
                             value={normalizeReindexIndexStrategy(value.reindexIndexStrategy)}
                             onChange={(strategy) => onChange({...value, reindexIndexStrategy: normalizeReindexIndexStrategy(strategy)})}
-                            helptext={intl.formatMessage({defaultMessage: 'Controls how the vector index is handled during a full reindex. Dropping and rebuilding the index after the bulk load is much faster for large databases, but semantic search is unavailable until the rebuild completes.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Dropping and rebuilding after bulk load is much faster on large databases, but semantic search is unavailable until it finishes.'})}
                             options={[
                                 {value: REINDEX_INDEX_STRATEGY.maintain, label: intl.formatMessage({defaultMessage: 'Maintain index during reindex (default)'})},
                                 {value: REINDEX_INDEX_STRATEGY.defer, label: intl.formatMessage({defaultMessage: 'Drop and rebuild index after reindex (faster for large databases)'})},

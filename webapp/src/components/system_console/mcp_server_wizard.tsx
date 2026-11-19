@@ -393,7 +393,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 value={details.name}
                 onChange={(e) => setDetails({...details, name: e.target.value})}
                 error={showErrors ? nameError : undefined} // eslint-disable-line no-undefined
-                helptext={intl.formatMessage({defaultMessage: 'Shown to users and agents. Users sign in to the server under this name.'})}
+                helptext={intl.formatMessage({defaultMessage: 'Shown to users and agents, including during sign-in.'})}
             />
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'Server URL'})}
@@ -411,14 +411,14 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                         <LicenseChip capability='remote_mcp'/>
                     )}
                     onChange={(enabled) => setDetails({...details, enabled})}
-                    helpText={intl.formatMessage({defaultMessage: 'Disabled servers keep their settings, but no agent can use their tools.'})}
+                    helpText={intl.formatMessage({defaultMessage: 'When off, settings are kept but agents cannot use its tools.'})}
                 />
             )}
             <BooleanItem
                 label={intl.formatMessage({defaultMessage: 'Direct Messages Only'})}
                 value={details.dmOnly ?? false}
                 onChange={(dmOnly) => setDetails({...details, dmOnly})}
-                helpText={intl.formatMessage({defaultMessage: 'Only allow agents to use this server in a direct message with the requesting user. In channels and group messages, agents never connect to it and tell users to message them directly instead. Use this for servers that return data some channel members may not be allowed to see.'})}
+                helpText={intl.formatMessage({defaultMessage: 'Restricts this server to DMs; in channels, agents ask users to message them directly. Use when results may include data not all channel members should see.'})}
             />
             <MCPServerDescription
                 serverID={savedServer?.id}
@@ -454,7 +454,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     )}
                 </FieldTitleRow>
                 <FieldHelp>
-                    <FormattedMessage defaultMessage='Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'/>
+                    <FormattedMessage defaultMessage='Sent only for agents using service account auth (at least one header is required). Enter name and value separately (e.g., Authorization / Bearer token) without repeating the name.'/>
                 </FieldHelp>
                 <HeaderMapEditor
                     headers={details.serviceAccountHeaders ?? {}}
@@ -469,7 +469,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 label={intl.formatMessage({defaultMessage: 'OAuth client ID'})}
                 value={details.clientID ?? ''}
                 onChange={(e) => setDetails({...details, clientID: e.target.value})}
-                helptext={intl.formatMessage({defaultMessage: 'Optional. Only needed when the server does not support dynamic client registration.'})}
+                helptext={intl.formatMessage({defaultMessage: 'Optional; needed only if the server lacks dynamic client registration.'})}
             />
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'OAuth client secret'})}
@@ -488,9 +488,9 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     );
 
     const reasonText: Record<ReauthReason, string> = {
-        name: intl.formatMessage({defaultMessage: 'Renaming the server: sign-ins are saved under its name and are removed, so every user has to sign in again.'}),
-        url: intl.formatMessage({defaultMessage: 'Moving the server to another host: sign-ins issued for the old server are removed, so every user has to sign in again. Its tool policies are cleared and reviewed again.'}),
-        clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID: sign-ins issued to the old client cannot be renewed, so every user has to sign in again.'}),
+        name: intl.formatMessage({defaultMessage: 'Renaming removes saved sign-ins, which are keyed by name.'}),
+        url: intl.formatMessage({defaultMessage: 'Changing the host removes saved sign-ins and resets tool policies for re-review.'}),
+        clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID invalidates existing tokens.'}),
     };
 
     const renderReauth = () => (
@@ -512,7 +512,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 )}
             />
             <ReviewIntro>
-                <FormattedMessage defaultMessage='After saving, you sign in to the server to check that it works, then review its tools.'/>
+                <FormattedMessage defaultMessage='After saving, sign in to verify the connection and review tools.'/>
             </ReviewIntro>
         </StepBody>
     );
@@ -524,7 +524,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 title={<FormattedMessage defaultMessage='Save without reviewing tools?'/>}
                 description={(
                     <FormattedMessage
-                        defaultMessage='{serverName} will be saved without connecting to it, so its tools are not reviewed. Until you review them, its tools use default policies: they ask for approval before every run, except where Mattermost has curated defaults for known servers. OAuth sign-in is also not tested. You can review the tools later from the Tools tab.'
+                        defaultMessage='{serverName} will be saved without testing OAuth or reviewing tools. Unreviewed tools default to Ask Every Time (unless Mattermost has curated defaults). You can review tools later in the Tools tab.'
                         values={{serverName}}
                     />
                 )}
@@ -557,7 +557,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                             values={{serverName}}
                         />
                     )}
-                    description={<FormattedMessage defaultMessage='The server needs you to sign in before it lists its tools. Signing in here checks that OAuth works; it connects only your account, and each user signs in separately. This dialog continues when sign-in finishes.'/>}
+                    description={<FormattedMessage defaultMessage='Sign in to test OAuth and list tools. This connects only your account; each user signs in separately.'/>}
                     primaryButtonLabel={<FormattedMessage defaultMessage='Sign in'/>}
                     onPrimaryAction={() => window.open(connection.oauthURL, '_blank', 'noopener,noreferrer')}
                     secondaryButtonLabel={<FormattedMessage defaultMessage='Check again'/>}
@@ -589,7 +589,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const renderReview = () => discovered && review && (
         <StepBody>
             <ReviewIntro>
-                <FormattedMessage defaultMessage='Choose how each tool is approved. Policies are pre-set from what the server reports about each tool: tools it marks read-only are set to run automatically in DMs, and all other tools ask first. Check them before saving; nothing applies until you save.'/>
+                <FormattedMessage defaultMessage='Review tool approval policies before saving. Server-marked read-only tools default to Auto Run (DM); others ask first.'/>
             </ReviewIntro>
             <MCPServerToolRow
                 server={discovered}

@@ -222,7 +222,7 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                                     <LicenseChip capability='remote_mcp'/>
                                 )}
                                 onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
-                                helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
+                                helpText={intl.formatMessage({defaultMessage: 'Exposes Mattermost channels, users, and posts to external MCP clients over HTTP. Streaming requires Mattermost v11.2+.'})}
                             />
                             <TextItem
                                 label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
@@ -260,13 +260,13 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                                         idleTimeoutMinutes,
                                     });
                                 }}
-                                helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Closes inactive user connections after this duration. Lower saves resources; higher improves speed. Default: 30.'})}
                             />
                             {(remoteMcpLicensed || normalizedServers.length > 0) && (
                                 <CopyableTextItem
                                     label={intl.formatMessage({defaultMessage: 'MCP OAuth Callback URL'})}
                                     value={oauthCallbackURL}
-                                    helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
+                                    helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth app.'})}
                                 />
                             )}
                         </ItemList>
