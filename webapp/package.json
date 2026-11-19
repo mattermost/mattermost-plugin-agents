@@ -66,8 +66,8 @@
   "dependencies": {
     "@floating-ui/react-dom-interactions": "0.13.3",
     "@mattermost/client": "11.9.0",
-    "@mattermost/compass-icons": "0.1.64",
-    "@mattermost/compass-ui": "0.1.0-alpha.23",
+    "@mattermost/compass-icons": "0.1.65",
+    "@mattermost/compass-ui": "0.1.0-alpha.33",
     "@mattermost/shared": "11.9.0",
     "@tippyjs/react": "4.2.6",
     "core-js": "3.51.0",
