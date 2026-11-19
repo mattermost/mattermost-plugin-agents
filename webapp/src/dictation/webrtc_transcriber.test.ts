@@ -321,11 +321,11 @@ describe('WebRTCTranscriber', () => {
         const tookMs = Date.now() - startedAt;
 
         expect(pc.close).toHaveBeenCalled();
-        if (minMs !== undefined) {
+        if (typeof minMs === 'number') {
             expect(tookMs).toBeGreaterThanOrEqual(minMs);
             expect(tookMs).toBeLessThan(2500);
         }
-        if (maxMs !== undefined) {
+        if (typeof maxMs === 'number') {
             expect(tookMs).toBeLessThan(maxMs);
         }
     });
