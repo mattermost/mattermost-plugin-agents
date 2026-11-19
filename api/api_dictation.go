@@ -83,6 +83,10 @@ func (a *API) handleCreateDictationSession(c *gin.Context) {
 		return
 	}
 
+	if clientGone(c) {
+		abortDictation(c, http.StatusServiceUnavailable, errDictationUnavailable)
+		return
+	}
 	userID := c.GetHeader("Mattermost-User-Id")
 	session, err := a.dictationService.CreateSession(c.Request.Context(), userID, req.SDP)
 	switch {
@@ -134,6 +138,10 @@ func (a *API) handleEndDictationSession(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	case errors.Is(err, dictation.ErrSessionNotFound):
 		abortDictation(c, http.StatusNotFound, dictation.ErrSessionNotFound)
+	case errors.Is(err, dictation.ErrProvider):
+		abortDictation(c, http.StatusBadGateway, dictation.ErrProvider)
+	case errors.Is(err, dictation.ErrRateLimited):
+		abortDictation(c, http.StatusTooManyRequests, dictation.ErrRateLimited)
 	default:
 		a.pluginAPI.Log.Error("Failed to end a dictation session", "error", err.Error())
 		abortDictation(c, http.StatusInternalServerError, errDictationUnavailable)

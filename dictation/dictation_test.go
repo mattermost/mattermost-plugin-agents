@@ -172,7 +172,7 @@ func TestSessionLeasesConcurrentAcquire(t *testing.T) {
 
 func TestRateLimiter(t *testing.T) {
 	clock := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
-	l := newRateLimiter()
+	l := newRateLimiter(sessionStartsPerWindow, sessionStartWindow)
 	l.now = func() time.Time { return clock }
 
 	for range sessionStartsPerWindow {

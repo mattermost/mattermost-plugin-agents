@@ -155,6 +155,7 @@ type Service struct {
 	users       UserGetter
 	log         Logger
 	limiter     *rateLimiter
+	endLimiter  *rateLimiter
 	leases      *sessionLeases
 	newClient   func(llm.ServiceConfig) (callClient, error)
 	maxDuration time.Duration
@@ -171,6 +172,10 @@ type Service struct {
 
 	mu       sync.Mutex
 	shutdown bool
+	// local cancels the watchers of calls this node started, by session.
+	local map[string]context.CancelFunc
+	// ending coalesces concurrent ends of the same session.
+	ending map[string]*endFlight
 	// siteState is the user-independent availability last seen by
 	// Reconcile; onAvailabilityChange runs when it changes.
 	siteState            Availability
@@ -200,11 +205,14 @@ func New(cfg Config, license LicenseChecker, access AccessChecker, users UserGet
 		access:      access,
 		users:       users,
 		log:         log,
-		limiter:     newRateLimiter(),
+		limiter:     newRateLimiter(sessionStartsPerWindow, sessionStartWindow),
+		endLimiter:  newRateLimiter(sessionEndsPerWindow, sessionStartWindow),
 		newClient:   newBifrostCallClient,
 		maxDuration: DefaultMaxSessionDuration,
 		ctx:         ctx,
 		cancel:      cancel,
+		local:       map[string]context.CancelFunc{},
+		ending:      map[string]*endFlight{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -371,7 +379,11 @@ func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*
 	s.mu.Unlock()
 	defer s.watchers.Done()
 
-	return s.startCall(ctx, userID, sessionID, r, offerSDP)
+	session, err := s.startCall(ctx, userID, sessionID, r, offerSDP)
+	if err == nil {
+		audit.AddParam(audit.RecordFromContext(ctx), audit.KeyDictationSessionID, sessionID)
+	}
+	return session, err
 }
 
 // startCall creates and attaches the call. On failure it frees the
@@ -389,9 +401,12 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 	req := r.request()
 	call, err := client.CreateTranscriptionCall(setupCtx, offerSDP, req)
 	if err != nil {
-		// The client hangs up a call it created before failing.
-		s.releaseLease(userID, sessionID)
 		s.log.Warn("Failed to create a dictation call", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
+		if created, ok := errors.AsType[*bifrost.CreatedCallError](err); ok {
+			s.endCall(client, created.CallID, userID, sessionID)
+		} else {
+			s.releaseLease(userID, sessionID)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
 	}
 
@@ -418,8 +433,10 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 		return nil, ErrSessionsShutdown
 	}
 	s.watchers.Add(1)
+	watchCtx, stopWatch := context.WithCancel(s.ctx)
+	s.local[sessionID] = stopWatch
 	s.mu.Unlock()
-	go s.watch(client, sb, call.CallID, userID, sessionID)
+	go s.watch(watchCtx, client, sb, call.CallID, userID, sessionID)
 
 	s.log.Info("Started a dictation session", "user_id", userID, "service_id", r.service.ID, "session_id", sessionID, "model", r.dictation.Model)
 	return &Session{
@@ -435,10 +452,18 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 // watch polices one call until its sideband stops, then hangs it up. A
 // dropped sideband doesn't prove the call ended, so the call is always hung
 // up before its slot is freed.
-func (s *Service) watch(client callClient, sb sideband, callID, userID, sessionID string) {
+func (s *Service) watch(ctx context.Context, client callClient, sb sideband, callID, userID, sessionID string) {
 	defer s.watchers.Done()
+	defer func() {
+		s.mu.Lock()
+		if stop, ok := s.local[sessionID]; ok {
+			stop()
+			delete(s.local, sessionID)
+		}
+		s.mu.Unlock()
+	}()
 
-	runCtx, cancel := context.WithTimeout(s.ctx, s.maxDuration)
+	runCtx, cancel := context.WithTimeout(ctx, s.maxDuration)
 	defer cancel()
 	err := sb.Run(runCtx)
 
@@ -448,6 +473,10 @@ func (s *Service) watch(client callClient, sb sideband, callID, userID, sessionI
 		reason = EndReasonPolicy
 	case s.ctx.Err() != nil:
 		reason = EndReasonShutdown
+	case ctx.Err() != nil:
+		// EndSession already hung up the call.
+		s.releaseLease(userID, sessionID)
+		return
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = EndReasonDurationLimit
 	}
@@ -494,16 +523,50 @@ func (s *Service) releaseLease(userID, sessionID string) {
 	}
 }
 
+type endFlight struct {
+	done chan struct{}
+	err  error
+}
+
 // EndSession hangs up userID's session and frees its slot. Any node can end
 // any session, since the call is recorded in shared storage. Ending a session
 // that already ended succeeds; a session that isn't userID's is
 // ErrSessionNotFound. It works whatever the current license or dictation
 // setting, so a call can always be ended. If the hangup fails, the slot
-// stays taken and ErrProvider is returned.
+// stays taken and ErrProvider is returned. Concurrent ends of one session
+// share a single hangup, and ends are rate limited per user.
 func (s *Service) EndSession(ctx context.Context, userID, sessionID string) error {
 	if s.leases == nil || !model.IsValidId(sessionID) {
 		return ErrSessionNotFound
 	}
+	if !s.endLimiter.allow(userID) {
+		return ErrRateLimited
+	}
+
+	key := userID + "/" + sessionID
+	s.mu.Lock()
+	if flight, ok := s.ending[key]; ok {
+		s.mu.Unlock()
+		select {
+		case <-flight.done:
+			return flight.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	flight := &endFlight{done: make(chan struct{})}
+	s.ending[key] = flight
+	s.mu.Unlock()
+
+	flight.err = s.endSession(ctx, userID, sessionID)
+	s.mu.Lock()
+	delete(s.ending, key)
+	s.mu.Unlock()
+	close(flight.done)
+	return flight.err
+}
+
+func (s *Service) endSession(ctx context.Context, userID, sessionID string) error {
 	l, err := s.leases.get(userID, sessionID)
 	if errors.Is(err, errLeaseNotFound) {
 		return ErrSessionNotFound
@@ -537,6 +600,15 @@ func (s *Service) EndSession(ctx context.Context, userID, sessionID string) erro
 		}
 	}
 	s.releaseLease(userID, sessionID)
+
+	// Stop this node's watcher now, in case the provider leaves its
+	// sideband open after the hangup.
+	s.mu.Lock()
+	if stop, ok := s.local[sessionID]; ok {
+		stop()
+		delete(s.local, sessionID)
+	}
+	s.mu.Unlock()
 	s.log.Info("Dictation session ended by its user", "user_id", userID, "session_id", sessionID)
 	return nil
 }

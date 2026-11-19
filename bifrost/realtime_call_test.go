@@ -94,14 +94,14 @@ func TestCreateTranscriptionCallFailsClosed(t *testing.T) {
 		name       string
 		setup      func(f *llmtest.FakeRealtime)
 		offer      string
-		wantHangup bool
+		wantCallID bool
 	}{
 		{name: "provider error", setup: func(f *llmtest.FakeRealtime) {
 			f.CallStatus = http.StatusInternalServerError
 			f.CallErrorMessage = upstreamSentinel + " " + testRealtimeAPIKey
 		}, offer: "v=0\r\n"},
 		{name: "no call ID", setup: func(f *llmtest.FakeRealtime) { f.OmitLocation = true }, offer: "v=0\r\n"},
-		{name: "not an SDP answer", setup: func(f *llmtest.FakeRealtime) { f.AnswerBody = "<html>" + upstreamSentinel + "</html>" }, offer: "v=0\r\n", wantHangup: true},
+		{name: "not an SDP answer", setup: func(f *llmtest.FakeRealtime) { f.AnswerBody = "<html>" + upstreamSentinel + "</html>" }, offer: "v=0\r\n", wantCallID: true},
 		{name: "empty offer", offer: ""},
 		{name: "oversized offer", offer: string(make([]byte, MaxSDPBytes+1))},
 	}
@@ -119,10 +119,13 @@ func TestCreateTranscriptionCallFailsClosed(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, call)
 			assert.NotContains(t, err.Error(), testRealtimeAPIKey)
-			if tt.wantHangup {
-				assert.Equal(t, []string{fake.LastCallID()}, fake.Hangups(), "a created call is hung up on any later failure")
-			} else {
-				assert.Empty(t, fake.Hangups())
+			// The client never hangs up itself: a created call is reported so
+			// the caller hangs it up with retries and keeps the slot on failure.
+			assert.Empty(t, fake.Hangups())
+			created, ok := errors.AsType[*CreatedCallError](err)
+			assert.Equal(t, tt.wantCallID, ok)
+			if ok {
+				assert.Equal(t, fake.LastCallID(), created.CallID)
 			}
 
 			for _, span := range exporter.GetSpans() {
@@ -208,6 +211,7 @@ func TestSessionEventMatches(t *testing.T) {
 		{name: "keywords added", expected: live, event: map[string]any{"type": "session.updated", "session": map[string]any{"type": "transcription", "audio": map[string]any{"input": map[string]any{"transcription": map[string]any{"model": "gpt-live-transcribe", "languages": []string{"en"}, "keywords": []string{"x"}}}}}}},
 		{name: "session type changed", expected: live, event: map[string]any{"type": "session.updated", "session": map[string]any{"type": "realtime", "model": "gpt-realtime"}}},
 		{name: "unreadable event", expected: live, event: "not an object"},
+		{name: "response generated", expected: live, event: map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -361,6 +365,10 @@ func TestGuardedDialer(t *testing.T) {
 		"metadata.test":             {net.ParseIP("169.254.169.254")},
 		"mapped-metadata.test":      {net.ParseIP("64:ff9b::a9fe:a9fe")},
 		"link-local6.test":          {net.ParseIP("fe80::1")},
+		"aws-imds6.test":            {net.ParseIP("fd00:ec2::254")},
+		"alibaba-metadata.test":     {net.ParseIP("100.100.100.200")},
+		"nat64-alibaba.test":        {net.ParseIP("64:ff9b::6464:64c8")},
+		"6to4-alibaba.test":         {net.ParseIP("2002:6464:64c8::")},
 	}
 	tests := []struct {
 		host        string
@@ -372,6 +380,10 @@ func TestGuardedDialer(t *testing.T) {
 		{host: "metadata.test"},
 		{host: "mapped-metadata.test"},
 		{host: "link-local6.test"},
+		{host: "aws-imds6.test"},
+		{host: "alibaba-metadata.test"},
+		{host: "nat64-alibaba.test"},
+		{host: "6to4-alibaba.test"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
@@ -440,6 +452,30 @@ func TestSidebandKeepsAliveWithPings(t *testing.T) {
 	require.Eventually(t, func() bool { return fake.Pings(call.CallID) >= 3 }, 5*time.Second, 10*time.Millisecond)
 	cancel()
 	assert.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestSidebandEndsWhenPongsStop(t *testing.T) {
+	fake := llmtest.NewFakeRealtime()
+	defer fake.Close()
+	fake.IgnorePings = true // a half-open connection: nothing comes back
+	c := newTestCallClient(t, fake)
+	req := TranscriptionSessionRequest{Model: "gpt-live-transcribe"}
+	call, err := c.CreateTranscriptionCall(context.Background(), "v=0\r\n", req)
+	require.NoError(t, err)
+	sb, err := c.Attach(context.Background(), call.CallID, req)
+	require.NoError(t, err)
+	require.True(t, fake.WaitAttached(call.CallID, 5*time.Second))
+	sb.pingInterval = 20 * time.Millisecond
+	sb.pongGrace = 20 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() { done <- sb.Run(context.Background()) }()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, ErrSidebandClosed, "a dead sideband ends Run so the caller hangs up")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "Run kept waiting on a dead sideband")
+	}
 }
 
 func TestHangupTreatsMissingCallAsEnded(t *testing.T) {

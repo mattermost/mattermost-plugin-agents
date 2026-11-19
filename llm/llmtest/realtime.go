@@ -35,6 +35,7 @@ type FakeRealtime struct {
 	hangupAttempts []string
 	conns          map[string]*websocket.Conn
 	pings          map[string]int
+	closed         map[string]bool
 	attached       map[string]chan struct{}
 
 	// CallStatus, when set, fails call creation with that status and an
@@ -53,11 +54,18 @@ type FakeRealtime struct {
 	HangupFailures int
 	// HangupStatus, when set, answers every hangup with that status.
 	HangupStatus int
+	// HangupDelay delays every hangup.
+	HangupDelay time.Duration
+	// KeepSidebandOnHangup leaves the sideband open after a hangup, as some
+	// gateways do.
+	KeepSidebandOnHangup bool
+	// IgnorePings stops answering sideband pings, like a dead connection.
+	IgnorePings bool
 }
 
 // NewFakeRealtime starts a FakeRealtime. Close it when done.
 func NewFakeRealtime() *FakeRealtime {
-	f := &FakeRealtime{conns: map[string]*websocket.Conn{}, pings: map[string]int{}, attached: map[string]chan struct{}{}}
+	f := &FakeRealtime{conns: map[string]*websocket.Conn{}, pings: map[string]int{}, closed: map[string]bool{}, attached: map[string]chan struct{}{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/realtime/calls", f.createCall)
 	mux.HandleFunc("POST /v1/realtime/calls/{id}/hangup", f.hangup)
@@ -140,6 +148,12 @@ func readMultipartFields(r *http.Request) (map[string]string, error) {
 func (f *FakeRealtime) hangup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	f.mu.Lock()
+	delay := f.HangupDelay
+	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	f.mu.Lock()
 	f.hangupAttempts = append(f.hangupAttempts, id)
 	status := f.HangupStatus
 	if status == 0 && f.HangupFailures > 0 {
@@ -153,8 +167,9 @@ func (f *FakeRealtime) hangup(w http.ResponseWriter, r *http.Request) {
 	}
 	f.hangups = append(f.hangups, id)
 	conn := f.conns[id]
+	keep := f.KeepSidebandOnHangup
 	f.mu.Unlock()
-	if conn != nil {
+	if conn != nil && !keep {
 		_ = conn.Close()
 	}
 	w.WriteHeader(http.StatusOK)
@@ -181,7 +196,11 @@ func (f *FakeRealtime) sideband(w http.ResponseWriter, r *http.Request) {
 	conn.SetPingHandler(func(data string) error {
 		f.mu.Lock()
 		f.pings[id]++
+		ignore := f.IgnorePings
 		f.mu.Unlock()
+		if ignore {
+			return nil
+		}
 		return conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
 	})
 	f.mu.Lock()
@@ -191,6 +210,9 @@ func (f *FakeRealtime) sideband(w http.ResponseWriter, r *http.Request) {
 	// Drain so the server side sees a close.
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
+			f.mu.Lock()
+			f.closed[id] = true
+			f.mu.Unlock()
 			return
 		}
 	}
@@ -273,6 +295,13 @@ func (f *FakeRealtime) Pings(callID string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.pings[callID]
+}
+
+// SidebandClosed reports whether the sideband of callID has closed.
+func (f *FakeRealtime) SidebandClosed(callID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed[callID]
 }
 
 // HangupAttempts returns every hangup request, failed ones included.
