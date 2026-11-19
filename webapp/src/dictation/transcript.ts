@@ -75,43 +75,38 @@ export class Transcript {
 
 const SENTENCE_END = /[.!?…]["'”’)\]]*$/u;
 
-// A plain capitalized word: "In", "Christopher", "Don't". Acronyms and
-// mixed-case terms such as "QA" or "OAuth" don't match and keep their case.
-const PLAIN_CAPITALIZED = /^\p{Lu}\p{Ll}*(['’]\p{Ll}+)?$/u;
-const PRONOUN_I = /^I(['’]\p{Ll}+)?$/u;
+// Words that can continue a sentence and are never names. Only these lose a
+// segment's leading capital: a wrongly lowercased name ("christopher",
+// "monday") is worse than a stray capital. "May", "Will" and "June" are left
+// out because they are also months or names, and "I" always stays capital.
+const CONTINUATION_WORDS = new Set([
+    'a', 'an', 'the', 'this', 'that', 'these', 'those', 'some', 'any', 'each', 'every', 'all', 'both', 'either', 'neither', 'no', 'not', 'other', 'such', 'more', 'most',
+    'and', 'but', 'or', 'nor', 'so', 'yet', 'then', 'than', 'because', 'if', 'when', 'while', 'where', 'whether', 'although', 'though', 'unless', 'once', 'since', 'until',
+    'of', 'in', 'on', 'at', 'to', 'for', 'from', 'with', 'without', 'by', 'about', 'as', 'into', 'onto', 'over', 'under', 'after', 'before', 'during', 'between', 'through', 'across', 'against', 'along', 'among', 'around', 'per', 'via', 'up', 'down', 'out', 'off', 'like',
+    'which', 'who', 'whom', 'whose', 'what', 'how', 'why', 'there', 'here',
+    'it', 'its', 'we', 'us', 'our', 'you', 'your', 'he', 'him', 'his', 'she', 'her', 'they', 'them', 'their', 'me', 'my',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am', 'do', 'does', 'did', 'have', 'has', 'had', 'would', 'can', 'could', 'should', 'might', 'must', 'shall',
+    'also', 'just', 'still', 'even', 'only', 'maybe', 'again', 'too', 'very', 'really',
+    "it's", "that's", "there's", "we're", "you're", "they're", "we'll", "you'll", "it'll", "they'll", "we've", "you've", "they've",
+    "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't", "won't", "can't", "couldn't", "shouldn't", "wouldn't",
+]);
 
-const bareWord = (token: string) => token.replace(/^[^\p{L}]+|[^\p{L}'’]+$/gu, '');
-
-// wordsCapitalizedMidSentence collects words the transcript capitalizes
-// where no sentence starts, which marks them as proper nouns.
-function wordsCapitalizedMidSentence(texts: string[]): Set<string> {
-    const words = new Set<string>();
-    for (const text of texts) {
-        const tokens = text.split(/\s+/);
-        for (let i = 1; i < tokens.length; i++) {
-            const word = bareWord(tokens[i]);
-            if (!SENTENCE_END.test(tokens[i - 1]) && (/^\p{Lu}/u).test(word)) {
-                words.add(word);
-            }
-        }
-    }
-    return words;
-}
+const firstWord = (text: string) => text.split(/\s+/, 1)[0].replace(/[^\p{L}'’]+$/u, '').replace(/’/g, "'");
 
 // joinSegments joins segments in speaking order. Each segment is transcribed
 // as a standalone utterance and starts with a capital, so a segment that
-// continues an unfinished sentence gets its first letter lowercased, unless
-// that word is "I" or a proper noun.
+// continues an unfinished sentence and starts with a continuation word gets
+// that capital lowered.
 export function joinSegments(texts: string[]): string {
-    const properNouns = wordsCapitalizedMidSentence(texts);
     return texts.map((text, i) => {
         if (i === 0 || SENTENCE_END.test(texts[i - 1])) {
             return text;
         }
-        const word = bareWord(text.split(/\s+/, 1)[0]);
-        if (!PLAIN_CAPITALIZED.test(word) || PRONOUN_I.test(word) || properNouns.has(word) || !text.startsWith(word.charAt(0))) {
+        const word = firstWord(text);
+        const lower = word.toLowerCase();
+        if (!CONTINUATION_WORDS.has(lower) || word !== lower.charAt(0).toUpperCase() + lower.slice(1)) {
             return text;
         }
-        return word.charAt(0).toLowerCase() + text.slice(1);
+        return text.charAt(0).toLowerCase() + text.slice(1);
     }).join(' ');
 }
