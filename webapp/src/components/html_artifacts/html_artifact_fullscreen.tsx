@@ -98,8 +98,8 @@ const HTMLArtifactFullscreen = ({
     // The viewer covers the inline card: a prompt pending there would be
     // invisible, so drop it and let this frame ask instead.
     useEffect(() => {
-        cancelPendingConsent(fileId);
-    }, [fileId]);
+        cancelPendingConsent(artifactKind === 'library' ? undefined : fileId); // eslint-disable-line no-undefined
+    }, [fileId, artifactKind]);
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
 
@@ -171,19 +171,30 @@ const HTMLArtifactFullscreen = ({
         }
         setRestoring(true);
         setRemoveError(false);
+        const removed = viewVersion;
+        let entry;
         try {
-            const entry = await deleteChannelArtifactVersion(fileId, viewVersion);
-            store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
-            setHead(entry.version);
-            setViewVersion(entry.version);
-            const resp = await listChannelArtifactVersions(fileId);
-            setVersions((resp.versions || []).slice().sort((a, b) => b.version - a.version));
-            frameRef.current?.reload(true);
+            entry = await deleteChannelArtifactVersion(fileId, removed);
         } catch {
             setRemoveError(true);
-        } finally {
             setRestoring(false);
+            return;
         }
+
+        // The version is gone. Show that from what is already known, then try to
+        // refresh the list; a failed refresh must not read as a failed removal.
+        store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
+        setHead(entry.version);
+        setViewVersion(entry.version);
+        setVersions((current) => current.filter((v) => v.version !== removed).map((v) => ({...v, head: v.version === entry.version})));
+        frameRef.current?.reload(true);
+        try {
+            const resp = await listChannelArtifactVersions(fileId);
+            setVersions((resp.versions || []).slice().sort((a, b) => b.version - a.version));
+        } catch {
+            // Keep the locally updated list.
+        }
+        setRestoring(false);
     };
 
     const onRestore = async () => {

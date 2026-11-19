@@ -17,6 +17,7 @@ import {
 import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 
+import {cancelPendingConsent} from './artifact_broker';
 import HTMLArtifactFullscreen from './html_artifact_fullscreen';
 
 jest.mock('@/client', () => ({
@@ -37,6 +38,8 @@ jest.mock('react-intl', () => {
 });
 
 const mockFrameMounts = {count: 0};
+
+jest.mock('./artifact_broker', () => ({cancelPendingConsent: jest.fn()}));
 
 jest.mock('./artifact_frame', () => {
     const {forwardRef, useEffect} = jest.requireActual('react') as typeof import('react');
@@ -193,5 +196,27 @@ describe('HTMLArtifactFullscreen restore', () => {
         await waitFor(() => expect(screen.getByTestId('artifact-frame')).toBeTruthy());
         expect(mockFrameMounts.count).toBeGreaterThan(before);
         expect(screen.getAllByTestId('artifact-frame')).toHaveLength(1);
+    });
+
+    test('a library viewer drops a prompt pending on any other frame', async () => {
+        jest.mocked(cancelPendingConsent).mockClear();
+        renderViewer();
+        await screen.findByTestId('html-artifact-version-select');
+        expect(cancelPendingConsent).toHaveBeenCalledWith(undefined); // eslint-disable-line no-undefined
+    });
+
+    test('a removed version stays removed when the list refresh fails', async () => {
+        jest.spyOn(window, 'confirm').mockReturnValue(true);
+        jest.mocked(deleteChannelArtifactVersion).mockResolvedValue({...restored, version: 1});
+        renderViewer();
+        const select = await screen.findByTestId('html-artifact-version-select');
+        fireEvent.change(select, {target: {value: '2'}});
+        jest.mocked(listChannelArtifactVersions).mockRejectedValue(new Error('list down'));
+        fireEvent.click(screen.getByTestId('html-artifact-remove-version'));
+
+        await waitFor(() => expect(deleteChannelArtifactVersion).toHaveBeenCalledWith(fileId, 2));
+        await waitFor(() => expect(screen.queryByTestId('html-artifact-remove-version')).toBeNull());
+        expect(screen.queryByTestId('html-artifact-remove-version-error')).toBeNull();
+        expect(screen.queryByText(/^v2 /)).toBeNull();
     });
 });
