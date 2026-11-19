@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/codes"
+	"golang.org/x/net/dns/dnsmessage"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
@@ -273,56 +275,120 @@ func TestAttachFailure(t *testing.T) {
 	assert.NotContains(t, err.Error(), testRealtimeAPIKey)
 }
 
-type fakeResolver map[string][]net.IP
-
-func (r fakeResolver) LookupIP(_ context.Context, _, host string) ([]net.IP, error) {
-	return r[host], nil
+// fakeDNSResolver answers A and AAAA queries for each host with its listed
+// addresses, in order, so tests can resolve a name to several addresses.
+func fakeDNSResolver(t *testing.T, hosts map[string][]net.IP) *net.Resolver {
+	t.Helper()
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			client, server := net.Pipe()
+			go serveFakeDNS(server, hosts)
+			return client, nil
+		},
+	}
 }
 
-func TestGuardedDialContext(t *testing.T) {
-	resolver := fakeResolver{
-		"metadata.internal": {net.ParseIP("169.254.169.254")},
-		"mixed.example":     {net.ParseIP("203.0.113.7"), net.ParseIP("169.254.169.254")},
-		"mapped.example":    {net.ParseIP("::ffff:169.254.169.254")},
-		"zero.example":      {net.ParseIP("0.0.0.0")},
-		"v6zero.example":    {net.ParseIP("::")},
-		"linklocal6":        {net.ParseIP("fe80::1")},
-		"multicast.example": {net.ParseIP("224.0.0.1")},
-		"public.example":    {net.ParseIP("203.0.113.7")},
-		"private.example":   {net.ParseIP("10.1.2.3")},
-		"loopback.example":  {net.ParseIP("127.0.0.1")},
+// serveFakeDNS speaks DNS over a stream connection: each message is
+// prefixed with its two-byte length.
+func serveFakeDNS(conn net.Conn, hosts map[string][]net.IP) {
+	defer conn.Close()
+	for {
+		var size [2]byte
+		if _, err := io.ReadFull(conn, size[:]); err != nil {
+			return
+		}
+		msg := make([]byte, int(size[0])<<8|int(size[1]))
+		if _, err := io.ReadFull(conn, msg); err != nil {
+			return
+		}
+		var parser dnsmessage.Parser
+		header, err := parser.Start(msg)
+		if err != nil {
+			return
+		}
+		question, err := parser.Question()
+		if err != nil {
+			return
+		}
+		builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: header.ID, Response: true, Authoritative: true})
+		_ = builder.StartQuestions()
+		_ = builder.Question(question)
+		_ = builder.StartAnswers()
+		name := strings.TrimSuffix(question.Name.String(), ".")
+		for _, ip := range hosts[name] {
+			rh := dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET, TTL: 60}
+			if v4 := ip.To4(); v4 != nil && question.Type == dnsmessage.TypeA {
+				_ = builder.AResource(rh, dnsmessage.AResource{A: [4]byte(v4)})
+			} else if v4 == nil && question.Type == dnsmessage.TypeAAAA {
+				_ = builder.AAAAResource(rh, dnsmessage.AAAAResource{AAAA: [16]byte(ip.To16())})
+			}
+		}
+		reply, err := builder.Finish()
+		if err != nil {
+			return
+		}
+		if _, err = conn.Write(append([]byte{byte(len(reply) >> 8), byte(len(reply))}, reply...)); err != nil {
+			return
+		}
+	}
+}
+
+func TestGuardedDialer(t *testing.T) {
+	// The listener is on 127.0.0.2, and nothing listens on its port at
+	// 127.0.0.1, so 127.0.0.1 is reachable but refuses the connection.
+	listener, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Skip("127.0.0.2 is not available:", err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+
+	hosts := map[string][]net.IP{
+		"blocked-then-allowed.test": {net.ParseIP("169.254.169.254"), net.ParseIP("127.0.0.2")},
+		"unreachable-first.test":    {net.ParseIP("127.0.0.1"), net.ParseIP("127.0.0.2")},
+		"all-blocked.test":          {net.ParseIP("169.254.169.254"), net.ParseIP("0.0.0.0"), net.ParseIP("224.0.0.1")},
+		"metadata.test":             {net.ParseIP("169.254.169.254")},
+		"mapped-metadata.test":      {net.ParseIP("64:ff9b::a9fe:a9fe")},
+		"link-local6.test":          {net.ParseIP("fe80::1")},
 	}
 	tests := []struct {
 		host        string
-		wantBlocked bool
+		wantConnect bool
 	}{
-		{"metadata.internal", true},
-		{"mixed.example", true},
-		{"mapped.example", true},
-		{"zero.example", true},
-		{"v6zero.example", true},
-		{"linklocal6", true},
-		{"multicast.example", true},
-		{"public.example", false},
-		{"private.example", false},
-		{"loopback.example", false},
+		{host: "blocked-then-allowed.test", wantConnect: true},
+		{host: "unreachable-first.test", wantConnect: true},
+		{host: "all-blocked.test"},
+		{host: "metadata.test"},
+		{host: "mapped-metadata.test"},
+		{host: "link-local6.test"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
-			dialed := ""
-			dial := guardedDialContext(resolver, func(_ context.Context, _, addr string) (net.Conn, error) {
-				dialed = addr
-				return nil, errors.New("not dialing in tests")
-			})
-			_, err := dial(context.Background(), "tcp", net.JoinHostPort(tt.host, "443"))
-			require.Error(t, err)
-			if tt.wantBlocked {
-				assert.Empty(t, dialed, "a blocked address is never dialed")
+			dialer := newGuardedDialer()
+			dialer.Resolver = fakeDNSResolver(t, hosts)
+			dialer.Timeout = 2 * time.Second
+
+			conn, err := dialer.DialContext(context.Background(), "tcp", net.JoinHostPort(tt.host, port))
+			if !tt.wantConnect {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "blocked connection")
 				return
 			}
-			// The checked IP is dialed, not the name, so a second lookup
-			// can't swap the address.
-			assert.Equal(t, net.JoinHostPort(resolver[tt.host][0].String(), "443"), dialed)
+			require.NoError(t, err)
+			defer conn.Close()
+			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+			assert.Equal(t, "127.0.0.2", host)
 		})
 	}
 }
@@ -351,6 +417,29 @@ func TestSidebandOversizedEvent(t *testing.T) {
 		_ = fake.SendEvent(call.CallID, map[string]string{"type": "session.updated", "padding": strings.Repeat("x", realtimeEventMaxBytes+1)})
 	}()
 	assert.ErrorIs(t, sb.Run(context.Background()), ErrSessionChanged)
+}
+
+func TestSidebandKeepsAliveWithPings(t *testing.T) {
+	fake := llmtest.NewFakeRealtime()
+	defer fake.Close()
+	c := newTestCallClient(t, fake)
+	req := TranscriptionSessionRequest{Model: "gpt-live-transcribe"}
+	call, err := c.CreateTranscriptionCall(context.Background(), "v=0\r\n", req)
+	require.NoError(t, err)
+	sb, err := c.Attach(context.Background(), call.CallID, req)
+	require.NoError(t, err)
+	require.True(t, fake.WaitAttached(call.CallID, 5*time.Second))
+	assert.Equal(t, sidebandPingInterval, sb.pingInterval)
+	sb.pingInterval = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sb.Run(ctx) }()
+
+	// A quiet session still pings, so an idle proxy doesn't drop it.
+	require.Eventually(t, func() bool { return fake.Pings(call.CallID) >= 3 }, 5*time.Second, 10*time.Millisecond)
+	cancel()
+	assert.ErrorIs(t, <-done, context.Canceled)
 }
 
 func TestHangupTreatsMissingCallAsEnded(t *testing.T) {

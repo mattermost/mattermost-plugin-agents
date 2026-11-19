@@ -58,7 +58,7 @@ Users who can't dictate don't see the button. They aren't told whether the cause
 
 The plugin talks to OpenAI to create and end sessions, and each user's browser or desktop app sends audio to OpenAI itself.
 
-- The Mattermost Server needs HTTPS and WebSocket (`wss`) access to the service's API host (`api.openai.com` unless the service sets an **API URL**). It uses the server's proxy settings (`HTTPS_PROXY`). The plugin refuses API hosts that resolve to link-local (including cloud metadata), multicast or unspecified addresses.
+- The Mattermost Server needs HTTPS and WebSocket (`wss`) access to the service's API host (`api.openai.com` unless the service sets an **API URL**). It uses the server's proxy settings (`HTTPS_PROXY`). The plugin never connects to link-local (including cloud metadata), multicast or unspecified addresses, whatever the API host resolves to.
 - Browsers need WebRTC media traffic to OpenAI, over UDP or a TCP fallback. Networks where only the Mattermost Server can reach the internet can't use dictation.
 - A reverse proxy that adds a `Permissions-Policy` with `microphone=()` blocks dictation. Allow `microphone=(self)` for the Mattermost origin. Mattermost doesn't set this header itself.
 - Mattermost must be served over HTTPS (or `localhost`), because browsers only allow microphone access on secure pages.

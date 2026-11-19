@@ -34,6 +34,7 @@ type FakeRealtime struct {
 	// hangupAttempts includes failed hangups.
 	hangupAttempts []string
 	conns          map[string]*websocket.Conn
+	pings          map[string]int
 	attached       map[string]chan struct{}
 
 	// CallStatus, when set, fails call creation with that status and an
@@ -56,7 +57,7 @@ type FakeRealtime struct {
 
 // NewFakeRealtime starts a FakeRealtime. Close it when done.
 func NewFakeRealtime() *FakeRealtime {
-	f := &FakeRealtime{conns: map[string]*websocket.Conn{}, attached: map[string]chan struct{}{}}
+	f := &FakeRealtime{conns: map[string]*websocket.Conn{}, pings: map[string]int{}, attached: map[string]chan struct{}{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/realtime/calls", f.createCall)
 	mux.HandleFunc("POST /v1/realtime/calls/{id}/hangup", f.hangup)
@@ -177,6 +178,12 @@ func (f *FakeRealtime) sideband(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetPingHandler(func(data string) error {
+		f.mu.Lock()
+		f.pings[id]++
+		f.mu.Unlock()
+		return conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
+	})
 	f.mu.Lock()
 	f.conns[id] = conn
 	f.mu.Unlock()
@@ -259,6 +266,13 @@ func (f *FakeRealtime) Hangups() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.hangups...)
+}
+
+// Pings returns how many WebSocket pings the sideband of callID received.
+func (f *FakeRealtime) Pings(callID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pings[callID]
 }
 
 // HangupAttempts returns every hangup request, failed ones included.
