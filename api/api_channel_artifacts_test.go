@@ -497,3 +497,32 @@ func TestMCPChannelArtifactsServeToolsInProcess(t *testing.T) {
 	_, err = svc.List(ctx, testUserID, f.channelID)
 	require.ErrorIs(t, err, errChannelArtifactsUnavailable)
 }
+
+func TestChannelArtifactRoutesRefuseDirectAndGroupMessages(t *testing.T) {
+	for _, channelType := range []model.ChannelType{model.ChannelTypeDirect, model.ChannelTypeGroup} {
+		t.Run(string(channelType), func(t *testing.T) {
+			f := newLibraryFixture(t)
+			postID, fileID := f.addSource(t, f.botID, "<html>x</html>")
+			f.setChannelType(channelType)
+
+			tests := []struct {
+				name   string
+				method string
+				path   string
+				body   string
+			}{
+				{name: "list", method: http.MethodGet, path: "/channel-artifacts?channel_id=" + f.channelID},
+				{name: "save", method: http.MethodPost, path: "/channel-artifacts", body: f.createBody(postID, fileID, "")},
+				{name: "mcp list", method: http.MethodPost, path: tools.ChannelArtifactsListPath, body: `{"channel_id":"` + f.channelID + `"}`},
+			}
+			for _, tt := range tests {
+				rec := f.do(tt.method, tt.path, tt.body)
+				assert.Equal(t, http.StatusNotFound, rec.Code, "%s: %s", tt.name, rec.Body.String())
+			}
+
+			var rows int
+			require.NoError(t, f.db.Get(&rows, `SELECT COUNT(*) FROM Agents_ChannelArtifacts WHERE ChannelID = $1`, f.channelID))
+			assert.Zero(t, rows)
+		})
+	}
+}

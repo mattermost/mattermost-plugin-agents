@@ -94,6 +94,9 @@ type libraryFixture struct {
 	channelID string
 	botID     string
 
+	// channelType is the type Mattermost reports for the fixture's channels.
+	channelType model.ChannelType
+
 	mu      *sync.Mutex
 	denied  map[*model.Permission]bool
 	policy  bool
@@ -109,7 +112,7 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 
 	f := &libraryFixture{
 		e: e, db: artifactTestDB(t), mm: mocks.NewMockClient(t),
-		channelID: model.NewId(), botID: model.NewId(),
+		channelID: model.NewId(), botID: model.NewId(), channelType: model.ChannelTypeOpen,
 		mu: &sync.Mutex{}, denied: map[*model.Permission]bool{}, policy: true, content: map[string]string{},
 	}
 	f.svc = channelartifacts.NewService(channelartifacts.NewStore(f.db), f.mm, artifactBots{f.botID: "Helper"})
@@ -117,7 +120,9 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 	e.api.mmClient = f.mm
 
 	f.mm.EXPECT().GetChannel(mock.Anything).RunAndReturn(func(id string) (*model.Channel, error) {
-		return &model.Channel{Id: id, Type: model.ChannelTypeOpen}, nil
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return &model.Channel{Id: id, Type: f.channelType}, nil
 	}).Maybe()
 	f.mm.EXPECT().HasPermissionToChannel(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
 		func(_, _ string, p *model.Permission) bool {
@@ -175,6 +180,13 @@ func (f *libraryFixture) save(t *testing.T, title, html string) *channelartifact
 	}, channelartifacts.Limits{MaxSize: 1 << 20})
 	require.NoError(t, err)
 	return entry
+}
+
+// setChannelType changes the type Mattermost reports for the fixture's channels.
+func (f *libraryFixture) setChannelType(channelType model.ChannelType) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.channelType = channelType
 }
 
 func (f *libraryFixture) denyPermission(p *model.Permission) {

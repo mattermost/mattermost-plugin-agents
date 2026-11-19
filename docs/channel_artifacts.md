@@ -26,7 +26,7 @@ Anyone who can read the channel can open its saved artifacts. Changing the libra
 | Rename, add a version, restore a version | Edit bookmarks |
 | Remove an artifact or a version | Delete bookmarks |
 
-In direct and group messages, any member who isn't a guest can manage the library. Archived channels are read-only. System admins have these permissions in every channel.
+Libraries exist only in public and private channels. Direct and group messages have none: the panel and save control are hidden there, the agent tools aren't offered, and the routes answer "not found". Archived channels are read-only. System admins have these permissions in every channel.
 
 ## What can be saved
 
@@ -45,14 +45,14 @@ Back up the library with the plugin's database tables. See [Back up and automate
 
 ## Agents and the library
 
-Agents can read the library with the `list_channel_artifacts` and `get_channel_artifact` tools, which are read-only. See [Mattermost MCP tool reference](mcp_tools.md#channel-artifacts). The tools aren't offered while the library is off.
+Agents can read the library with the `list_channel_artifacts` and `get_channel_artifact` tools, which are read-only. See [Mattermost MCP tool reference](mcp_tools.md#channel-artifacts). The tools aren't offered while the library is off, or to an agent request that isn't in a public or private channel.
 
 Agents can also manage the library directly with two built-in tools:
 
 - `SaveChannelArtifact` saves HTML as a new artifact, or as a new version of an existing one. Given HTML content, it posts that content to the channel as a message from the agent, with the file attached, and records that message as the version. It can also record an HTML file already attached to one of the agent's posts in the channel.
 - `RemoveChannelArtifact` removes a library entry.
 
-Both tools ask for approval by default and work only in the channel the request came from. The requesting user must hold the matching bookmark permission, and the server checks it on every call. See [Approve tool calls](tool_approval.md).
+Both tools ask for approval by default and work only in the channel the request came from. They aren't offered in direct or group messages, and the read tools aren't offered there either. The requesting user must hold the matching bookmark permission, and the server checks it on every call. See [Approve tool calls](tool_approval.md).
 
 Because each save through `SaveChannelArtifact` posts a message, the message is visible to everyone in the channel and follows the channel's retention.
 

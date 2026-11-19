@@ -114,15 +114,15 @@ const (
 // provider hides them when the library is turned off.
 func (p *MattermostToolProvider) getChannelArtifactTools() []MCPTool {
 	return []MCPTool{
-		mcpReadTool(p, "list_channel_artifacts", listChannelArtifactsDescription, p.toolListChannelArtifacts),
-		mcpReadTool(p, "get_channel_artifact", getChannelArtifactDescription, p.toolGetChannelArtifact),
+		mcpReadTool(p, channelartifacts.ListToolName, listChannelArtifactsDescription, p.toolListChannelArtifacts),
+		mcpReadTool(p, channelartifacts.GetToolName, getChannelArtifactDescription, p.toolGetChannelArtifact),
 	}
 }
 
 // channelArtifactToolNames are the tools the library switch hides.
 var channelArtifactToolNames = map[string]struct{}{
-	"list_channel_artifacts": {},
-	"get_channel_artifact":   {},
+	channelartifacts.ListToolName: {},
+	channelartifacts.GetToolName:  {},
 }
 
 func (p *MattermostToolProvider) toolListChannelArtifacts(mcpContext *MCPToolContext, args ListChannelArtifactsArgs) (string, error) {

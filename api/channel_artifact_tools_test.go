@@ -195,6 +195,17 @@ func TestAgentWritesAreBoundToTheRequestsPermissionsAndChannel(t *testing.T) {
 		assert.Zero(t, e.uploads)
 	})
 
+	t.Run("tools are not offered in direct or group messages", func(t *testing.T) {
+		for _, channelType := range []model.ChannelType{model.ChannelTypeDirect, model.ChannelTypeGroup} {
+			e := newArtifactToolEnv(t)
+			e.llmCtx.Channel.Type = channelType
+			assert.Empty(t, e.tools.Tools(e.llmCtx), channelType)
+		}
+		e := newArtifactToolEnv(t)
+		e.llmCtx.Channel.Type = model.ChannelTypePrivate
+		assert.Len(t, e.tools.Tools(e.llmCtx), 2)
+	})
+
 	t.Run("tools are hidden while the library is off or without a requester", func(t *testing.T) {
 		e := newArtifactToolEnv(t)
 		assert.Len(t, e.tools.Tools(e.llmCtx), 2)
