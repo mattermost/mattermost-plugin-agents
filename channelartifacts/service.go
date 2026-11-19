@@ -193,16 +193,11 @@ func (s *Service) Versions(userID, id string) ([]VersionRecord, error) {
 	return versions, nil
 }
 
-// VersionOf returns one version of an entry the caller may already read.
-// version 0 means the current version.
+// VersionOf returns one version of an entry the caller may already read, as
+// stored: who saved it and when. version 0 means the current version.
 func (s *Service) VersionOf(entry *Entry, version int) (*VersionRecord, error) {
-	if version == 0 || version == entry.Version {
-		return &VersionRecord{
-			Version: entry.Version, SHA256: entry.SHA256, Size: entry.Size,
-			SourcePostID: entry.SourcePostID, SourceFileID: entry.SourceFileID,
-			SourceBotUserID: entry.SourceBotUserID, SourceAgentDisplayName: entry.SourceAgentDisplayName, CreatedBy: entry.CreatedBy,
-			Head: true, Available: entry.Available,
-		}, nil
+	if version == 0 {
+		version = entry.Version
 	}
 	rec, err := s.store.Version(entry.ID, version)
 	if err != nil {
@@ -212,6 +207,19 @@ func (s *Service) VersionOf(entry *Entry, version int) (*VersionRecord, error) {
 		rec.SourceAgentDisplayName = s.bots.AgentDisplayName(rec.SourceBotUserID)
 	}
 	return rec, nil
+}
+
+// sourceOf is VersionOf for what reading needs: where the version's content
+// lives and its hash. The current version comes from the entry without a query.
+func (s *Service) sourceOf(entry *Entry, version int) (*VersionRecord, error) {
+	if version == 0 || version == entry.Version {
+		return &VersionRecord{
+			Version: entry.Version, SHA256: entry.SHA256, Size: entry.Size,
+			SourcePostID: entry.SourcePostID, SourceFileID: entry.SourceFileID,
+			SourceBotUserID: entry.SourceBotUserID, Head: true, Available: entry.Available,
+		}, nil
+	}
+	return s.store.Version(entry.ID, version)
 }
 
 // IsHTMLFile reports whether the file is an HTML document by extension.
@@ -469,7 +477,7 @@ func (s *Service) Delete(userID, id string) (*Entry, error) {
 // a denied policy is ErrNotFound, a deleted source or changed content is
 // ErrUnavailable.
 func (s *Service) ReadContent(sessionID string, entry *Entry, version int, maxSize int64) ([]byte, error) {
-	rec, err := s.VersionOf(entry, version)
+	rec, err := s.sourceOf(entry, version)
 	if err != nil {
 		return nil, err
 	}
