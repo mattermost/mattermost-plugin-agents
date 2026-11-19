@@ -37,49 +37,59 @@ func hashHex(body []byte) string {
 
 const testHTML = "<html>dashboard</html>"
 
-func TestServiceCan(t *testing.T) {
+func TestServiceCanAndCanRead(t *testing.T) {
 	user := model.NewId()
 	channelID := model.NewId()
+	readOnly := map[*model.Permission]bool{model.PermissionReadChannel: true}
+	everything := map[*model.Permission]bool{
+		model.PermissionReadChannel:                  true,
+		model.PermissionAddBookmarkPublicChannel:     true,
+		model.PermissionEditBookmarkPublicChannel:    true,
+		model.PermissionDeleteBookmarkPublicChannel:  true,
+		model.PermissionAddBookmarkPrivateChannel:    true,
+		model.PermissionDeleteBookmarkPrivateChannel: true,
+		model.PermissionEditBookmarkPrivateChannel:   true,
+		model.PermissionOrderBookmarkPublicChannel:   true,
+		model.PermissionOrderBookmarkPrivateChannel:  true,
+	}
 
 	tests := []struct {
-		name    string
-		channel *model.Channel
-		getErr  error
-		guest   bool
-		allowed map[*model.Permission]bool
-		op      channelartifacts.Op
-		want    bool
+		name     string
+		channel  *model.Channel
+		getErr   error
+		allowed  map[*model.Permission]bool
+		op       channelartifacts.Op
+		wantCan  bool
+		wantRead bool
 	}{
 		{
-			name: "public channel with the add permission", op: channelartifacts.OpAdd, want: true,
+			name: "public channel with the add permission", op: channelartifacts.OpAdd, wantCan: true, wantRead: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
-			allowed: map[*model.Permission]bool{model.PermissionAddBookmarkPublicChannel: true},
+			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true, model.PermissionAddBookmarkPublicChannel: true},
 		},
 		{
-			name: "public channel without the edit permission", op: channelartifacts.OpEdit,
+			name: "public channel without the edit permission", op: channelartifacts.OpEdit, wantRead: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen},
-			allowed: map[*model.Permission]bool{model.PermissionAddBookmarkPublicChannel: true},
+			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true, model.PermissionAddBookmarkPublicChannel: true},
 		},
 		{
-			name: "private channel uses the private delete permission", op: channelartifacts.OpDelete, want: true,
+			name: "private channel uses the private delete permission", op: channelartifacts.OpDelete, wantCan: true, wantRead: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypePrivate},
-			allowed: map[*model.Permission]bool{model.PermissionDeleteBookmarkPrivateChannel: true},
+			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true, model.PermissionDeleteBookmarkPrivateChannel: true},
 		},
 		{
-			name: "archived channel is denied even with the permission", op: channelartifacts.OpAdd,
+			name: "archived channel is readable but not writable", op: channelartifacts.OpAdd, wantRead: true,
 			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeOpen, DeleteAt: 1},
-			allowed: map[*model.Permission]bool{model.PermissionAddBookmarkPublicChannel: true},
+			allowed: everything,
 		},
-		{name: "lookup failure fails closed", op: channelartifacts.OpAdd, getErr: errors.New("db down")},
+		{name: "lookup failure fails closed", op: channelartifacts.OpAdd, getErr: errors.New("db down"), allowed: everything},
 		{
-			name: "direct message member", op: channelartifacts.OpAdd, want: true,
-			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeDirect},
-			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true},
+			name: "direct message has no library", op: channelartifacts.OpAdd,
+			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeDirect}, allowed: everything,
 		},
 		{
-			name: "direct message guest", op: channelartifacts.OpAdd, guest: true,
-			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeDirect},
-			allowed: map[*model.Permission]bool{model.PermissionReadChannel: true},
+			name: "group message has no library", op: channelartifacts.OpAdd,
+			channel: &model.Channel{Id: channelID, Type: model.ChannelTypeGroup}, allowed: readOnly,
 		},
 	}
 	for _, tt := range tests {
@@ -88,14 +98,37 @@ func TestServiceCan(t *testing.T) {
 			mm.EXPECT().GetChannel(channelID).Return(tt.channel, tt.getErr).Maybe()
 			mm.EXPECT().HasPermissionToChannel(user, channelID, mock.Anything).RunAndReturn(
 				func(_, _ string, p *model.Permission) bool { return tt.allowed[p] }).Maybe()
-			roles := model.SystemUserRoleId
-			if tt.guest {
-				roles = model.SystemGuestRoleId
-			}
-			mm.EXPECT().GetUser(user).Return(&model.User{Id: user, Roles: roles}, nil).Maybe()
 
 			svc := channelartifacts.NewService(channelartifacts.NewStore(nil), mm, testBots{})
-			assert.Equal(t, tt.want, svc.Can(user, channelID, tt.op))
+			assert.Equal(t, tt.wantCan, svc.Can(user, channelID, tt.op))
+			assert.Equal(t, tt.wantRead, svc.CanRead(user, channelID))
+		})
+	}
+}
+
+func TestServiceRefusesDirectAndGroupMessages(t *testing.T) {
+	for _, channelType := range []model.ChannelType{model.ChannelTypeDirect, model.ChannelTypeGroup} {
+		t.Run(string(channelType), func(t *testing.T) {
+			e := newServiceEnv(t)
+			dm := model.NewId()
+			e.mm.EXPECT().GetChannel(dm).Return(&model.Channel{Id: dm, Type: channelType}, nil).Maybe()
+			e.mm.EXPECT().HasPermissionToChannel(e.userID, dm, mock.Anything).Return(true).Maybe()
+			postID, fileID := model.NewId(), model.NewId()
+			seedSource(t, e.db, postID, fileID)
+			e.mm.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, Name: "a.html", Extension: "html", Size: 5}, nil).Maybe()
+			e.mm.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: e.botID, ChannelId: dm, FileIds: model.StringArray{fileID}}, nil).Maybe()
+			e.mm.EXPECT().GetFile(fileID).RunAndReturn(func(string) (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader("<html>")), nil
+			}).Maybe()
+
+			_, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: dm, PostID: postID, FileID: fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
+			require.ErrorIs(t, err, channelartifacts.ErrNotFound)
+			_, err = e.svc.List(e.userID, dm)
+			require.ErrorIs(t, err, channelartifacts.ErrNotFound)
+
+			var rows int
+			require.NoError(t, e.db.Get(&rows, `SELECT COUNT(*) FROM Agents_ChannelArtifacts WHERE ChannelID = $1`, dm))
+			assert.Zero(t, rows)
 		})
 	}
 }
