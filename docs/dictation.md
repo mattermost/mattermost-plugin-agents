@@ -17,7 +17,7 @@ The plugin ends a session when:
 - it has run for 10 minutes;
 - the plugin is stopped or restarted.
 
-The user sees that dictation stopped. Closing the session in the browser ends it at OpenAI too.
+The user sees that dictation stopped. When the user stops dictating, the browser asks the plugin to end the session, and the plugin hangs it up at OpenAI. If the plugin's control connection drops for any reason, the plugin hangs up the session too rather than leaving it unwatched.
 
 ## Set it up
 
@@ -58,7 +58,7 @@ Users who can't dictate don't see the button. They aren't told whether the cause
 
 The plugin talks to OpenAI to create and end sessions, and each user's browser or desktop app sends audio to OpenAI itself.
 
-- The Mattermost Server needs HTTPS and WebSocket (`wss`) access to the service's API host (`api.openai.com` unless the service sets an **API URL**). It uses the server's proxy settings (`HTTPS_PROXY`).
+- The Mattermost Server needs HTTPS and WebSocket (`wss`) access to the service's API host (`api.openai.com` unless the service sets an **API URL**). It uses the server's proxy settings (`HTTPS_PROXY`). The plugin refuses API hosts that resolve to link-local (including cloud metadata), multicast or unspecified addresses.
 - Browsers need WebRTC media traffic to OpenAI, over UDP or a TCP fallback. Networks where only the Mattermost Server can reach the internet can't use dictation.
 - A reverse proxy that adds a `Permissions-Policy` with `microphone=()` blocks dictation. Allow `microphone=(self)` for the Mattermost origin. Mattermost doesn't set this header itself.
 - Mattermost must be served over HTTPS (or `localhost`), because browsers only allow microphone access on secure pages.
@@ -77,7 +77,7 @@ OpenAI bills transcription to the transcription service's API key.
 - Each user can have at most 2 dictation sessions at a time, across every server in a high-availability cluster.
 - Each user can start at most 10 sessions in any 60 seconds on each server. Over either limit, starting dictation fails until a session ends or a minute passes.
 - The plugin ends each session after 10 minutes. The browser also stops after 30 seconds without speech.
-- If a server stops without ending its sessions, OpenAI keeps them running for up to its 60-minute maximum, and their slots count against the user's limit for up to 11 minutes.
+- A session's slot is freed once the plugin has hung it up. If OpenAI doesn't confirm the hangup after a few retries, or a server stops without ending its sessions, the slot stays taken for up to 11 minutes, and OpenAI may keep such a session running for up to its 60-minute maximum.
 
 Use a dedicated API key for dictation with a spending limit at OpenAI. Each session start is audited (`createDictationSession`), and the server log records each session with the user, the service and the configured model.
 

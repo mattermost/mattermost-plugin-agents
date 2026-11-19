@@ -31,8 +31,10 @@ type FakeRealtime struct {
 	offers   []string
 	auth     []string
 	hangups  []string
-	conns    map[string]*websocket.Conn
-	attached map[string]chan struct{}
+	// hangupAttempts includes failed hangups.
+	hangupAttempts []string
+	conns          map[string]*websocket.Conn
+	attached       map[string]chan struct{}
 
 	// CallStatus, when set, fails call creation with that status and an
 	// error body containing CallErrorMessage.
@@ -42,6 +44,14 @@ type FakeRealtime struct {
 	AttachStatus int
 	// OmitLocation drops the Location header from call creation.
 	OmitLocation bool
+	// AnswerBody, when set, replaces the SDP answer.
+	AnswerBody string
+	// CallDelay delays call creation.
+	CallDelay time.Duration
+	// HangupFailures fails that many hangups with a 503 before succeeding.
+	HangupFailures int
+	// HangupStatus, when set, answers every hangup with that status.
+	HangupStatus int
 }
 
 // NewFakeRealtime starts a FakeRealtime. Close it when done.
@@ -81,8 +91,11 @@ func (f *FakeRealtime) createCall(w http.ResponseWriter, r *http.Request) {
 	f.nextID++
 	id := fmt.Sprintf("rtc_test_%d", f.nextID)
 	f.attached[id] = make(chan struct{})
-	status, msg, omit := f.CallStatus, f.CallErrorMessage, f.OmitLocation
+	status, msg, omit, answer, delay := f.CallStatus, f.CallErrorMessage, f.OmitLocation, f.AnswerBody, f.CallDelay
 	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 
 	if status != 0 {
 		w.Header().Set("Content-Type", "application/json")
@@ -95,7 +108,10 @@ func (f *FakeRealtime) createCall(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/sdp")
 	w.WriteHeader(http.StatusCreated)
-	_, _ = w.Write([]byte(FakeAnswerSDP))
+	if answer == "" {
+		answer = FakeAnswerSDP
+	}
+	_, _ = w.Write([]byte(answer))
 }
 
 func readMultipartFields(r *http.Request) (map[string]string, error) {
@@ -123,6 +139,17 @@ func readMultipartFields(r *http.Request) (map[string]string, error) {
 func (f *FakeRealtime) hangup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	f.mu.Lock()
+	f.hangupAttempts = append(f.hangupAttempts, id)
+	status := f.HangupStatus
+	if status == 0 && f.HangupFailures > 0 {
+		f.HangupFailures--
+		status = http.StatusServiceUnavailable
+	}
+	if status != 0 && status != http.StatusOK {
+		f.mu.Unlock()
+		w.WriteHeader(status)
+		return
+	}
 	f.hangups = append(f.hangups, id)
 	conn := f.conns[id]
 	f.mu.Unlock()
@@ -232,6 +259,13 @@ func (f *FakeRealtime) Hangups() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.hangups...)
+}
+
+// HangupAttempts returns every hangup request, failed ones included.
+func (f *FakeRealtime) HangupAttempts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.hangupAttempts...)
 }
 
 // CallCount returns how many calls were requested.

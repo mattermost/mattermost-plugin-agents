@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -85,6 +86,13 @@ func (a *API) handleCreateDictationSession(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	session, err := a.dictationService.CreateSession(c.Request.Context(), userID, req.SDP)
 	switch {
+	case err == nil && clientGone(c):
+		// Nobody will connect to the call or end it: end it now rather
+		// than holding the call and the user's slot until the cap.
+		if endErr := a.dictationService.EndSession(c.Request.Context(), userID, session.SessionID); endErr != nil {
+			a.pluginAPI.Log.Warn("Failed to end an abandoned dictation session", "error", endErr.Error())
+		}
+		abortDictation(c, http.StatusServiceUnavailable, errDictationUnavailable)
 	case err == nil:
 		c.JSON(http.StatusCreated, session)
 	case errors.Is(err, enterprise.ErrNotLicensed):
@@ -105,6 +113,29 @@ func (a *API) handleCreateDictationSession(c *gin.Context) {
 		abortDictation(c, http.StatusBadGateway, dictation.ErrProvider)
 	default:
 		a.pluginAPI.Log.Error("Failed to create a dictation session", "error", err.Error())
+		abortDictation(c, http.StatusInternalServerError, errDictationUnavailable)
+	}
+}
+
+// DELETE /dictation/session/:sessionid ends one of the requesting user's
+// sessions. Ending an already ended session succeeds.
+func (a *API) handleEndDictationSession(c *gin.Context) {
+	if a.dictationService == nil {
+		abortDictation(c, http.StatusServiceUnavailable, errDictationUnavailable)
+		return
+	}
+	sessionID := c.Param("sessionid")
+	audit.AddParam(auditRec(c), audit.KeyDictationSessionID, audit.TruncateID(sessionID))
+
+	userID := c.GetHeader("Mattermost-User-Id")
+	err := a.dictationService.EndSession(c.Request.Context(), userID, sessionID)
+	switch {
+	case err == nil:
+		c.Status(http.StatusNoContent)
+	case errors.Is(err, dictation.ErrSessionNotFound):
+		abortDictation(c, http.StatusNotFound, dictation.ErrSessionNotFound)
+	default:
+		a.pluginAPI.Log.Error("Failed to end a dictation session", "error", err.Error())
 		abortDictation(c, http.StatusInternalServerError, errDictationUnavailable)
 	}
 }

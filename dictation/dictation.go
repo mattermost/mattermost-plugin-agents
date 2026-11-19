@@ -8,6 +8,7 @@
 package dictation
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -52,9 +53,12 @@ const (
 	// hangup completes.
 	leaseSlack     = time.Minute
 	hangupTimeout  = 10 * time.Second
-	shutdownWait   = 15 * time.Second
-	callSetupLimit = 20 * time.Second
+	shutdownWait   = 25 * time.Second
+	callSetupLimit = 15 * time.Second
 )
+
+// hangupBackoff is the wait before each hangup attempt.
+var hangupBackoff = []time.Duration{0, 250 * time.Millisecond, time.Second}
 
 var (
 	ErrDisabled         = errors.New("dictation is disabled")
@@ -64,6 +68,7 @@ var (
 	ErrConcurrentLimit  = errors.New("too many active dictation sessions")
 	ErrProvider         = errors.New("the transcription provider could not start a session")
 	ErrInvalidOffer     = errors.New("the request needs an SDP offer")
+	ErrSessionNotFound  = errors.New("no such dictation session")
 	ErrSessionsShutdown = errors.New("dictation is shutting down")
 )
 
@@ -353,17 +358,28 @@ func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*
 		s.log.Warn("Failed to reserve a dictation session", "user_id", userID, "error", err.Error())
 		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
 	}
-	session, err := s.startCall(ctx, userID, sessionID, r, offerSDP)
-	if err != nil {
+
+	// Shutdown waits for starts in progress, so it never misses a call
+	// created after it began.
+	s.mu.Lock()
+	if s.shutdown {
+		s.mu.Unlock()
 		s.releaseLease(userID, sessionID)
-		return nil, err
+		return nil, ErrSessionsShutdown
 	}
-	return session, nil
+	s.watchers.Add(1)
+	s.mu.Unlock()
+	defer s.watchers.Done()
+
+	return s.startCall(ctx, userID, sessionID, r, offerSDP)
 }
 
+// startCall creates and attaches the call. On failure it frees the
+// session's slot, unless a created call could not be hung up.
 func (s *Service) startCall(ctx context.Context, userID, sessionID string, r resolved, offerSDP string) (*Session, error) {
 	client, err := s.newClient(r.service)
 	if err != nil {
+		s.releaseLease(userID, sessionID)
 		s.log.Warn("Failed to build the dictation call client", "service_id", r.service.ID, "error", err.Error())
 		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
 	}
@@ -373,6 +389,8 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 	req := r.request()
 	call, err := client.CreateTranscriptionCall(setupCtx, offerSDP, req)
 	if err != nil {
+		// The client hangs up a call it created before failing.
+		s.releaseLease(userID, sessionID)
 		s.log.Warn("Failed to create a dictation call", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
 		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
 	}
@@ -381,15 +399,22 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 	sb, err := client.Attach(setupCtx, call.CallID, req)
 	if err != nil {
 		s.log.Warn("Failed to attach to a dictation call; hanging up", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
-		s.hangup(client, call.CallID, userID)
+		s.endCall(client, call.CallID, userID, sessionID)
 		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
+	}
+
+	if err = s.leases.setCall(userID, sessionID, call.CallID, r.service.ID); err != nil {
+		s.log.Warn("Failed to record a dictation call; hanging up", "user_id", userID, "session_id", sessionID, "error", err.Error())
+		sb.Close()
+		s.endCall(client, call.CallID, userID, sessionID)
+		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
 	}
 
 	s.mu.Lock()
 	if s.shutdown {
 		s.mu.Unlock()
 		sb.Close()
-		s.hangup(client, call.CallID, userID)
+		s.endCall(client, call.CallID, userID, sessionID)
 		return nil, ErrSessionsShutdown
 	}
 	s.watchers.Add(1)
@@ -407,10 +432,11 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 	}, nil
 }
 
-// watch polices one call until it ends, then frees its lease.
+// watch polices one call until its sideband stops, then hangs it up. A
+// dropped sideband doesn't prove the call ended, so the call is always hung
+// up before its slot is freed.
 func (s *Service) watch(client callClient, sb sideband, callID, userID, sessionID string) {
 	defer s.watchers.Done()
-	defer s.releaseLease(userID, sessionID)
 
 	runCtx, cancel := context.WithTimeout(s.ctx, s.maxDuration)
 	defer cancel()
@@ -425,29 +451,94 @@ func (s *Service) watch(client callClient, sb sideband, callID, userID, sessionI
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = EndReasonDurationLimit
 	}
-	if reason == "" {
-		s.log.Info("Dictation session ended", "user_id", userID, "session_id", sessionID)
-		return
-	}
-	s.log.Info("Ending a dictation session", "user_id", userID, "session_id", sessionID, "reason", reason)
-	s.hangup(client, callID, userID)
-	if s.notifyEnd != nil {
+	s.log.Info("Ending a dictation session", "user_id", userID, "session_id", sessionID, "reason", cmp.Or(reason, "sideband closed"))
+	s.endCall(client, callID, userID, sessionID)
+	if reason != "" && s.notifyEnd != nil {
 		s.notifyEnd(userID, sessionID, reason)
 	}
 }
 
-func (s *Service) hangup(client callClient, callID, userID string) {
+// endCall hangs up the call and frees its slot. If the hangup fails, the
+// slot stays taken until its lease expires, since the call may still run.
+func (s *Service) endCall(client callClient, callID, userID, sessionID string) {
+	if err := s.hangup(client, callID); err != nil {
+		s.log.Warn("Failed to hang up a dictation call; its slot stays taken until it expires", "user_id", userID, "session_id", sessionID, "error", err.Error())
+		return
+	}
+	s.releaseLease(userID, sessionID)
+}
+
+// hangup ends callID, retrying failures that may be transient.
+func (s *Service) hangup(client callClient, callID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
 	defer cancel()
-	if err := client.Hangup(ctx, callID); err != nil {
-		s.log.Warn("Failed to hang up a dictation call", "user_id", userID, "error", err.Error())
+	var err error
+	for attempt, backoff := range hangupBackoff {
+		if attempt > 0 {
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return errors.Join(err, ctx.Err())
+			}
+		}
+		if err = client.Hangup(ctx, callID); err == nil || !bifrost.IsTransientRealtimeError(err) {
+			return err
+		}
 	}
+	return err
 }
 
 func (s *Service) releaseLease(userID, sessionID string) {
 	if err := s.leases.release(userID, sessionID); err != nil {
 		s.log.Warn("Failed to release a dictation session; it expires on its own", "user_id", userID, "session_id", sessionID, "error", err.Error())
 	}
+}
+
+// EndSession hangs up userID's session and frees its slot. Any node can end
+// any session, since the call is recorded in shared storage. Ending a session
+// that already ended succeeds; a session that isn't userID's is
+// ErrSessionNotFound. It works whatever the current license or dictation
+// setting, so a call can always be ended. If the hangup fails, the slot
+// stays taken and ErrProvider is returned.
+func (s *Service) EndSession(ctx context.Context, userID, sessionID string) error {
+	if s.leases == nil || !model.IsValidId(sessionID) {
+		return ErrSessionNotFound
+	}
+	l, err := s.leases.get(userID, sessionID)
+	if errors.Is(err, errLeaseNotFound) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("failed to end dictation session: %w", err)
+	}
+	if l.ServiceID != "" {
+		audit.AddParam(audit.RecordFromContext(ctx), audit.KeyServiceID, l.ServiceID)
+	}
+	if l.Ended {
+		return nil
+	}
+
+	// Without a call yet the start is still in progress; marking the
+	// session ended makes that start hang up its call.
+	if l.CallID != "" {
+		svc, ok := s.config.Config().GetServiceByID(l.ServiceID)
+		if !ok {
+			s.log.Warn("Can't hang up a dictation call: its service is no longer configured", "user_id", userID, "session_id", sessionID)
+			return ErrProvider
+		}
+		client, clientErr := s.newClient(svc)
+		if clientErr != nil {
+			s.log.Warn("Can't hang up a dictation call", "user_id", userID, "session_id", sessionID, "error", clientErr.Error())
+			return ErrProvider
+		}
+		if err = s.hangup(client, l.CallID); err != nil {
+			s.log.Warn("Failed to hang up a dictation call", "user_id", userID, "session_id", sessionID, "error", err.Error())
+			return ErrProvider
+		}
+	}
+	s.releaseLease(userID, sessionID)
+	s.log.Info("Dictation session ended by its user", "user_id", userID, "session_id", sessionID)
+	return nil
 }
 
 // Reconcile reports an availability change. Call it on config and license

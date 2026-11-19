@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -250,6 +251,20 @@ func TestCreateDictationSessionOutcomes(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
+			name:  "API URL on the unspecified address",
+			level: enterprise.LevelEnterprise,
+			setup: func(e *dictationEnv) {
+				e.config.services[1].APIURL = strings.Replace(e.fake.URL(), "127.0.0.1", "0.0.0.0", 1)
+			},
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "API URL on the cloud metadata address",
+			level:      enterprise.LevelEnterprise,
+			setup:      func(e *dictationEnv) { e.config.services[1].APIURL = "http://169.254.169.254" },
+			wantStatus: http.StatusBadGateway,
+		},
+		{
 			name:  "provider failure",
 			level: enterprise.LevelEnterprise,
 			setup: func(e *dictationEnv) {
@@ -258,6 +273,14 @@ func TestCreateDictationSessionOutcomes(t *testing.T) {
 			},
 			wantStatus: http.StatusBadGateway,
 			wantCalls:  1,
+		},
+		{
+			name:        "invalid SDP answer and the call is hung up",
+			level:       enterprise.LevelEnterprise,
+			setup:       func(e *dictationEnv) { e.fake.AnswerBody = "<html>" + upstreamBodySentinel + "</html>" },
+			wantStatus:  http.StatusBadGateway,
+			wantCalls:   1,
+			wantHangups: 1,
 		},
 		{
 			name:        "sideband attach fails and the call is hung up",
@@ -426,6 +449,168 @@ func TestDictationConcurrentSessionCapAcrossNodes(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return e.postSession(offerBody(testOffer)).Code == http.StatusCreated
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestDictationSessionHungUpWhenSidebandDrops(t *testing.T) {
+	e := setupDictationEnv(t, enterprise.LevelEnterprise)
+	defer e.Cleanup(t)
+	_, callID := e.startSession(t)
+
+	// A dropped sideband doesn't prove the call ended: the server hangs it
+	// up before freeing the slot.
+	e.fake.EndCall(callID)
+	require.Eventually(t, func() bool { return slices.Contains(e.fake.Hangups(), callID) }, 5*time.Second, 20*time.Millisecond)
+	e.startSession(t)
+	e.startSession(t)
+}
+
+func TestDictationSessionOversizedEventClosesSession(t *testing.T) {
+	e := setupDictationEnv(t, enterprise.LevelEnterprise)
+	defer e.Cleanup(t)
+	sessionID, callID := e.startSession(t)
+
+	// An event too large to read can't be checked: it ends the call as a
+	// policy violation instead of silently dropping the sideband.
+	huge := llmtest.SessionUpdated("gpt-live-transcribe", []string{"en"}, nil, nil)
+	huge["padding"] = strings.Repeat("x", 2<<20)
+	// The server stops reading partway, so the write itself may fail.
+	_ = e.fake.SendEvent(callID, huge)
+
+	assert.Equal(t, sessionEnd{testUserID, sessionID, dictation.EndReasonPolicy}, e.waitEnd(t))
+	assert.Contains(t, e.fake.Hangups(), callID)
+}
+
+func TestDictationHangupFailures(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func(f *llmtest.FakeRealtime)
+		wantAttempts int
+		wantFreed    bool
+	}{
+		{name: "transient failures are retried", setup: func(f *llmtest.FakeRealtime) { f.HangupFailures = 2 }, wantAttempts: 3, wantFreed: true},
+		{name: "a call already gone counts as ended", setup: func(f *llmtest.FakeRealtime) { f.HangupStatus = http.StatusNotFound }, wantAttempts: 1, wantFreed: true},
+		{name: "a hangup that keeps failing keeps the slot", setup: func(f *llmtest.FakeRealtime) { f.HangupStatus = http.StatusInternalServerError }, wantAttempts: 3},
+		{name: "a rejected hangup is not retried and keeps the slot", setup: func(f *llmtest.FakeRealtime) { f.HangupStatus = http.StatusUnauthorized }, wantAttempts: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupDictationEnv(t, enterprise.LevelEnterprise)
+			defer e.Cleanup(t)
+			_, callID := e.startSession(t)
+			tt.setup(e.fake)
+
+			require.NoError(t, e.fake.SendEvent(callID, llmtest.SessionUpdated("gpt-4o-transcribe", nil, nil, nil)))
+			e.waitEnd(t)
+
+			assert.Len(t, e.fake.HangupAttempts(), tt.wantAttempts)
+			e.startSession(t)
+			status := e.postSession(offerBody(testOffer)).Code
+			if tt.wantFreed {
+				assert.Equal(t, http.StatusCreated, status)
+			} else {
+				assert.Equal(t, http.StatusTooManyRequests, status, "a call that may still run keeps its slot")
+			}
+		})
+	}
+}
+
+func TestDictationShutdownWaitsForStartsInProgress(t *testing.T) {
+	e := setupDictationEnv(t, enterprise.LevelEnterprise)
+	defer e.Cleanup(t)
+	svc := e.newDictationService(e.api.accessChecker)
+	e.api.SetDictationService(svc)
+	e.fake.CallDelay = 300 * time.Millisecond
+
+	result := make(chan int, 1)
+	go func() { result <- e.postSession(offerBody(testOffer)).Code }()
+	require.Eventually(t, func() bool { return e.fake.CallCount() == 1 }, 5*time.Second, 5*time.Millisecond)
+
+	svc.Shutdown()
+
+	// Shutdown returned only after the start finished and hung up its call.
+	assert.Equal(t, []string{e.fake.LastCallID()}, e.fake.Hangups())
+	assert.Equal(t, http.StatusServiceUnavailable, <-result)
+}
+
+func TestCreateDictationSessionClientGone(t *testing.T) {
+	e := setupDictationEnv(t, enterprise.LevelEnterprise)
+	defer e.Cleanup(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the client disconnected before the response was written
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/dictation/session", strings.NewReader(offerBody(testOffer)))
+	req.Header.Set("Mattermost-User-Id", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	assert.NotContains(t, recorder.Body.String(), "v=0", "no answer is returned")
+	require.Equal(t, 1, e.fake.CallCount())
+	assert.Contains(t, e.fake.Hangups(), e.fake.LastCallID(), "the abandoned call is hung up")
+	// Its slot is free: two more sessions fit.
+	e.startSession(t)
+	e.startSession(t)
+}
+
+func TestEndDictationSession(t *testing.T) {
+	const otherUserID = "othe12345678901234567890ab"
+	tests := []struct {
+		name        string
+		userID      string
+		sessionID   func(own string) string
+		repeat      bool
+		wantStatus  int
+		wantHangup  bool
+		wantFreeing bool
+	}{
+		{name: "own session", userID: testUserID, sessionID: func(own string) string { return own }, wantStatus: http.StatusNoContent, wantHangup: true, wantFreeing: true},
+		{name: "own session twice", userID: testUserID, sessionID: func(own string) string { return own }, repeat: true, wantStatus: http.StatusNoContent, wantHangup: true, wantFreeing: true},
+		{name: "another user's session", userID: otherUserID, sessionID: func(own string) string { return own }, wantStatus: http.StatusNotFound},
+		{name: "unknown session", userID: testUserID, sessionID: func(string) string { return model.NewId() }, wantStatus: http.StatusNotFound},
+		{name: "malformed session ID", userID: testUserID, sessionID: func(string) string { return "not-an-id" }, wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupDictationEnv(t, enterprise.LevelEnterprise)
+			defer e.Cleanup(t)
+			e.mockAPI.On("GetUser", otherUserID).Return(&model.User{Id: otherUserID, Roles: model.SystemUserRoleId}, nil).Maybe()
+			// The session is watched by node A; the end request lands on node B.
+			nodeA := e.newDictationService(e.api.accessChecker)
+			e.api.SetDictationService(nodeA)
+			own, callID := e.startSession(t)
+			e.startSession(t)
+			e.api.SetDictationService(e.newDictationService(e.api.accessChecker))
+			records := e.CaptureAuditRecords()
+
+			deleteSession := func() int {
+				req := httptest.NewRequest(http.MethodDelete, "/dictation/session/"+tt.sessionID(own), nil)
+				req.Header.Set("Mattermost-User-Id", tt.userID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+				return recorder.Code
+			}
+			status := deleteSession()
+			if tt.repeat {
+				status = deleteSession()
+			}
+
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Equal(t, tt.wantHangup, slices.Contains(e.fake.Hangups(), callID))
+			if tt.wantFreeing {
+				e.startSession(t)
+			} else {
+				assert.Equal(t, http.StatusTooManyRequests, e.postSession(offerBody(testOffer)).Code, "the slot stays taken")
+			}
+
+			require.NotEmpty(t, *records)
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventEndDictationSession, rec.EventName)
+			if tt.wantStatus == http.StatusNoContent {
+				assert.Equal(t, own, rec.EventData.Parameters[audit.KeyDictationSessionID])
+				assert.Equal(t, dictationServiceID, rec.EventData.Parameters[audit.KeyServiceID])
+			}
+		})
+	}
 }
 
 func TestCreateDictationSessionAuditAndLogsCarryNoContent(t *testing.T) {
