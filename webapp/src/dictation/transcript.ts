@@ -61,14 +61,57 @@ export class Transcript {
     }
 
     snapshot(): TranscriptUpdate {
-        const all: string[] = [];
+        const texts: string[] = [];
         for (const id of this.order) {
             const segment = this.segments.get(id)!;
             const text = (segment.final ?? segment.partial).trim();
             if (text) {
-                all.push(text);
+                texts.push(text);
             }
         }
-        return {text: all.join(' ')};
+        return {text: joinSegments(texts)};
     }
+}
+
+const SENTENCE_END = /[.!?…]["'”’)\]]*$/u;
+
+// A plain capitalized word: "In", "Christopher", "Don't". Acronyms and
+// mixed-case terms such as "QA" or "OAuth" don't match and keep their case.
+const PLAIN_CAPITALIZED = /^\p{Lu}\p{Ll}*(['’]\p{Ll}+)?$/u;
+const PRONOUN_I = /^I(['’]\p{Ll}+)?$/u;
+
+const bareWord = (token: string) => token.replace(/^[^\p{L}]+|[^\p{L}'’]+$/gu, '');
+
+// wordsCapitalizedMidSentence collects words the transcript capitalizes
+// where no sentence starts, which marks them as proper nouns.
+function wordsCapitalizedMidSentence(texts: string[]): Set<string> {
+    const words = new Set<string>();
+    for (const text of texts) {
+        const tokens = text.split(/\s+/);
+        for (let i = 1; i < tokens.length; i++) {
+            const word = bareWord(tokens[i]);
+            if (!SENTENCE_END.test(tokens[i - 1]) && (/^\p{Lu}/u).test(word)) {
+                words.add(word);
+            }
+        }
+    }
+    return words;
+}
+
+// joinSegments joins segments in speaking order. Each segment is transcribed
+// as a standalone utterance and starts with a capital, so a segment that
+// continues an unfinished sentence gets its first letter lowercased, unless
+// that word is "I" or a proper noun.
+export function joinSegments(texts: string[]): string {
+    const properNouns = wordsCapitalizedMidSentence(texts);
+    return texts.map((text, i) => {
+        if (i === 0 || SENTENCE_END.test(texts[i - 1])) {
+            return text;
+        }
+        const word = bareWord(text.split(/\s+/, 1)[0]);
+        if (!PLAIN_CAPITALIZED.test(word) || PRONOUN_I.test(word) || properNouns.has(word) || !text.startsWith(word.charAt(0))) {
+            return text;
+        }
+        return word.charAt(0).toLowerCase() + text.slice(1);
+    }).join(' ');
 }

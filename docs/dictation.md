@@ -26,7 +26,7 @@ An access policy on the transcription service applies to dictation too: users it
 |---|---|---|---|
 | Enable dictation | `dictation.enabled` | Off | Shows the microphone button to users who can use the transcription service. Can't be turned on below Enterprise. |
 | Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing, isn't an OpenAI service, has no API key, or has an **API URL** with anything but a scheme, host and path (no credentials, query or fragment). Browsers receive a URL derived from the API URL. |
-| Transcription model | `dictation.model` | `gpt-live-transcribe` | `gpt-live-transcribe` shows text while the user speaks. `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` show text after each pause and cost less. |
+| Transcription model | `dictation.model` | `gpt-live-transcribe` | `gpt-live-transcribe` shows text while the user speaks. OpenAI has deprecated its earlier transcription models (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe` and `whisper-1`), so don't use them for new setups. |
 | Language | `dictation.language` | Empty (detected) | An ISO-639-1 code such as `en` or `de` for the language users speak. |
 
 Example configuration, set through `PUT /plugins/mattermost-ai/admin/config` (see [Back up and automate](backup_and_automation.md)):

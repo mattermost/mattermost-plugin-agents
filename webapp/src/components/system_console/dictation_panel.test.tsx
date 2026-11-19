@@ -139,6 +139,15 @@ describe('DictationPanel', () => {
         expect(screen.getByDisplayValue('gpt-live-transcribe')).toBeTruthy();
     });
 
+    test('suggests only the live model, not the deprecated ones', () => {
+        renderPanel(defaultDictationConfig, [openai]);
+        const input = screen.getByRole('combobox', {name: 'Transcription model'});
+        fireEvent.focus(input);
+        fireEvent.keyDown(input, {key: 'ArrowDown'});
+        const options = screen.getAllByRole('option').map((el) => el.textContent);
+        expect(options).toEqual(['gpt-live-transcribe']);
+    });
+
     test('trims the language hint', () => {
         const onChange = renderPanel(enabled, [openai]);
         fireEvent.change(screen.getByPlaceholderText('en'), {target: {value: ' de '}});

@@ -33,7 +33,9 @@ export const defaultDictationConfig: DictationConfig = {
     language: '',
 };
 
-const MODEL_SUGGESTIONS = [DEFAULT_DICTATION_MODEL, 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'];
+// OpenAI has deprecated its earlier transcription models (gpt-4o-transcribe,
+// gpt-4o-mini-transcribe, whisper-1), so only the live model is suggested.
+const MODEL_SUGGESTIONS = [DEFAULT_DICTATION_MODEL];
 
 // Service types that can mint a browser transcription session. Azure joins
 // once its WebRTC transcription path is verified.
@@ -151,7 +153,7 @@ const DictationPanel = ({value, services, errors, saveError, onChange}: Props) =
                     onChange={(model) => update({model})}
                     isClearable={false}
                     error={errors.model}
-                    helptext={intl.formatMessage({defaultMessage: 'gpt-live-transcribe shows text while the user speaks. gpt-4o-transcribe and gpt-4o-mini-transcribe show text after each pause.'})}
+                    helptext={intl.formatMessage({defaultMessage: 'The OpenAI transcription model. gpt-live-transcribe shows text while the user speaks.'})}
                 />
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Language'})}

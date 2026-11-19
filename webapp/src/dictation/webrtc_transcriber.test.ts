@@ -201,7 +201,7 @@ describe('WebRTCTranscriber', () => {
         await transcriber.start();
 
         advance(0.3, 1000);
-        advance(0, 800);
+        advance(0, 2100);
         expect(commits(pc)).toBe(1);
 
         advance(0.3, 500);
@@ -217,7 +217,7 @@ describe('WebRTCTranscriber', () => {
         await transcriber.start();
 
         advance(0.3, 1000);
-        advance(0, 800);
+        advance(0, 2100);
         advance(0.3, 500);
         expect(commits(pc)).toBe(0);
 
@@ -242,7 +242,7 @@ describe('WebRTCTranscriber', () => {
 
         // A silence commit is sent; the user stops before any event for it arrives.
         advance(0.3, 1000);
-        advance(0, 800);
+        advance(0, 2100);
         expect(commits(pc)).toBe(1);
 
         const stopped = transcriber.stop();
