@@ -336,9 +336,14 @@ func TestDMTurnRefusesDeletedRoot(t *testing.T) {
 		// deleteMidTurn deletes the root once the turn is accepted, before
 		// the completion request is built.
 		deleteMidTurn bool
+		// deleteAfterRootReads deletes the root on this many-th read of it
+		// during the reply (the last one being the check after the request
+		// is built).
+		deleteAfterRootReads int
 	}{
 		{name: "root deleted before the reply"},
 		{name: "root deleted after the turn was accepted", deleteMidTurn: true},
+		{name: "root deleted while the request is built", deleteAfterRootReads: 4},
 	}
 
 	for _, tt := range tests {
@@ -354,7 +359,8 @@ func TestDMTurnRefusesDeletedRoot(t *testing.T) {
 
 			reply := &model.Post{Id: model.NewId(), UserId: autoReplyUserID, ChannelId: env.dm.Id, RootId: first.Id, Message: "and tomorrow?"}
 			env.setThread(first.Id, first, reply)
-			if tt.deleteMidTurn {
+			switch {
+			case tt.deleteMidTurn:
 				deleted := false
 				env.mmClient.onUpdatePost = func(post *model.Post) {
 					if convID, _ := post.GetProp(streaming.ConversationIDProp).(string); convID != "" && !deleted {
@@ -362,14 +368,25 @@ func TestDMTurnRefusesDeletedRoot(t *testing.T) {
 						env.mmClient.gonePosts = map[string]bool{first.Id: true}
 					}
 				}
-			} else {
+			case tt.deleteAfterRootReads > 0:
+				reads := 0
+				env.mmClient.onGetPost = func(id string) {
+					if id != first.Id {
+						return
+					}
+					reads++
+					if reads >= tt.deleteAfterRootReads {
+						env.mmClient.gonePosts = map[string]bool{first.Id: true}
+					}
+				}
+			default:
 				env.mmClient.gonePosts = map[string]bool{first.Id: true}
 			}
 
 			env.conversations.MessageHasBeenPosted(nil, reply)
 
 			assert.Len(t, env.llmRequests(), requestsBefore, "a deleted thread must not reach the provider")
-			if !tt.deleteMidTurn {
+			if !tt.deleteMidTurn && tt.deleteAfterRootReads == 0 {
 				assert.Len(t, env.convStore.turnsFor(convs[0].ID), turnsBefore, "no user turn is recorded")
 			}
 		})
