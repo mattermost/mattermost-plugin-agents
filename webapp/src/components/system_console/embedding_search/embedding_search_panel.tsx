@@ -300,7 +300,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     ...value,
                                     vectorElementType: normalizeVectorElementType(vectorElementType),
                                 })}
-                                helptext={intl.formatMessage({defaultMessage: 'Half precision saves RAM and disk (default: standard). Changing drops the index; run Full Reindex.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Half precision saves RAM and disk (default: standard). Changing drops the embeddings table; run Full Reindex.'})}
                                 options={[
                                     {value: VECTOR_ELEMENT_TYPE.vector, label: intl.formatMessage({defaultMessage: 'Standard (vector)'})},
                                     {value: VECTOR_ELEMENT_TYPE.halfvec, label: intl.formatMessage({defaultMessage: 'Half precision (halfvec)'})},

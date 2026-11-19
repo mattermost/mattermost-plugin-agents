@@ -490,7 +490,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const reasonText: Record<ReauthReason, string> = {
         name: intl.formatMessage({defaultMessage: 'Renaming removes saved sign-ins, which are keyed by name.'}),
         url: intl.formatMessage({defaultMessage: 'Changing the host removes saved sign-ins and resets tool policies for re-review.'}),
-        clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID invalidates existing tokens.'}),
+        clientID: intl.formatMessage({defaultMessage: 'Changing the OAuth client ID prevents renewing existing sign-ins.'}),
     };
 
     const renderReauth = () => (
