@@ -374,7 +374,7 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.channelArtifacts.CheckReadable(auth.SessionIDFromContext(c.Request.Context()), entry, version); err != nil {
+	if err = a.channelArtifacts.CheckReadable(auth.SessionIDFromContext(c.Request.Context()), entry, version); err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
