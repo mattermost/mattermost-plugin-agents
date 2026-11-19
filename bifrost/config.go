@@ -46,9 +46,9 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 // recorded audio files (Meetings).
 var TranscriptionServiceTypes = []string{llm.ServiceTypeOpenAI, llm.ServiceTypeOpenAICompatible, llm.ServiceTypeAzure}
 
-// RealtimeSessionServiceTypes are the service types that can mint realtime
-// transcription sessions for browsers (dictation).
-var RealtimeSessionServiceTypes = []string{llm.ServiceTypeOpenAI, llm.ServiceTypeAzure}
+// RealtimeSessionServiceTypes are the service types whose realtime calls
+// (WebRTC SDP exchange, sideband and hangup) are supported for dictation.
+var RealtimeSessionServiceTypes = []string{llm.ServiceTypeOpenAI}
 
 // ProviderForServiceType maps serviceType to its Bifrost provider, returning
 // an error when serviceType is not one of allowed.

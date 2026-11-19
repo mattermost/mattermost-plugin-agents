@@ -69,7 +69,6 @@ type Config interface {
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
-	Dictation() config.DictationConfig
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
