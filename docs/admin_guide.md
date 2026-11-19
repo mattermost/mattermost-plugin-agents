@@ -62,10 +62,9 @@ For developers and integrators, see the [Mattermost MCP server](mcp_server.md) f
 System admins can always view and change the Agents settings. To let other people in, go to **System Console > Plugins > Agents**, add them under **Settings access**, and select **Save**:
 
 - **Read and write access**: can view and change every Agents setting, including API keys, run reindexing, and author service and MCP server access policies. They can also turn on [service account authentication](tool_approval.md) for agents they manage. Because they choose which AI services and MCP servers agents use, they can send what users say to agents, including private messages, to a service they control. Grant this only to people you would trust as an Agents system admin. They can't change who has access or the legacy agents defined in the plugin configuration.
-- **Read-only access**: can view the settings but not change them. Credentials (API keys, header values, client secrets, OTLP headers) are blanked before the settings reach their browser, and every URL is cut down to its scheme, host and port.
 - **Agent managers**: can edit and delete every agent, as the `manage_others_agent` permission allows, without any access to the settings.
 
-People with read-only or read and write access see **Settings** in the Agents sidebar. Access is per user; Mattermost's delegated admin roles don't grant it. Only a system admin can change the lists.
+People with read and write access see **Settings** in the Agents sidebar. Access is per user; Mattermost's delegated admin roles don't grant it. Only a system admin can change the lists.
 
 ## Plugin settings
 

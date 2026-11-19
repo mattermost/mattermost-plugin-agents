@@ -144,20 +144,6 @@ describe('AgentsSettingsPage access', () => {
         expect(getPluginConfig).not.toHaveBeenCalled();
     });
 
-    it('shows read-only users the settings with every editor read-only and nothing to save', async () => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
-        renderPage('services');
-
-        await screen.findByText('service:My Service:unsaved');
-        expect(screen.getByText('You have read-only access')).toBeTruthy();
-        expect(screen.getByText('read-only editors')).toBeTruthy();
-
-        act(() => {
-            mockServices.onChange?.([{id: '', name: 'Renamed'}]);
-        });
-        expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
-    });
-
     it('tells a user whose access lookup failed that it failed, not that they lack access', async () => {
         (getMySettingsAccess as jest.Mock).mockRejectedValue(new Error('500'));
         renderPage();
@@ -167,51 +153,12 @@ describe('AgentsSettingsPage access', () => {
         expect(getPluginConfig).not.toHaveBeenCalled();
     });
 
-    it('never asks a read-only user to confirm leaving, even when an editor adjusts the configuration on its own', async () => {
-        const block = jest.fn();
-        window.WebappUtils = {browserHistory: {push: jest.fn(), block}} as any;
-        const addEventListener = jest.spyOn(window, 'addEventListener');
-        try {
-            (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
-            renderPage('services');
-            await screen.findByText('service:My Service:unsaved');
-
-            // What an editor's own effect does, such as seeding vetted tool policies.
-            act(() => {
-                mockServices.onChange?.([{id: '', name: 'Normalized'}]);
-            });
-
-            expect(block).not.toHaveBeenCalled();
-            expect(addEventListener.mock.calls.some(([type]) => type === 'beforeunload')).toBe(false);
-        } finally {
-            addEventListener.mockRestore();
-            delete window.WebappUtils;
-        }
-    });
-
-    it('disables the general settings for read-only users', async () => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
-        renderPage('general');
-
-        await screen.findByText('Render AI-generated links');
-        expect(radioFor('Render AI-generated links', 'true').disabled).toBe(true);
-        expect(radioFor('Render AI-generated links', 'false').disabled).toBe(true);
-    });
-
-    it('keeps every section reachable without services, offering users who can save a first one to fill in', async () => {
+    it('keeps every section reachable without services, with a first one to fill in', async () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: []});
-        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
         const {unmount} = renderPage('general');
         await screen.findByText('Render AI-generated links');
-        expect(screen.queryByText('service:OpenAI Service:unsaved')).toBeNull();
         unmount();
 
-        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'read', manageOthersAgents: false});
-        const readOnlyServices = renderPage('services');
-        expect(await screen.findByText('No AI services are configured')).toBeTruthy();
-        readOnlyServices.unmount();
-
-        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'write', manageOthersAgents: false});
         renderPage('services');
         expect(await screen.findByText('service:OpenAI Service:unsaved')).toBeTruthy();
         expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();

@@ -1237,7 +1237,6 @@ describe('AgentConfigView', () => {
     // server lets them turn service account auth on and change grants while it is on, as admins do.
     test.each([
         {level: 'write', locked: false},
-        {level: 'read', locked: true},
         {level: 'none', locked: true},
     ])('a non-admin with $level settings access has the service account grants locked=$locked', async ({level, locked}) => {
         mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);

@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -332,11 +331,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		return
 	}
 
-	// Read-only viewers get no live connections to remote servers, which would
-	// carry the admin-configured headers on their behalf, and no credentials
-	// embedded in server URLs.
-	readOnly := settingsAccessFromContext(c) < config.SettingsAccessWrite
-	rows := a.buildMCPDiscoveryRows(c.Request.Context(), userID, readOnly)
+	rows := a.buildMCPDiscoveryRows(c.Request.Context(), userID)
 
 	slots := make(chan struct{}, maxConcurrentMCPDiscoveries)
 	var wg sync.WaitGroup
@@ -365,10 +360,8 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 }
 
 // buildMCPDiscoveryRows snapshots every server the admin UI should render, in
-// response order, before any network work starts. With readOnly, remote
-// servers report the tools in the shared tools cache instead of being
-// contacted, and their URLs are redacted.
-func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string, readOnly bool) []mcpDiscoveryRow {
+// response order, before any network work starts.
+func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDiscoveryRow {
 	mcpConfig := a.config.MCP()
 	rows := make([]mcpDiscoveryRow, 0, len(mcpConfig.Servers)+1)
 
@@ -396,10 +389,6 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string, readOnly
 	// can see why the server is not working.
 	conflictMessages := make(map[int]string)
 	for _, conflict := range mcpConfig.ServerConflicts() {
-		if readOnly {
-			// A duplicate-URL message names the endpoint.
-			conflict.BaseURL = config.RedactURL(conflict.BaseURL)
-		}
 		conflictMessages[conflict.Index] = conflict.Error()
 	}
 
@@ -408,14 +397,10 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string, readOnly
 			continue
 		}
 
-		serverURL := serverConfig.BaseURL
-		if readOnly {
-			serverURL = config.RedactURL(serverURL)
-		}
 		row := mcpDiscoveryRow{
 			info: MCPServerInfo{
 				Name:       serverConfig.Name,
-				URL:        serverURL,
+				URL:        serverConfig.BaseURL,
 				Tools:      []MCPToolInfo{},
 				ServerType: "remote",
 				Enabled:    serverConfig.Enabled,
@@ -424,10 +409,6 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string, readOnly
 		}
 		if message, conflicting := conflictMessages[i]; conflicting {
 			row.info.Error = &message
-		} else if readOnly {
-			row.discover = func() ([]MCPToolInfo, error) {
-				return a.cachedRemoteServerTools(serverConfig), nil
-			}
 		} else {
 			row.discover = func() ([]MCPToolInfo, error) {
 				return a.discoverRemoteServerTools(ctx, userID, serverConfig)
@@ -558,30 +539,6 @@ func (a *API) handleGetMCPSuggestedDescription(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, MCPSuggestedDescriptionResponse{Description: suggestion.Text, Source: suggestion.Source})
-}
-
-// cachedRemoteServerTools returns a remote server's tools from the shared
-// tools cache without contacting it, sorted by name; none on a cache miss.
-// The shared cache only ever holds lists that are the same for every user.
-func (a *API) cachedRemoteServerTools(serverConfig mcp.ServerConfig) []MCPToolInfo {
-	toolsCache := a.mcpClientManager.GetToolsCache()
-	if toolsCache == nil {
-		return []MCPToolInfo{}
-	}
-	cached := toolsCache.GetTools(serverConfig.Name)
-	tools := make([]MCPToolInfo, 0, len(cached))
-	for _, tool := range cached {
-		if tool == nil {
-			continue
-		}
-		tools = append(tools, MCPToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
-			InputSchema: tool.InputSchema,
-		})
-	}
-	slices.SortFunc(tools, func(x, y MCPToolInfo) int { return strings.Compare(x.Name, y.Name) })
-	return tools
 }
 
 // handleGetMCPServerTools lists one saved remote MCP server's tools as the

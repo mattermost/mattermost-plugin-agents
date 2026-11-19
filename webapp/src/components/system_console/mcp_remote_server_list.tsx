@@ -111,16 +111,14 @@ const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
                                     <ChevronRightIcon size={16}/>
                                 </Chevron>
                             </RowButton>
-                            {!readOnly && (
-                                <IconButton
-                                    icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                                    size='small'
-                                    destructive={true}
-                                    onClick={() => setPendingDelete(server)}
-                                    disabled={!server.id}
-                                    aria-label={intl.formatMessage({defaultMessage: 'Delete {name}'}, {name})}
-                                />
-                            )}
+                            <IconButton
+                                icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                                size='small'
+                                destructive={true}
+                                onClick={() => setPendingDelete(server)}
+                                disabled={!server.id || readOnly}
+                                aria-label={intl.formatMessage({defaultMessage: 'Delete {name}'}, {name})}
+                            />
                         </Row>
                     );
                 })}

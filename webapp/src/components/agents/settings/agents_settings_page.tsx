@@ -37,14 +37,12 @@ type Props = {
 /**
  * The plugin configuration as a page of the Agents product (the `settings`
  * view). System admins and users they delegate to on the System Console reach
- * it; read-only users see everything but credentials and cannot save.
+ * it.
  */
 const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection}: Props) => {
     const intl = useIntl();
     const access = useSettingsAccess();
-    const canView = access.level === 'read' || access.level === 'write';
-    const readOnly = access.level !== 'write';
-    const canEdit = !readOnly;
+    const canEdit = access.level === 'write';
 
     // The blank service offered to an editor on a workspace with none. Until
     // they change it, it is not part of what Save sends.
@@ -62,7 +60,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!canView) {
+        if (!canEdit) {
             return () => {/* nothing to cancel */};
         }
         let current = true;
@@ -94,10 +92,10 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         return () => {
             current = false;
         };
-    }, [canView, canEdit, intl]);
+    }, [canEdit, intl]);
 
     useEffect(() => {
-        if (!canView || loading || loadError) {
+        if (!canEdit || loading || loadError) {
             return () => {/* nothing to cancel */};
         }
         let current = true;
@@ -116,20 +114,15 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         return () => {
             current = false;
         };
-    }, [canView, loading, loadError, intl]);
-
-    // Editors also adjust the configuration on their own (seeding vetted tool
-    // policies, normalizing services); for a read-only viewer those changes can
-    // be neither saved nor discarded, so nothing counts as unsaved.
-    const unsaved = dirty && !readOnly;
+    }, [canEdit, loading, loadError, intl]);
 
     // Leaving the settings within the webapp drops unsaved changes; switching
     // sections keeps them.
-    useNavigationGuard(unsaved, isSettingsPath, intl.formatMessage({defaultMessage: 'You have unsaved changes to the Agents settings. Leave without saving?'}));
+    useNavigationGuard(dirty, isSettingsPath, intl.formatMessage({defaultMessage: 'You have unsaved changes to the Agents settings. Leave without saving?'}));
 
     // Leaving the page for another site or a reload drops unsaved changes.
     useEffect(() => {
-        if (!unsaved) {
+        if (!dirty) {
             return () => {/* nothing to remove */};
         }
         const warn = (e: BeforeUnloadEvent) => {
@@ -137,7 +130,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         };
         window.addEventListener('beforeunload', warn);
         return () => window.removeEventListener('beforeunload', warn);
-    }, [unsaved]);
+    }, [dirty]);
 
     const updateConfig = useCallback((updates: Partial<PluginConfig>) => {
         if ('allowedLinkDomains' in updates) {
@@ -252,7 +245,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
     };
 
     let body: React.ReactNode;
-    if (access.loading || (canView && loading)) {
+    if (access.loading || (canEdit && loading)) {
         body = (
             <LoadingContainer>
                 <Spinner
@@ -268,7 +261,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                 title={intl.formatMessage({defaultMessage: 'Failed to check your access to the Agents settings.'})}
             />
         );
-    } else if (!canView) {
+    } else if (!canEdit) {
         body = (
             <EmptyState
                 title={<FormattedMessage defaultMessage="You don't have access to the Agents settings"/>}
@@ -310,7 +303,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
     // Editors are read-only while a save is pending: its response replaces the
     // local configuration, so an edit made meanwhile would be lost.
     return (
-        <SettingsReadOnlyContext.Provider value={readOnly || saving}>
+        <SettingsReadOnlyContext.Provider value={saving}>
             <PageContainer>
                 <PageHeader>
                     <PageTitle>
@@ -320,18 +313,9 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                         <FormattedMessage defaultMessage='AI services, tools, search and other settings that apply to every agent in the workspace.'/>
                     </Subtitle>
                 </PageHeader>
-                {canView && readOnly && (
-                    <Notices>
-                        <SectionNotice
-                            type='info'
-                            title={<FormattedMessage defaultMessage='You have read-only access'/>}
-                            description={<FormattedMessage defaultMessage='You can view these settings but not change them. Credentials such as API keys are hidden.'/>}
-                        />
-                    </Notices>
-                )}
                 <PageBody>{body}</PageBody>
             </PageContainer>
-            {canView && !readOnly && (dirty || saveError) && (
+            {canEdit && (dirty || saveError) && (
                 <SaveBar aria-label={intl.formatMessage({defaultMessage: 'Unsaved changes'})}>
                     <SaveBarContent>
                         <SaveBarMessage>
@@ -393,13 +377,6 @@ const Subtitle = styled.p`
     font-size: var(--font-size-75);
     line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
-`;
-
-const Notices = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-m);
-    margin-bottom: var(--spacing-xl);
 `;
 
 const PageBody = styled.div`

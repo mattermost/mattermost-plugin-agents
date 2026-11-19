@@ -10,14 +10,12 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// SettingsAccess lists the users a system admin has delegated access to. Read-only
-// users see the plugin configuration without credentials; read/write users see
-// and change all of it except these lists, and may turn on service account
-// authentication for agents. Agent managers may edit and delete every agent, as
-// the manage_others_agent permission allows, whether or not they are on the
-// other two lists.
+// SettingsAccess lists the users a system admin has delegated access to.
+// Read/write users see and change all of the plugin configuration except these
+// lists, and may turn on service account authentication for agents. Agent
+// managers may edit and delete every agent, as the manage_others_agent
+// permission allows, whether or not they are on the read/write list.
 type SettingsAccess struct {
-	ReadOnlyUserIDs     []string `json:"readOnlyUserIDs"`
 	ReadWriteUserIDs    []string `json:"readWriteUserIDs"`
 	AgentManagerUserIDs []string `json:"agentManagerUserIDs"`
 }
@@ -27,14 +25,11 @@ type SettingsAccessLevel int
 
 const (
 	SettingsAccessNone SettingsAccessLevel = iota
-	SettingsAccessRead
 	SettingsAccessWrite
 )
 
 func (l SettingsAccessLevel) String() string {
 	switch l {
-	case SettingsAccessRead:
-		return "read"
 	case SettingsAccessWrite:
 		return "write"
 	default:
@@ -42,17 +37,13 @@ func (l SettingsAccessLevel) String() string {
 	}
 }
 
-// LevelFor returns the access the lists grant userID. Read/write wins when a
-// user is on both lists.
+// LevelFor returns the access the lists grant userID.
 func (s SettingsAccess) LevelFor(userID string) SettingsAccessLevel {
 	if userID == "" {
 		return SettingsAccessNone
 	}
 	if slices.Contains(s.ReadWriteUserIDs, userID) {
 		return SettingsAccessWrite
-	}
-	if slices.Contains(s.ReadOnlyUserIDs, userID) {
-		return SettingsAccessRead
 	}
 	return SettingsAccessNone
 }
@@ -63,25 +54,18 @@ func (s SettingsAccess) ManagesAllAgents(userID string) bool {
 	return userID != "" && slices.Contains(s.AgentManagerUserIDs, userID)
 }
 
-// Normalize validates every user ID, drops duplicates, and removes read/write
-// users from the read-only list. Every list is non-nil afterwards.
+// Normalize validates every user ID and drops duplicates. Every list is non-nil
+// afterwards.
 func (s SettingsAccess) Normalize() (SettingsAccess, error) {
 	readWrite, err := uniqueUserIDs(s.ReadWriteUserIDs)
 	if err != nil {
 		return SettingsAccess{}, err
 	}
-	readOnly, err := uniqueUserIDs(s.ReadOnlyUserIDs)
-	if err != nil {
-		return SettingsAccess{}, err
-	}
-	readOnly = slices.DeleteFunc(readOnly, func(id string) bool {
-		return slices.Contains(readWrite, id)
-	})
 	agentManagers, err := uniqueUserIDs(s.AgentManagerUserIDs)
 	if err != nil {
 		return SettingsAccess{}, err
 	}
-	return SettingsAccess{ReadOnlyUserIDs: readOnly, ReadWriteUserIDs: readWrite, AgentManagerUserIDs: agentManagers}, nil
+	return SettingsAccess{ReadWriteUserIDs: readWrite, AgentManagerUserIDs: agentManagers}, nil
 }
 
 func uniqueUserIDs(ids []string) ([]string, error) {

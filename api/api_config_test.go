@@ -122,7 +122,6 @@ func setupConfigTestRouter(a *API) *gin.Engine {
 	// These tests act as a caller the settings authorization middleware
 	// admitted with full access; api_settings_access_test.go covers the levels.
 	adminRouter.Use(func(c *gin.Context) {
-		c.Set(settingsAccessLevelKey, config.SettingsAccessWrite)
 		c.Set(settingsAccessSystemAdminKey, true)
 	})
 	adminRouter.GET("/config", a.handleGetConfig)

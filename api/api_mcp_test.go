@@ -904,8 +904,6 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 	}{
 		{name: "read/write settings delegate previews a saved agent", access: config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}, wantStatus: http.StatusOK},
 		{name: "read/write settings delegate previews an unsaved agent", access: config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}, unsaved: true, wantStatus: http.StatusOK},
-		{name: "read-only settings delegate cannot preview a saved agent", access: config.SettingsAccess{ReadOnlyUserIDs: []string{testUserID}}, wantStatus: http.StatusForbidden},
-		{name: "read-only settings delegate cannot preview an unsaved agent", access: config.SettingsAccess{ReadOnlyUserIDs: []string{testUserID}}, unsaved: true, wantStatus: http.StatusForbidden},
 		{name: "agent manager without settings access cannot preview a saved agent", access: config.SettingsAccess{AgentManagerUserIDs: []string{testUserID}}, wantStatus: http.StatusForbidden},
 	}
 	for _, tt := range previewBySettingsAccess {

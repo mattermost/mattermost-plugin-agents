@@ -915,13 +915,6 @@ func TestAgentServiceAccountAuthRequiresSettingsWriteAccess(t *testing.T) {
 			expectStored:   true,
 		},
 		{
-			name:           "read-only settings delegate cannot create with service account auth",
-			create:         true,
-			settingsAccess: config.SettingsAccessRead,
-			requestValue:   true,
-			expectedStatus: http.StatusForbidden,
-		},
-		{
 			name:           "non-admin cannot turn service account auth on",
 			requestValue:   true,
 			expectedStatus: http.StatusForbidden,
@@ -932,12 +925,6 @@ func TestAgentServiceAccountAuthRequiresSettingsWriteAccess(t *testing.T) {
 			requestValue:   true,
 			expectedStatus: http.StatusOK,
 			expectStored:   true,
-		},
-		{
-			name:           "read-only settings delegate cannot turn service account auth on",
-			settingsAccess: config.SettingsAccessRead,
-			requestValue:   true,
-			expectedStatus: http.StatusForbidden,
 		},
 		{
 			name:           "read/write settings delegate can keep service account auth and change userAccessLevel",
@@ -1106,11 +1093,8 @@ func TestAgentServiceAccountAuthRequiresSettingsWriteAccess(t *testing.T) {
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tc.systemAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-			switch tc.settingsAccess {
-			case config.SettingsAccessWrite:
+			if tc.settingsAccess == config.SettingsAccessWrite {
 				e.config.settingsAccess = config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}
-			case config.SettingsAccessRead:
-				e.config.settingsAccess = config.SettingsAccess{ReadOnlyUserIDs: []string{testUserID}}
 			}
 
 			// Cases that retarget serviceID need that service present in config validation.

@@ -27,7 +27,6 @@ import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
 import MCPRemoteServerList from './mcp_remote_server_list';
 import MCPServerWizard, {MCPServerWizardMode, PersistMCPServer} from './mcp_server_wizard';
 import MCPToolsViewer from './mcp_tools_viewer';
-import {useSettingsReadOnly} from './settings_read_only';
 import {useMCPToolsList} from './use_mcp_tools_list';
 import type {
     MCPConfig as BaseMCPConfig,
@@ -103,7 +102,6 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
     const intl = useIntl();
     const titleId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
-    const readOnly = useSettingsReadOnly();
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [wizardMode, setWizardMode] = useState<MCPServerWizardMode | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -283,8 +281,8 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                                 <>
                                     <RemoteServersEmptyState
                                         title={<FormattedMessage defaultMessage='No remote MCP servers configured'/>}
-                                        description={readOnly ? undefined : <FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>} // eslint-disable-line no-undefined
-                                        action={readOnly ? undefined : { // eslint-disable-line no-undefined
+                                        description={<FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>}
+                                        action={{
                                             emphasis: 'primary',
                                             onClick: addServer,
                                             disabled: !remoteMcpLicensed,
@@ -292,7 +290,7 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                                             children: <FormattedMessage defaultMessage='Add Remote MCP Server'/>,
                                         }}
                                     />
-                                    {!remoteMcpLicensed && !readOnly && (
+                                    {!remoteMcpLicensed && (
                                         <AddServerContainer>
                                             <LicenseChip capability='remote_mcp'/>
                                         </AddServerContainer>
@@ -306,21 +304,19 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                                         onEdit={(server) => setWizardMode({kind: 'edit', server})}
                                         onDelete={deleteServer}
                                     />
-                                    {!readOnly && (
-                                        <AddServerContainer>
-                                            <Button
-                                                emphasis='primary'
-                                                onClick={addServer}
-                                                disabled={!remoteMcpLicensed}
-                                                leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                                            >
-                                                <FormattedMessage defaultMessage='Add Remote MCP Server'/>
-                                            </Button>
-                                            {!remoteMcpLicensed && (
-                                                <LicenseChip capability='remote_mcp'/>
-                                            )}
-                                        </AddServerContainer>
-                                    )}
+                                    <AddServerContainer>
+                                        <Button
+                                            emphasis='primary'
+                                            onClick={addServer}
+                                            disabled={!remoteMcpLicensed}
+                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                                        >
+                                            <FormattedMessage defaultMessage='Add Remote MCP Server'/>
+                                        </Button>
+                                        {!remoteMcpLicensed && (
+                                            <LicenseChip capability='remote_mcp'/>
+                                        )}
+                                    </AddServerContainer>
                                 </>
                             )}
                         </RemoteServersSection>

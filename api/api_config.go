@@ -115,20 +115,15 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, adminConfigResponse(settingsAccessFromContext(c), normalizeAdminConfig(*cfg.Clone())))
+	c.JSON(http.StatusOK, adminConfigResponse(normalizeAdminConfig(*cfg.Clone())))
 }
 
-// adminConfigResponse shapes a configuration for a user with the given access.
-// Read/write users get credentials masked; the admin console sends the mask
-// back unchanged for the ones it does not edit. Read-only users get them
-// blanked, and every URL cut down to its origin. Nobody gets the delegation
-// lists, which have their own system admin route.
-func adminConfigResponse(level config.SettingsAccessLevel, cfg config.Config) config.Config {
-	if level < config.SettingsAccessWrite {
-		cfg = cfg.WithoutSecrets()
-	} else {
-		cfg = config.RedactSecrets(cfg)
-	}
+// adminConfigResponse shapes a configuration for the admin console. Credentials
+// are masked; the console sends the mask back unchanged for the ones it does not
+// edit. Nobody gets the delegation lists, which have their own system admin
+// route.
+func adminConfigResponse(cfg config.Config) config.Config {
+	cfg = config.RedactSecrets(cfg)
 	cfg.SettingsAccess = nil
 	return cfg
 }
@@ -281,7 +276,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, adminConfigResponse(settingsAccessFromContext(c), saved))
+	c.JSON(http.StatusOK, adminConfigResponse(saved))
 }
 
 // clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP

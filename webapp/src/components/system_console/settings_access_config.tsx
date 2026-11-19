@@ -32,7 +32,7 @@ type Props = {
     unRegisterSaveAction: (action: () => Promise<{ error?: { message?: string } }>) => void
 }
 
-const emptyAccess: SettingsAccess = {readOnlyUserIDs: [], readWriteUserIDs: [], agentManagerUserIDs: []};
+const emptyAccess: SettingsAccess = {readWriteUserIDs: [], agentManagerUserIDs: []};
 
 /**
  * The plugin's System Console page. Everything the plugin configures lives in
@@ -139,34 +139,11 @@ const SettingsAccessConfig = (props: Props) => {
                     <TextFieldContainer>
                         <SelectUsers
                             userIDs={access.readWriteUserIDs}
-                            onChangeUserIDs={(readWriteUserIDs) => update({
-                                readWriteUserIDs,
-
-                                // Read/write includes read; one list per person.
-                                readOnlyUserIDs: access.readOnlyUserIDs.filter((id) => !readWriteUserIDs.includes(id)),
-                            })}
+                            onChangeUserIDs={(readWriteUserIDs) => update({readWriteUserIDs})}
                             placeholder={intl.formatMessage({defaultMessage: 'Search for people to give read and write access'})}
                         />
                         <HelpText>
                             <FormattedMessage defaultMessage='Can view and change every Agents setting, including API keys, and choose the services that receive agent conversations, including private messages. Give this only to people you trust as an Agents system admin.'/>
-                        </HelpText>
-                    </TextFieldContainer>
-                </FormRow>
-                <FormRow>
-                    <ItemLabel>
-                        <FormattedMessage defaultMessage='Read-only access'/>
-                    </ItemLabel>
-                    <TextFieldContainer>
-                        <SelectUsers
-                            userIDs={access.readOnlyUserIDs}
-                            onChangeUserIDs={(readOnlyUserIDs) => update({
-                                readOnlyUserIDs,
-                                readWriteUserIDs: access.readWriteUserIDs.filter((id) => !readOnlyUserIDs.includes(id)),
-                            })}
-                            placeholder={intl.formatMessage({defaultMessage: 'Search for people to give read-only access'})}
-                        />
-                        <HelpText>
-                            <FormattedMessage defaultMessage='These people can view the Agents settings without API keys and other credentials, and cannot change them.'/>
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
@@ -200,7 +177,7 @@ const SettingsAccessConfig = (props: Props) => {
             />
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'Settings access'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Let people who are not system admins view or change the Agents settings, or manage every agent.'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Let people who are not system admins change the Agents settings, or manage every agent.'})}
             >
                 {lists}
             </AdminPanel>

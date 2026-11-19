@@ -22,7 +22,6 @@ import (
 
 type settingsAccessUsers struct {
 	admin        string
-	readOnly     string
 	readWrite    string
 	agentManager string
 	roleManager  string // has manage_others_agent through a role
@@ -30,8 +29,7 @@ type settingsAccessUsers struct {
 }
 
 // setupSettingsAccessEnv wires a config store holding stored and in-memory
-// delegation lists granting users.readOnly, users.readWrite and
-// users.agentManager, with users.admin the only system admin.
+// delegation lists granting users.readWrite and users.agentManager, with users.admin the only system admin.
 func setupSettingsAccessEnv(t *testing.T, stored *config.Config) (*TestEnvironment, settingsAccessUsers, *testConfigStore, *testConfigUpdater) {
 	t.Helper()
 	gin.SetMode(gin.ReleaseMode)
@@ -39,7 +37,6 @@ func setupSettingsAccessEnv(t *testing.T, stored *config.Config) (*TestEnvironme
 
 	users := settingsAccessUsers{
 		admin:        model.NewId(),
-		readOnly:     model.NewId(),
 		readWrite:    model.NewId(),
 		agentManager: model.NewId(),
 		roleManager:  model.NewId(),
@@ -52,7 +49,6 @@ func setupSettingsAccessEnv(t *testing.T, stored *config.Config) (*TestEnvironme
 	e.mockAPI.On("HasPermissionTo", mock.Anything, mock.Anything).Return(false).Maybe()
 
 	access := config.SettingsAccess{
-		ReadOnlyUserIDs:     []string{users.readOnly},
 		ReadWriteUserIDs:    []string{users.readWrite},
 		AgentManagerUserIDs: []string{users.agentManager},
 	}
@@ -81,7 +77,7 @@ func TestSettingsRoutesAuthorization(t *testing.T) {
 			name:    "read the configuration",
 			method:  http.MethodGet,
 			path:    "/admin/config",
-			allowed: map[string]bool{"admin": true, "readOnly": true, "readWrite": true},
+			allowed: map[string]bool{"admin": true, "readWrite": true},
 		},
 		{
 			name:    "save the configuration",
@@ -94,7 +90,7 @@ func TestSettingsRoutesAuthorization(t *testing.T) {
 			name:    "read the MCP tools",
 			method:  http.MethodGet,
 			path:    "/admin/mcp/tools",
-			allowed: map[string]bool{"admin": true, "readOnly": true, "readWrite": true},
+			allowed: map[string]bool{"admin": true, "readWrite": true},
 		},
 		{
 			name:    "clear the MCP tools cache",
@@ -114,7 +110,7 @@ func TestSettingsRoutesAuthorization(t *testing.T) {
 			method:  http.MethodPost,
 			path:    "/access_control/cel/visual_ast",
 			body:    map[string]any{"resource_type": accesscontrol.ResourceTypeService, "expression": "true"},
-			allowed: map[string]bool{"admin": true, "readOnly": true, "readWrite": true},
+			allowed: map[string]bool{"admin": true, "readWrite": true},
 		},
 		{
 			name:    "read the delegation lists",
@@ -138,7 +134,6 @@ func TestSettingsRoutesAuthorization(t *testing.T) {
 
 			for role, userID := range map[string]string{
 				"admin":     users.admin,
-				"readOnly":  users.readOnly,
 				"readWrite": users.readWrite,
 				"other":     users.other,
 			} {
@@ -165,7 +160,6 @@ func TestGetMySettingsAccess(t *testing.T) {
 	}{
 		{name: "system admin", userID: users.admin, level: "write"},
 		{name: "read/write delegate", userID: users.readWrite, level: "write"},
-		{name: "read-only delegate", userID: users.readOnly, level: "read"},
 		{name: "agent manager from the list", userID: users.agentManager, level: "none", manageOthers: true},
 		{name: "agent manager from a role", userID: users.roleManager, level: "none", manageOthers: true},
 		{name: "anyone else", userID: users.other, level: "none"},
@@ -224,9 +218,11 @@ func configWithEverySecret() *config.Config {
 	}
 }
 
-var everySecret = []string{
+// maskedCredentials lists the credentials the admin config mask replaces.
+// Credentials inside URLs, the AWS access key ID and nested embedding
+// parameters are not part of the mask.
+var maskedCredentials = []string{
 	"sentinel-service-api-key",
-	"sentinel-aws-access-key-id",
 	"sentinel-aws-secret",
 	"sentinel-vertex-credentials",
 	"sentinel-mcp-header",
@@ -236,82 +232,40 @@ var everySecret = []string{
 	"sentinel-brave-key",
 	"sentinel-embedding-key",
 	"sentinel-otlp-header",
-	"sentinel-service-url-password",
-	"sentinel-service-url-key",
-	"sentinel-mcp-url-token",
-	"sentinel-searxng-password",
-	"sentinel-embedding-url-key",
-	"sentinel-embedding-nested-key",
-	"sentinel-otlp-url-password",
-	"sentinel-service-path-token",
-	"sentinel-mcp-path-token",
-	"sentinel-brave-path-token",
-	"sentinel-embedding-path-token",
-	"sentinel-otlp-path-token",
 }
 
-// maskedForEditors lists the credentials the admin config mask replaces for
-// users who can edit. The rest (credentials inside URLs, the AWS access key
-// ID, nested embedding parameters) reach editors as stored; read-only users
-// never get them.
-var maskedForEditors = map[string]bool{
-	"sentinel-service-api-key":     true,
-	"sentinel-aws-secret":          true,
-	"sentinel-vertex-credentials":  true,
-	"sentinel-mcp-header":          true,
-	"sentinel-mcp-service-account": true,
-	"sentinel-mcp-client-secret":   true,
-	"sentinel-google-key":          true,
-	"sentinel-brave-key":           true,
-	"sentinel-embedding-key":       true,
-	"sentinel-otlp-header":         true,
-}
-
-func TestGetConfigSecretsByAccessLevel(t *testing.T) {
+func TestGetConfigMasksCredentials(t *testing.T) {
 	tests := []struct {
-		name       string
-		role       string
-		wantMasked bool
+		name string
+		role string
 	}{
-		{name: "system admin gets credentials masked", role: "admin", wantMasked: true},
-		{name: "read/write delegate gets credentials masked", role: "readWrite", wantMasked: true},
-		{name: "read-only delegate gets them blanked", role: "readOnly", wantMasked: false},
+		{name: "system admin", role: "admin"},
+		{name: "read/write delegate", role: "readWrite"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e, users, _, _ := setupSettingsAccessEnv(t, configWithEverySecret())
 			defer e.Cleanup(t)
-			userID := map[string]string{"admin": users.admin, "readWrite": users.readWrite, "readOnly": users.readOnly}[tt.role]
+			userID := map[string]string{"admin": users.admin, "readWrite": users.readWrite}[tt.role]
 
 			recorder := doRequest(e.api, http.MethodGet, "/admin/config", nil, userID)
 			require.Equal(t, http.StatusOK, recorder.Code)
 			body := recorder.Body.String()
 
-			// Editors get stored credentials masked, which the admin console
-			// sends back unchanged. Credentials inside URLs are not masked
-			// for them: they are part of the URL they edit. Read-only users
-			// get every credential blanked and every URL cut to its origin.
-			for _, secret := range everySecret {
-				if tt.wantMasked && !maskedForEditors[secret] {
-					assert.Contains(t, body, secret)
-					continue
-				}
+			// Stored credentials never come back; the admin console sends the
+			// mask back unchanged for the ones it does not edit.
+			for _, secret := range maskedCredentials {
 				assert.NotContains(t, body, secret)
 			}
-			if tt.wantMasked {
-				assert.Contains(t, body, config.SecretPlaceholder)
-			} else {
-				assert.NotContains(t, body, config.SecretPlaceholder)
-			}
+			assert.Contains(t, body, config.SecretPlaceholder)
 
-			// The rest of the configuration is still there for the viewer, and
+			// The rest of the configuration is still there, and
 			// nobody gets the delegation lists from this route.
 			assert.Contains(t, body, "Primary")
 			assert.Contains(t, body, "text-embedding-3-small")
 			assert.Contains(t, body, "X-Api-Key")
 			assert.Contains(t, body, "llm.example.com")
 			assert.NotContains(t, body, "settingsAccess")
-			assert.NotContains(t, body, users.readOnly)
 		})
 	}
 }
@@ -325,7 +279,6 @@ func TestSaveConfigKeepsDelegationLists(t *testing.T) {
 		"services": []any{},
 		"bots":     []any{},
 		"settingsAccess": map[string]any{
-			"readOnlyUserIDs":     []string{},
 			"readWriteUserIDs":    []string{users.readWrite, users.other},
 			"agentManagerUserIDs": []string{users.readWrite},
 		},
@@ -334,7 +287,6 @@ func TestSaveConfigKeepsDelegationLists(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	require.NotNil(t, store.cfg.SettingsAccess)
-	assert.Equal(t, []string{users.readOnly}, store.cfg.SettingsAccess.ReadOnlyUserIDs)
 	assert.Equal(t, []string{users.readWrite}, store.cfg.SettingsAccess.ReadWriteUserIDs)
 	assert.Equal(t, []string{users.agentManager}, store.cfg.SettingsAccess.AgentManagerUserIDs)
 	assert.NotContains(t, recorder.Body.String(), "settingsAccess")
@@ -381,7 +333,6 @@ func TestSaveConfigLegacyBotsAreSystemAdminOnly(t *testing.T) {
 }
 
 func TestPutSettingsAccess(t *testing.T) {
-	newReadOnly := model.NewId()
 	newReadWrite := model.NewId()
 	newAgentManager := model.NewId()
 
@@ -394,35 +345,20 @@ func TestPutSettingsAccess(t *testing.T) {
 		{
 			name: "replaces every list",
 			body: config.SettingsAccess{
-				ReadOnlyUserIDs:     []string{newReadOnly},
 				ReadWriteUserIDs:    []string{newReadWrite},
 				AgentManagerUserIDs: []string{newAgentManager, newReadWrite},
 			},
 			expectedStatus: http.StatusOK,
 			expected: &config.SettingsAccess{
-				ReadOnlyUserIDs:     []string{newReadOnly},
 				ReadWriteUserIDs:    []string{newReadWrite},
 				AgentManagerUserIDs: []string{newAgentManager, newReadWrite},
-			},
-		},
-		{
-			name: "a user on both lists keeps read/write only",
-			body: config.SettingsAccess{
-				ReadOnlyUserIDs:  []string{newReadOnly, newReadWrite},
-				ReadWriteUserIDs: []string{newReadWrite, newReadWrite},
-			},
-			expectedStatus: http.StatusOK,
-			expected: &config.SettingsAccess{
-				ReadOnlyUserIDs:     []string{newReadOnly},
-				ReadWriteUserIDs:    []string{newReadWrite},
-				AgentManagerUserIDs: []string{},
 			},
 		},
 		{
 			name:           "clears every list",
 			body:           map[string]any{},
 			expectedStatus: http.StatusOK,
-			expected:       &config.SettingsAccess{ReadOnlyUserIDs: []string{}, ReadWriteUserIDs: []string{}, AgentManagerUserIDs: []string{}},
+			expected:       &config.SettingsAccess{ReadWriteUserIDs: []string{}, AgentManagerUserIDs: []string{}},
 		},
 		{
 			name:           "rejects something that is not a user ID",
@@ -473,7 +409,7 @@ func TestGetSettingsAccessEncodesEmptyLists(t *testing.T) {
 
 	recorder := doRequest(e.api, http.MethodGet, "/admin/settings-access", nil, users.admin)
 	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"readOnlyUserIDs":[],"readWriteUserIDs":[],"agentManagerUserIDs":[]}`, recorder.Body.String())
+	assert.JSONEq(t, `{"readWriteUserIDs":[],"agentManagerUserIDs":[]}`, recorder.Body.String())
 }
 
 func TestPutSettingsAccessAuditRecord(t *testing.T) {
@@ -502,7 +438,6 @@ func TestCELTestForServicePoliciesFollowsSettingsAccess(t *testing.T) {
 		allowed bool
 	}{
 		{name: "read/write delegate may test", role: "readWrite", allowed: true},
-		{name: "read-only delegate may not", role: "readOnly", allowed: false},
 		{name: "anyone else may not", role: "other", allowed: false},
 	}
 	for _, tt := range tests {
@@ -510,7 +445,7 @@ func TestCELTestForServicePoliciesFollowsSettingsAccess(t *testing.T) {
 			e, users, _, _ := setupSettingsAccessEnv(t, &config.Config{})
 			defer e.Cleanup(t)
 			e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, accesscontrol.NoMCPServerIDs, nil)
-			userID := map[string]string{"readWrite": users.readWrite, "readOnly": users.readOnly, "other": users.other}[tt.role]
+			userID := map[string]string{"readWrite": users.readWrite, "other": users.other}[tt.role]
 
 			if tt.allowed {
 				// Delegates must match the expression themselves, as other

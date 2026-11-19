@@ -194,7 +194,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
             emphasis='secondary'
             size='small'
             onClick={handleMarkReviewed}
-            disabled={!serverEnabled || !expanded}
+            disabled={readOnly || !serverEnabled || !expanded}
             aria-label={intl.formatMessage({defaultMessage: 'Mark tools on {serverName} as reviewed'}, {serverName: server.name})}
         >
             <FormattedMessage defaultMessage='Mark tools as reviewed'/>
@@ -256,7 +256,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                         </StyledChevron>
                     </ExpandChevron>
                 </ServerRowExpandButton>
-                {unreviewedCount > 0 && serverConfig && !readOnly && (expanded ? markReviewedButton : (
+                {unreviewedCount > 0 && serverConfig && (expanded ? markReviewedButton : (
 
                     // Until the tool list is open the button only tells the
                     // admin there is something to review: tools are marked

@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	settingsAccessLevelKey       = "settings_access_level"
 	settingsAccessSystemAdminKey = "settings_access_system_admin"
 )
 
@@ -37,17 +36,6 @@ func (a *API) settingsAccess(userID string) (config.SettingsAccessLevel, bool) {
 	return a.config.SettingsAccess().LevelFor(userID), false
 }
 
-// settingsAccessFromContext returns the level the authorization middleware
-// recorded for this request, or none when it did not run.
-func settingsAccessFromContext(c *gin.Context) config.SettingsAccessLevel {
-	if level, ok := c.Get(settingsAccessLevelKey); ok {
-		if l, ok := level.(config.SettingsAccessLevel); ok {
-			return l
-		}
-	}
-	return config.SettingsAccessNone
-}
-
 // settingsCallerIsSystemAdmin reports whether the authorization middleware
 // admitted this request as a system admin, false when it did not run.
 func settingsCallerIsSystemAdmin(c *gin.Context) bool {
@@ -60,14 +48,7 @@ func (a *API) requireSettingsAccess(c *gin.Context, minimum config.SettingsAcces
 		c.AbortWithError(http.StatusForbidden, fmt.Errorf("must be a system admin or have %s access to the Agents settings", minimum))
 		return
 	}
-	c.Set(settingsAccessLevelKey, level)
 	c.Set(settingsAccessSystemAdminKey, systemAdmin)
-}
-
-// settingsReadAuthorizationRequired admits system admins and users with
-// read-only or read/write access to the plugin configuration.
-func (a *API) settingsReadAuthorizationRequired(c *gin.Context) {
-	a.requireSettingsAccess(c, config.SettingsAccessRead)
 }
 
 // settingsWriteAuthorizationRequired admits system admins and users with
@@ -77,7 +58,7 @@ func (a *API) settingsWriteAuthorizationRequired(c *gin.Context) {
 }
 
 type mySettingsAccessResponse struct {
-	// Level is "none", "read" or "write".
+	// Level is "none" or "write".
 	Level string `json:"level"`
 
 	// ManageOthersAgents is whether the user may edit and delete every agent,
@@ -145,7 +126,6 @@ func (a *API) handlePutSettingsAccess(c *gin.Context) {
 		return
 	}
 
-	audit.AddParam(auditRec(c), "read_only_user_ids", audit.TruncateIDs(normalized.ReadOnlyUserIDs))
 	audit.AddParam(auditRec(c), "read_write_user_ids", audit.TruncateIDs(normalized.ReadWriteUserIDs))
 	audit.AddParam(auditRec(c), "agent_manager_user_ids", audit.TruncateIDs(normalized.AgentManagerUserIDs))
 	audit.AddParam(auditRec(c), "persisted", true)

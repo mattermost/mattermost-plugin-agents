@@ -155,7 +155,6 @@ func TestAgentPolicyWriteRequiresSettingsWriteAccessWhenServiceAccountOn(t *test
 	managerID := model.NewId()
 	sysadminID := model.NewId()
 	writeDelegateID := model.NewId()
-	readDelegateID := model.NewId()
 	agentID := model.NewId()
 
 	policyBody := map[string]any{
@@ -211,11 +210,6 @@ func TestAgentPolicyWriteRequiresSettingsWriteAccessWhenServiceAccountOn(t *test
 			wantStatus: http.StatusOK, wantEvent: AuditEventDeleteAgentPolicy, expectDelete: true,
 		},
 		{
-			name:   "SA on read-only settings delegate PUT is forbidden",
-			userID: readDelegateID, saOn: true, method: http.MethodPut, body: policyBody,
-			wantStatus: http.StatusForbidden, wantEvent: AuditEventPutAgentPolicy, wantAuditFail: true,
-		},
-		{
 			name:   "SA off manager PUT still allowed",
 			userID: managerID, method: http.MethodPut, body: policyBody,
 			wantStatus: http.StatusOK, wantEvent: AuditEventPutAgentPolicy, expectSave: true,
@@ -234,11 +228,10 @@ func TestAgentPolicyWriteRequiresSettingsWriteAccessWhenServiceAccountOn(t *test
 
 			e.agentStore.agents[agentID] = &llm.BotConfig{
 				ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
-				ServiceID: "svc-1", CreatorID: managerID, AdminUserIDs: []string{sysadminID, writeDelegateID, readDelegateID},
+				ServiceID: "svc-1", CreatorID: managerID, AdminUserIDs: []string{sysadminID, writeDelegateID},
 				UseServiceAccountAuth: tt.saOn,
 			}
 			e.config.settingsAccess = config.SettingsAccess{
-				ReadOnlyUserIDs:  []string{readDelegateID},
 				ReadWriteUserIDs: []string{writeDelegateID},
 			}
 

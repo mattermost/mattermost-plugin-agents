@@ -41,7 +41,6 @@ jest.mock('../select', () => ({
 type SaveAction = () => Promise<{error?: {message?: string}}>;
 
 const READ_WRITE = 'Search for people to give read and write access';
-const READ_ONLY = 'Search for people to give read-only access';
 const AGENT_MANAGERS = 'Search for people to make agent managers';
 
 function renderConfig() {
@@ -83,40 +82,37 @@ function renderConfig() {
 describe('SettingsAccessConfig', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        (getSettingsAccess as jest.Mock).mockResolvedValue({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol']});
+        (getSettingsAccess as jest.Mock).mockResolvedValue({readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol']});
         (saveSettingsAccess as jest.Mock).mockImplementation(async (access) => access);
     });
 
     it('shows both lists and saves only them through the host Save button', async () => {
         const {save, setSaveNeeded} = renderConfig();
         await screen.findByText(`${READ_WRITE}: alice`);
-        expect(screen.getByText(`${READ_ONLY}: bob`)).toBeTruthy();
 
-        // Giving bob read/write takes him off the read-only list.
         fireEvent.click(screen.getByRole('button', {name: `add bob (${READ_WRITE})`}));
         expect(setSaveNeeded).toHaveBeenCalled();
-        expect(screen.getByText(`${READ_ONLY}: nobody`)).toBeTruthy();
 
         expect(await save()).toEqual({});
-        expect(saveSettingsAccess).toHaveBeenCalledWith({readOnlyUserIDs: [], readWriteUserIDs: ['alice', 'bob'], agentManagerUserIDs: ['carol']});
+        expect(saveSettingsAccess).toHaveBeenCalledWith({readWriteUserIDs: ['alice', 'bob'], agentManagerUserIDs: ['carol']});
     });
 
     it('saves agent managers independently of settings access', async () => {
         const {save} = renderConfig();
         await screen.findByText(`${AGENT_MANAGERS}: carol`);
 
-        // bob keeps read-only settings access and also manages every agent.
+        // bob manages every agent without any settings access.
         fireEvent.click(screen.getByRole('button', {name: `add bob (${AGENT_MANAGERS})`}));
-        expect(screen.getByText(`${READ_ONLY}: bob`)).toBeTruthy();
+        expect(screen.getByText(`${READ_WRITE}: alice`)).toBeTruthy();
 
         expect(await save()).toEqual({});
-        expect(saveSettingsAccess).toHaveBeenCalledWith({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol', 'bob']});
+        expect(saveSettingsAccess).toHaveBeenCalledWith({readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol', 'bob']});
     });
 
     it.each([
         {name: 'still loading', load: () => new Promise(() => null)},
         {name: 'failed to load', load: () => Promise.reject(new Error('500'))},
-        {name: 'loaded but untouched', load: () => Promise.resolve({readOnlyUserIDs: ['bob'], readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol']})},
+        {name: 'loaded but untouched', load: () => Promise.resolve({readWriteUserIDs: ['alice'], agentManagerUserIDs: ['carol']})},
     ])('leaves the stored lists alone when the host saves other settings while they are $name', async ({load}) => {
         (getSettingsAccess as jest.Mock).mockImplementation(load);
         const {save} = renderConfig();

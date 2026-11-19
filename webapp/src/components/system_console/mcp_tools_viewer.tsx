@@ -112,10 +112,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
         seededRef.current = true;
 
         (async () => {
-            // A read-only viewer must not see policies that are not in effect, so
-            // remote servers keep what is stored; only the embedded server is seeded.
-            const remoteURLs = readOnly ? [] : (mcpConfig.servers ?? []).map((sc) => sc.baseURL);
-            const baseURLs = new Set([...remoteURLs, EMBEDDED_MATTERMOST_BASE_URL]);
+            const baseURLs = new Set([...(mcpConfig.servers ?? []).map((sc) => sc.baseURL), EMBEDDED_MATTERMOST_BASE_URL]);
             const seeds = new Map(await Promise.all([...baseURLs].map(async (baseURL): Promise<[string, MCPToolConfig[]]> => {
                 try {
                     return [baseURL, await getVettedToolSeed(baseURL)];
@@ -136,9 +133,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
             const seedConfig = (config: MCPConfig): MCPConfig => {
                 let changed = false;
                 const servers = config.servers?.map((sc) => {
-                    if (readOnly) {
-                        return sc;
-                    }
                     const toolConfigs = withSeeded(sc.tool_configs, sc.baseURL);
                     if (toolConfigs === sc.tool_configs) {
                         return sc;
@@ -279,16 +273,14 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
                     )}
                 </HeaderInfo>
                 <ButtonGroup>
-                    {!readOnly && (
-                        <Button
-                            emphasis='secondary'
-                            onClick={handleClearCache}
-                            loading={clearing}
-                            disabled={loading}
-                        >
-                            <FormattedMessage defaultMessage='Clear Cache'/>
-                        </Button>
-                    )}
+                    <Button
+                        emphasis='secondary'
+                        onClick={handleClearCache}
+                        loading={clearing}
+                        disabled={loading || readOnly}
+                    >
+                        <FormattedMessage defaultMessage='Clear Cache'/>
+                    </Button>
                     <Button
                         emphasis='tertiary'
                         onClick={refreshTools}
@@ -344,8 +336,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
                             return (
                                 <MCPServerToolRow
 
-                                    // Read-only viewers get every URL reduced to its origin, so two servers on
-                                    // one host share a URL; duplicate-endpoint conflicts do for everyone.
+                                    // Servers in a duplicate-endpoint conflict share a URL.
                                     key={`${index}:${server.name}:${server.url}`}
                                     server={server}
                                     serverConfig={findServerConfig(server)}

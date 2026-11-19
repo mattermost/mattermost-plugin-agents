@@ -495,43 +495,39 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	autoReplyRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
 
 	// The plugin configuration and the actions behind it. System admins and
-	// the users they delegate to on the System Console reach them: read-only
-	// users the reads, read/write users everything. The delegation lists
-	// themselves are system admin only.
+	// the users they delegate read/write access to on the System Console reach
+	// them. The delegation lists themselves are system admin only.
 	router.GET("/settings/access", a.handleGetMySettingsAccess)
 
 	adminRouter := router.Group("/admin")
-	adminRouter.Use(a.settingsReadAuthorizationRequired)
+	adminRouter.Use(a.settingsWriteAuthorizationRequired)
+	adminRouter.POST("/reindex", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
+	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
+	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
+	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
+	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
+	adminRouter.PUT("/mcp/plugin-servers/:pluginID", a.handleUpdatePluginServer)
+	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
-	adminRouter.GET("/services/:serviceid/access_policy", a.handleGetServicePolicy)
-	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
-
-	adminWriteRouter := adminRouter.Group("")
-	adminWriteRouter.Use(a.settingsWriteAuthorizationRequired)
-	adminWriteRouter.POST("/reindex", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleReindexPosts)
-	adminWriteRouter.POST("/reindex/cancel", a.handleCancelJob)
-	adminWriteRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
-	adminWriteRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
-	adminWriteRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
-	adminWriteRouter.PUT("/mcp/plugin-servers/:pluginID", a.handleUpdatePluginServer)
-	adminWriteRouter.POST("/models/fetch", a.handleFetchModels)
-	adminWriteRouter.PUT("/config", a.handleSaveConfig)
+	adminRouter.PUT("/config", a.handleSaveConfig)
 	// Service / MCP-server access policy authoring. The :serverid wildcard
 	// coexists with the static /admin/mcp/* routes above (pinned by a route test).
-	adminWriteRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
-	adminWriteRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
+	adminRouter.GET("/services/:serviceid/access_policy", a.handleGetServicePolicy)
+	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
+	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
 	// Connects to the server as the requesting user to draft a description
 	// for the edit form.
-	adminWriteRouter.GET("/mcp/:serverid/suggested-description", a.handleGetMCPSuggestedDescription)
+	adminRouter.GET("/mcp/:serverid/suggested-description", a.handleGetMCPSuggestedDescription)
 	// Connects to a saved server as the requesting user for the add-server
 	// review flow.
-	adminWriteRouter.GET("/mcp/:serverid/tools", a.handleGetMCPServerTools)
-	adminWriteRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
-	adminWriteRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
+	adminRouter.GET("/mcp/:serverid/tools", a.handleGetMCPServerTools)
+	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
+	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
+	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
 
 	settingsAccessRouter := router.Group("/admin/settings-access")
 	settingsAccessRouter.Use(a.mattermostAdminAuthorizationRequired)

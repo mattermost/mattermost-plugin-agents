@@ -1208,15 +1208,13 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
 // --- Settings access ---
 
 // How much of the plugin configuration a user may reach from the Agents
-// product: system admins and read/write delegates 'write', read-only
-// delegates 'read'.
-export type SettingsAccessLevel = 'none' | 'read' | 'write';
+// product: system admins and read/write delegates 'write'.
+export type SettingsAccessLevel = 'none' | 'write';
 
 // The users a system admin delegated access to: the plugin configuration
-// (read-only, read/write), and every agent (agent managers, as the
-// manage_others_agent permission allows).
+// (read/write), and every agent (agent managers, as the manage_others_agent
+// permission allows).
 export type SettingsAccess = {
-    readOnlyUserIDs: string[];
     readWriteUserIDs: string[];
     agentManagerUserIDs: string[];
 };

@@ -108,8 +108,8 @@ describe('ProductSidebar', () => {
         expect(onSelectAll).toHaveBeenCalledTimes(1);
     });
 
-    test.each(['read', 'write'])('shows Settings to a user with %s access', async (level) => {
-        (getMySettingsAccess as jest.Mock).mockResolvedValue({level, manageOthersAgents: false});
+    test('shows Settings to a user with write access', async () => {
+        (getMySettingsAccess as jest.Mock).mockResolvedValue({level: 'write', manageOthersAgents: false});
         const {onSelectSettings} = renderSidebar();
         fireEvent.click(await screen.findByRole('button', {name: /Settings/}));
         expect(onSelectSettings).toHaveBeenCalledTimes(1);
