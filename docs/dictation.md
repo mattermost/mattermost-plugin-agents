@@ -22,7 +22,7 @@ The user sees that dictation stopped. When the user stops dictating, the browser
 ## Set it up
 
 1. Open **Agents** from the product switcher and select **Settings**. On **AI services**, add an OpenAI service with an API key and save, if you don't have one. The service doesn't need an agent. See [Configure LLM services](llm_services.md).
-2. On **Dictation**, set **Enable dictation (experimental)** to **True**.
+2. On **Dictation**, set **Enable dictation** to **True**.
 3. Select the **Transcription service**. Only saved OpenAI services are listed.
 4. Check the **Transcription model** and optionally set a **Language**, then save.
 
