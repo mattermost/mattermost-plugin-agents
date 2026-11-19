@@ -167,8 +167,8 @@ func TextContent(blocks []ContentBlock) string {
 // WithTextContent returns a new slice of content blocks whose entire text
 // content is text: the first text block carries it and every other text block
 // is emptied, so TextContent of the result equals text. Blocks that hold no
-// text block gain a leading one unless text is empty. Citations and annotation
-// blocks describe the replaced text and are dropped with it. Blocks of every other type are copied
+// text block gain a leading one unless text is empty. Citations, annotation
+// blocks and server tool activity describe the replaced text and are dropped with it. Blocks of every other type are copied
 // unchanged. The original slice is never mutated; nil in, nil out for empty
 // text.
 func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
@@ -178,7 +178,7 @@ func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
 	result := make([]ContentBlock, 0, len(blocks)+1)
 	placed := false
 	for _, block := range blocks {
-		if block.Type == BlockTypeAnnotations {
+		if block.Type == BlockTypeAnnotations || block.Type == BlockTypeServerToolUse {
 			continue
 		}
 		if block.Type == BlockTypeText {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -1352,7 +1353,7 @@ func TestTurnsToResponseIncludesStatus(t *testing.T) {
 		{ID: "complete-turn", Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusComplete},
 	}
 
-	resp, _, err := turnsToResponse(turns, false, nil)
+	resp, _, err := turnsToResponse(turns, false, "", nil)
 	require.NoError(t, err)
 	require.Len(t, resp, 2)
 	require.Equal(t, store.TurnStatusStreaming, resp[0].Status)
@@ -1362,6 +1363,7 @@ func TestTurnsToResponseIncludesStatus(t *testing.T) {
 const (
 	secretEditedAway   = "MARKER-ALPHA pasted secret"
 	secretDeletedReply = "MARKER-BETA pasted secret"
+	secretToken        = "MARKER-GAMMA"
 	editedReplacement  = "edited text without the secret"
 	threadRootMessage  = "root question"
 	secretReplyPostID  = "replypost123456789012345a"
@@ -1436,6 +1438,9 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		userID         string
 		// member is false for a user without read access to the channel.
 		member bool
+		// agent is the username of the agent the conversation belongs to. It is
+		// left empty when no agent is registered for the conversation.
+		agent  string
 		setup  func(t *testing.T, e *TestEnvironment)
 		status int
 		// absent are strings that must not appear anywhere in the response body.
@@ -1502,6 +1507,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		{
 			name:           "auto-reply thread keeps the post text, not a blank turn",
 			conversationID: "conv-auto-reply",
+			agent:          "agent",
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
@@ -1515,6 +1521,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		{
 			name:           "loop-in thread keeps the post text, not a blank turn",
 			conversationID: "conv-loop-in",
+			agent:          "other-agent",
 			userID:         testOtherUserID,
 			member:         true,
 			setup: func(t *testing.T, e *TestEnvironment) {
@@ -1611,6 +1618,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		},
 		{
 			conversationID: "conv-padded-auto-reply",
+			agent:          "agent",
 			name:           "auto-reply thread whose post has surrounding whitespace keeps its title",
 			userID:         testOtherUserID,
 			member:         true,
@@ -1624,6 +1632,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		},
 		{
 			conversationID: "conv-bare-mention",
+			agent:          "agent",
 			name:           "auto-reply thread whose post has no text keeps its title",
 			userID:         testOtherUserID,
 			member:         true,
@@ -1637,6 +1646,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 		},
 		{
 			conversationID: "conv-bare-mention-deleted",
+			agent:          "agent",
 			name:           "title of a deleted post stored as a bare mention is blanked",
 			userID:         testOtherUserID,
 			member:         true,
@@ -1647,6 +1657,73 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			status:    http.StatusOK,
 			absent:    []string{secretEditedAway},
 			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-server-tool",
+			name:           "search activity of a replaced answer is absent from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: editedReplacement,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-server-tool", "Search", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-server-tool"] = []store.Turn{{
+					ID: "turn-server-tool", ConversationID: "conv-server-tool", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{ID: "srv1", Tool: "web_search", Status: "completed", Query: secretDeletedReply}},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-newline-mention",
+			name:           "mention followed by a newline is not the plugin's prefix, so the title is blanked",
+			userID:         testOtherUserID,
+			member:         true,
+			agent:          "agent",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-newline-mention", "Question about "+secretToken, map[string]string{anchoredUserPostID: "@agent\n" + secretToken},
+					[]*model.Post{livePost(anchoredUserPostID, "", "")})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretToken},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-other-mention",
+			name:           "a user's own mention of someone else is not the plugin's prefix, so the title is blanked",
+			userID:         testOtherUserID,
+			member:         true,
+			agent:          "agent",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-other-mention", "Question about "+secretToken, map[string]string{anchoredUserPostID: "@alice hello"},
+					[]*model.Post{livePost(anchoredUserPostID, "", "hello")})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretToken},
+			texts:     []string{"hello"},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-unknown-agent",
+			name:           "title is blanked when the conversation's agent cannot be found",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-unknown-agent", "Auto reply title", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+			},
+			status:    http.StatusOK,
+			texts:     []string{threadRootMessage},
 			wantTitle: "",
 		},
 		{
@@ -1686,6 +1763,9 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 
+			if tt.agent != "" {
+				e.setupTestBot(llm.BotConfig{Name: tt.agent, DisplayName: tt.agent})
+			}
 			tt.setup(t, e)
 			e.mockAPI.On("HasPermissionToChannel", tt.userID, testChannelID, model.PermissionReadChannel).Return(tt.member)
 

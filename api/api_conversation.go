@@ -107,7 +107,7 @@ func (a *API) handleGetConversation(c *gin.Context) {
 
 	// 4. Privacy filtering and display sanitization
 	anchoredPostText := a.anchoredPostTextLookup(conv.ChannelID)
-	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, anchoredPostText)
+	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, a.agentUsername(conv.BotID), anchoredPostText)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
@@ -230,6 +230,7 @@ func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (mes
 func turnsToResponse(
 	turns []store.Turn,
 	filterForNonRequester bool,
+	agentUsername string,
 	anchoredPostText func(postID string) (string, bool, error),
 ) ([]TurnResponse, bool, error) {
 	result := make([]TurnResponse, len(turns))
@@ -251,7 +252,7 @@ func turnsToResponse(
 				}
 				if message != stored {
 					blocks = conversation.WithTextContent(blocks, message)
-					if i == 0 && (!ok || strings.TrimSpace(message) != strings.TrimSpace(withoutLeadingMention(stored))) {
+					if i == 0 && (!ok || strings.TrimSpace(message) != strings.TrimSpace(withoutLeadingMention(stored, agentUsername))) {
 						openingTextChanged = true
 					}
 				}
@@ -279,13 +280,29 @@ func turnsToResponse(
 }
 
 // withoutLeadingMention drops the "@agent " the plugin puts in front of the
-// text of a turn it answers on its own (auto-reply, loop-in), which the post
-// itself never carried. A bare mention, stored for a post with no text of its
-// own, leaves nothing.
-func withoutLeadingMention(text string) string {
-	if !strings.HasPrefix(text, "@") {
+// text of a turn it answers on its own (auto-reply, loop-in), where agent is
+// agentUsername. A bare mention, stored for a post with no text of its own,
+// leaves nothing. Any other text is returned as it is.
+func withoutLeadingMention(text, agentUsername string) string {
+	if agentUsername == "" {
 		return text
 	}
-	_, rest, _ := strings.Cut(text, " ")
-	return rest
+	mention := "@" + agentUsername
+	if text == mention {
+		return ""
+	}
+	if rest, found := strings.CutPrefix(text, mention+" "); found {
+		return rest
+	}
+	return text
+}
+
+// agentUsername returns the username of the agent botID names, or "" when
+// there is none, in which case no mention counts as the plugin's own.
+func (a *API) agentUsername(botID string) string {
+	bot := a.bots.GetBotByID(botID)
+	if bot == nil || bot.GetMMBot() == nil {
+		return ""
+	}
+	return bot.GetMMBot().Username
 }
