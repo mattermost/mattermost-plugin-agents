@@ -2,7 +2,7 @@
 
 Let users dictate messages with a microphone button in every Mattermost message box. Audio streams from the browser to OpenAI, which transcribes it while the user speaks.
 
-Dictation needs an Enterprise license or above. It uses its own transcription service, chosen separately from the services your agents use, so a server can run agents on Anthropic and dictation on OpenAI. Users don't need an agent to dictate.
+Dictation is experimental and needs an Enterprise license or above. It uses its own transcription service, chosen separately from the services your agents use, so a server can run agents on Anthropic and dictation on OpenAI. Users don't need an agent to dictate.
 
 ## How it works
 
@@ -22,13 +22,13 @@ The user sees that dictation stopped. When the user stops dictating, the browser
 ## Set it up
 
 1. Open **Agents** from the product switcher and select **Settings**. On **AI services**, add an OpenAI service with an API key and save, if you don't have one. The service doesn't need an agent. See [Configure LLM services](llm_services.md).
-2. On **Dictation**, set **Enable dictation** to **True**.
+2. On **Dictation**, set **Enable dictation (experimental)** to **True**.
 3. Select the **Transcription service**. Only saved OpenAI services are listed.
 4. Check the **Transcription model** and optionally set a **Language**, then save.
 
 | Setting | Config key | Default | Details |
 |---|---|---|---|
-| Enable dictation | `dictation.enabled` | Off | Shows the microphone button to users who can dictate. Can't be turned on below Enterprise. |
+| Enable dictation (experimental) | `dictation.enabled` | Off | Shows the microphone button to users who can dictate. Can't be turned on below Enterprise. |
 | Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing, isn't an OpenAI service, has no API key, or has an **API URL** that isn't an absolute `http` or `https` URL with only a host and path (no credentials, query or fragment). |
 | Transcription model | `dictation.model` | `gpt-live-transcribe` | `gpt-live-transcribe` shows text while the user speaks. OpenAI has deprecated its earlier transcription models (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe` and `whisper-1`), so don't use them for new setups. |
 | Language | `dictation.language` | Empty (detected) | An ISO-639-1 code such as `en` or `de` for the language users speak. |
