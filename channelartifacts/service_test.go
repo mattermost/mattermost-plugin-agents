@@ -356,8 +356,8 @@ func TestServiceCheckReadableAppliesTheFilePolicy(t *testing.T) {
 			entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
 			require.NoError(t, err)
 			if tt.breakFile {
-				_, err := e.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
-				require.NoError(t, err)
+				_, execErr := e.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
+				require.NoError(t, execErr)
 				entry.Available = false
 			}
 			e.mm.EXPECT().HasPermissionToFileAction(tt.sessionID, e.fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(tt.allowed).Maybe()
