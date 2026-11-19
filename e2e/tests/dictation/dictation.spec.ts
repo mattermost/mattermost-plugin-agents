@@ -103,7 +103,7 @@ async function dictationRoute(mattermost: MattermostContainer, method: 'GET' | '
     const response = await fetch(`${mattermost.url()}/plugins/mattermost-ai/dictation/${route}`, {
         method,
         headers: { Authorization: `Bearer ${client.getToken()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined, // eslint-disable-line no-undefined
+        body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(30000),
     });
     return { status: response.status, body: await response.json() };
@@ -295,8 +295,37 @@ test.describe('Dictation', () => {
         // The browser never contacted the provider and never held its key.
         expect(providerRequests).toEqual([]);
 
+        // Stopping ends the session through the plugin, which hangs up the call.
+        const ended = page.waitForResponse((response) => response.request().method() === 'DELETE' && response.url().includes('/dictation/session/'));
         await dictationButton(center).click();
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle', { timeout: 10000 });
+        expect((await ended).status()).toBe(204);
+        await expect.poll(async () => (await realtime.state()).hangups).toContain(call.callId);
+    });
+
+    test('stopping while getting ready still hangs up the call', async ({ page, containers: { mattermost, realtime } }) => {
+        test.setTimeout(120000);
+        await stubPeerConnection(page);
+        await realtime.setMode('slow');
+        try {
+            await loginAsUser(page, mattermost);
+            const center = centerComposer(page);
+            const callsBefore = (await realtime.state()).calls.length;
+
+            await dictationButton(center).click();
+            await expect.poll(async () => (await realtime.state()).calls.length).toBe(callsBefore + 1);
+            await expect(dictationButton(center)).toHaveAttribute('data-status', 'connecting');
+            await dictationButton(center).click();
+            await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle', { timeout: 10000 });
+
+            // The provider created the call before the stop; the plugin must hang it up.
+            const { calls } = await realtime.state();
+            const callId = calls[calls.length - 1].callId;
+            await expect.poll(async () => (await realtime.state()).hangups, { timeout: 20000 }).toContain(callId);
+            await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle');
+        } finally {
+            await realtime.setMode('ok');
+        }
     });
 
     test('a session whose settings change is ended by the server, and the user is told why', async ({ page, containers: { mattermost, realtime } }) => {

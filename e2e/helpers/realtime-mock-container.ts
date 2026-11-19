@@ -21,7 +21,10 @@ export const REALTIME_MOCK_UPSTREAM_ERROR = 'UPSTREAM_SENTINEL_BODY';
 // The SDP answer the mock returns for every call.
 export const REALTIME_MOCK_ANSWER_SDP = 'v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n';
 
-export type RealtimeMockMode = 'ok' | 'fail';
+// slow answers a call only after SLOW_ANSWER_MS, so a test can stop during connect.
+export type RealtimeMockMode = 'ok' | 'fail' | 'slow';
+
+const SLOW_ANSWER_MS = 3000;
 
 // One POST /v1/realtime/calls the plugin server made.
 export type RecordedCall = {
@@ -146,6 +149,7 @@ const server = http.createServer(async (req, res) => {
     try { session = JSON.parse(formField(body, 'session')); } catch (e) { session = formField(body, 'session'); }
     calls.push({ callId, authorization: req.headers.authorization || '', sdp: formField(body, 'sdp'), session });
     if (mode === 'fail') { json(500, { error: { message: '${REALTIME_MOCK_UPSTREAM_ERROR}' } }); return; }
+    if (mode === 'slow') { await new Promise((r) => setTimeout(r, ${SLOW_ANSWER_MS})); }
     res.writeHead(201, { 'Content-Type': 'application/sdp', Location: '/v1/realtime/calls/' + callId });
     res.end(${JSON.stringify(REALTIME_MOCK_ANSWER_SDP)});
     return;
