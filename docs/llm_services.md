@@ -2,7 +2,7 @@
 
 An LLM service connects Agents to a model provider: credentials, default model, token limits, fallback, and structured output. Several agents can share one service.
 
-To add a service, go to **System Console > Plugins > Agents** and select **Add an AI Service**. Free and Professional licenses allow one service. Enterprise and above allow several. Provider-specific fields are in [Provider configuration](providers.md).
+To add a service, go to **Agents > Settings > AI services** and select **Add an AI Service**. Free and Professional licenses allow one service. Enterprise and above allow several. Provider-specific fields are in [Provider configuration](providers.md).
 
 ## Service settings
 
