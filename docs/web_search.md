@@ -6,7 +6,7 @@ Give agents web search through the provider's native tool (Professional) or Matt
 |---|---|---|
 | Who runs the search | The model provider | Mattermost, through Brave, Google, or SearXNG |
 | Providers | Anthropic, OpenAI, Google Gemini, Google Vertex AI, and OpenAI Compatible or Azure with **Use Responses API** on | Any model that supports tool calling |
-| Where to turn it on | Per agent, under **Advanced configuration** | **System Console > Plugins > Agents > Web Search**. Applies to agents that don't use native search. |
+| Where to turn it on | Per agent, under **Advanced configuration** | **Agents > Settings > Web search**. Applies to agents that don't use native search. |
 | License | Professional | Enterprise |
 | Approval | No approval card | Asks for approval on every call |
 
@@ -40,7 +40,7 @@ OpenAI agents have **Code Interpreter**, which runs code in OpenAI's sandbox.
 
 Mattermost's own search tool lets an agent retrieve current information when the model has no native search.
 
-1. Go to **System Console > Plugins > Agents > Web Search**.
+1. Go to **Agents > Settings > Web search**.
 2. Set **Enable Web Search** to **True**.
 3. Choose a **Provider** and fill in its settings.
 
