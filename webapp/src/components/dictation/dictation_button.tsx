@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef} from 'react';
+import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
@@ -97,16 +97,38 @@ function useLiveLevel(target: React.RefObject<HTMLElement | null>, levelRef: Rea
 const DictationButton = (props: DictationButtonProps) => {
     const available = useDictationAvailable();
     const licensed = useIsLicensedFor('dictation');
-    if (!available || !licensed) {
+    const [sessionRunning, setSessionRunning] = useState(false);
+    const canStart = available && licensed;
+
+    // A running session stays mounted until it ends, so a failed availability
+    // refetch can't cut it off. The server ends sessions itself when access
+    // really changes. New starts still need availability.
+    if (!canStart && !sessionRunning) {
         return null;
     }
-    return <DictationControl {...props}/>;
+    return (
+        <DictationControl
+            {...props}
+            canStart={canStart}
+            onSessionRunningChange={setSessionRunning}
+        />
+    );
 };
 
-const DictationControl = ({draft, getSelectedText, updateText, createTransport = createWebRTCTranscriber, maxSessionMs}: DictationButtonProps) => {
+type DictationControlProps = DictationButtonProps & {
+    canStart: boolean;
+    onSessionRunningChange: (running: boolean) => void;
+};
+
+const DictationControl = ({draft, getSelectedText, updateText, createTransport = createWebRTCTranscriber, maxSessionMs, canStart, onSessionRunningChange}: DictationControlProps) => {
     const intl = useIntl();
     const supported = isDictationSupported();
     const {status, errorReason, toggle, active, levelRef} = useDictation({draft, getSelectedText, updateText, createTransport, maxSessionMs});
+    const sessionRunning = active || status === 'stopping';
+    useLayoutEffect(() => {
+        onSessionRunningChange(sessionRunning);
+    }, [sessionRunning, onSessionRunningChange]);
+    useEffect(() => () => onSessionRunningChange(false), [onSessionRunningChange]);
     const anchorRef = useRef<HTMLSpanElement>(null);
     useLiveLevel(anchorRef, levelRef, status === 'listening');
     const gettingReady = status === 'requesting_permission' || status === 'connecting';
@@ -179,7 +201,7 @@ const DictationControl = ({draft, getSelectedText, updateText, createTransport =
                     )}
                     toggled={active}
                     destructive={status === 'error'}
-                    disabled={!supported || status === 'stopping'}
+                    disabled={!supported || status === 'stopping' || (!canStart && !active)}
                     aria-label={label}
                     onClick={toggle}
                     data-testid='dictation-button'

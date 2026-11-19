@@ -310,6 +310,26 @@ describe('DictationButton', () => {
         }
     });
 
+    test('a running session survives availability turning false, then the button hides and can\'t start again', async () => {
+        const {transports, controls, draft} = renderButton({message: '', channelId: 'c1'});
+        await startListening(() => transports[0]);
+
+        // A failed refetch reports dictation as unavailable mid-session.
+        useDictationAvailable.mockReturnValue(false);
+        act(() => controls.setDraft((d) => ({...d})));
+        expect(transports[0].stop).not.toHaveBeenCalled();
+        expect(button().getAttribute('data-status')).toBe('listening');
+
+        act(() => transports[0].transcript({text: 'still heard'}));
+        await waitFor(() => expect(draft()).toBe('still heard'));
+
+        fireEvent.click(button());
+        await waitFor(() => expect(screen.queryByTestId('dictation-button')).toBeNull());
+        expect(transports[0].stop).toHaveBeenCalledWith({waitForFinal: true});
+        expect(draft()).toBe('still heard');
+        expect(transports).toHaveLength(1);
+    });
+
     test('coalesces updates into one write per frame', async () => {
         const {transports, updateText, draft} = renderButton({message: '', channelId: 'c1'});
         await startListening(() => transports[0]);
