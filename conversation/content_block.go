@@ -167,10 +167,12 @@ func TextContent(blocks []ContentBlock) string {
 // WithTextContent returns a new slice of content blocks whose entire text
 // content is text: the first text block carries it and every other text block
 // is emptied, so TextContent of the result equals text. Blocks that hold no
-// text block gain a leading one unless text is empty. Citations, annotation
-// blocks and server tool activity describe the replaced text and are dropped with it. Blocks of every other type are copied
-// unchanged. The original slice is never mutated; nil in, nil out for empty
-// text.
+// text block gain a leading one unless text is empty. Only text blocks and the
+// owner-shared items that FilterForNonRequester already vetted (attachments and
+// tool calls and results) survive; every other block type (thinking, server
+// tool activity, annotations, and any type added later) is dropped, so a new
+// block type is withheld by default.
+// The original slice is never mutated; nil in, nil out for empty text.
 func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
 	if blocks == nil && text == "" {
 		return nil
@@ -178,16 +180,17 @@ func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
 	result := make([]ContentBlock, 0, len(blocks)+1)
 	placed := false
 	for _, block := range blocks {
-		if block.Type == BlockTypeAnnotations || block.Type == BlockTypeServerToolUse {
-			continue
-		}
-		if block.Type == BlockTypeText {
+		switch block.Type {
+		case BlockTypeText:
 			block.Text = ""
 			block.Citations = nil
 			if !placed {
 				block.Text = text
 				placed = true
 			}
+		case BlockTypeFile, BlockTypeImage, BlockTypeToolUse, BlockTypeToolResult:
+		default:
+			continue
 		}
 		result = append(result, block)
 	}

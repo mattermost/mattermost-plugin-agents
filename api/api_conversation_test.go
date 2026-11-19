@@ -1684,6 +1684,31 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			wantTitle: "",
 		},
 		{
+			conversationID: "conv-thinking-and-unknown",
+			name:           "reasoning and blocks of an unknown type are absent from a replaced answer",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: editedReplacement,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-thinking-and-unknown", "Reasoning", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-thinking-and-unknown"] = []store.Turn{{
+					ID: "turn-thinking", ConversationID: "conv-thinking-and-unknown", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeThinking, Text: secretDeletedReply, Signature: "sig-" + secretToken},
+						{Type: "future_block_type", Text: "FUTURE-" + secretToken},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply, secretToken},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
 			conversationID: "conv-newline-mention",
 			name:           "mention followed by a newline is not the plugin's prefix, so the title is blanked",
 			userID:         testOtherUserID,
