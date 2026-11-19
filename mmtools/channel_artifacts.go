@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -138,6 +139,15 @@ func (t *ChannelArtifactTools) resolveSave(ctx context.Context, llmCtx *llm.Cont
 		return "channel artifacts are not available here", errors.New("channel artifacts unavailable")
 	}
 	userID, channelID := llmCtx.RequestingUser.Id, llmCtx.Channel.Id
+
+	// The library reads the source under the requester's file download policy,
+	// which is evaluated for their session. Without one the policy can't be
+	// checked, so refuse before anything is uploaded or posted.
+	sessionID := auth.SessionIDFromContext(ctx)
+	if sessionID == "" {
+		return "the requesting user's session is not available, so their file permissions can't be checked", errors.New("SaveChannelArtifact has no requester session")
+	}
+	reader := mmapi.WithFilePolicy(t.Client, sessionID)
 	if (args.Content == "") == (args.FileID == "") {
 		return "provide exactly one of content or file_id", errors.New("SaveChannelArtifact needs content or file_id")
 	}
@@ -176,14 +186,17 @@ func (t *ChannelArtifactTools) resolveSave(ctx context.Context, llmCtx *llm.Cont
 			return "saving the artifact failed", err
 		}
 	} else {
-		info, err := t.Client.GetFileInfo(fileID)
+		info, err := reader.GetFileInfo(fileID)
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			return "the requesting user is not allowed to download that file", err
+		}
 		if err != nil || info == nil || info.PostId == "" {
 			return artifactToolUserMessage(channelartifacts.ErrIneligible), errors.New("file is not attached to a post")
 		}
 		postID = info.PostId
 	}
 
-	entry, err := t.Service.Save(userID, t.Client, channelartifacts.SaveRequest{
+	entry, err := t.Service.Save(userID, reader, channelartifacts.SaveRequest{
 		ChannelID: channelID, PostID: postID, FileID: fileID, Title: args.Title, ArtifactID: args.ArtifactID,
 	}, limits)
 	if err != nil {
@@ -191,7 +204,11 @@ func (t *ChannelArtifactTools) resolveSave(ctx context.Context, llmCtx *llm.Cont
 		return artifactToolUserMessage(err), fmt.Errorf("SaveChannelArtifact failed: %w", err)
 	}
 	t.audit("saveChannelArtifactByAgent", model.AuditStatusSuccess, llmCtx, entry.ID)
-	t.Service.Publish("channel_artifact_updated", channelID, map[string]any{"artifact": entry})
+	event := channelartifacts.EventCreated
+	if args.ArtifactID != "" {
+		event = channelartifacts.EventUpdated
+	}
+	t.Service.Publish(event, channelID, map[string]any{"artifact": entry})
 
 	out, err := json.Marshal(ChannelArtifactResult{
 		ArtifactID: entry.ID, Title: entry.Title, Version: entry.Version, PostID: postID,
@@ -268,7 +285,7 @@ func (t *ChannelArtifactTools) resolveRemove(_ context.Context, llmCtx *llm.Cont
 		return artifactToolUserMessage(err), fmt.Errorf("RemoveChannelArtifact failed: %w", err)
 	}
 	t.audit("removeChannelArtifactByAgent", model.AuditStatusSuccess, llmCtx, args.ArtifactID)
-	t.Service.Publish("channel_artifact_deleted", channelID, map[string]any{"id": args.ArtifactID})
+	t.Service.Publish(channelartifacts.EventDeleted, channelID, map[string]any{"id": args.ArtifactID})
 	out, err := json.Marshal(ChannelArtifactResult{ArtifactID: args.ArtifactID, Note: "Removed from the library. The original message and file were not deleted."})
 	if err != nil {
 		return "removed", fmt.Errorf("failed to marshal result: %w", err)

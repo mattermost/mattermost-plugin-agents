@@ -52,7 +52,7 @@ Agents can also manage the library directly with two built-in tools:
 - `SaveChannelArtifact` saves HTML as a new artifact, or as a new version of an existing one. Given HTML content, it posts that content to the channel as a message from the agent, with the file attached, and records that message as the version. It can also record an HTML file already attached to one of the agent's posts in the channel.
 - `RemoveChannelArtifact` removes a library entry.
 
-Both tools ask for approval by default and work only in the channel the request came from. They aren't offered in direct or group messages, and the read tools aren't offered there either. The requesting user must hold the matching bookmark permission, and the server checks it on every call. See [Approve tool calls](tool_approval.md).
+Both tools ask for approval by default and work only in the channel the request came from. They aren't offered in direct or group messages, and the read tools aren't offered there either. The requesting user must hold the matching bookmark permission, and the server checks it on every call. When a tool saves a file, it reads that file under the requesting user's file download policy. If the user's session isn't available, or the policy denies the file, the save is refused. See [Approve tool calls](tool_approval.md).
 
 Because each save through `SaveChannelArtifact` posts a message, the message is visible to everyone in the channel and follows the channel's retention.
 
