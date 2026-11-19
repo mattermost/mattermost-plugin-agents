@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -45,6 +46,9 @@ const (
 	// realtimeEventMaxBytes caps one sideband message.
 	realtimeEventMaxBytes = 1 << 20
 	realtimeErrorMaxBytes = 16 * 1024
+	// sidebandPingInterval keeps proxies from closing an idle sideband
+	// while the browser's call is still up; a quiet session sends nothing.
+	sidebandPingInterval = 20 * time.Second
 )
 
 // Turn detection modes reported to the browser. With TurnDetectionNone the
@@ -154,70 +158,84 @@ func NewRealtimeCallClient(service llm.ServiceConfig) (*RealtimeCallClient, erro
 }
 
 // realtimeTransport and realtimeWSDialer are shared by every call client, so
-// per-call clients don't each hold idle connections.
+// per-call clients don't each hold idle connections. Both connect through
+// realtimeNetDialer.
 var (
+	realtimeNetDialer = newGuardedDialer()
 	realtimeTransport = newRealtimeTransport()
 	realtimeWSDialer  = &websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: realtimeRequestTimeout,
-		NetDialContext:   guardedDialContext(net.DefaultResolver, (&net.Dialer{Timeout: realtimeRequestTimeout}).DialContext),
+		NetDialContext:   realtimeNetDialer.DialContext,
 	}
 )
 
 func newRealtimeTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = http.ProxyFromEnvironment
-	transport.DialContext = guardedDialContext(net.DefaultResolver, (&net.Dialer{Timeout: realtimeRequestTimeout, KeepAlive: 30 * time.Second}).DialContext)
+	transport.DialContext = realtimeNetDialer.DialContext
 	return transport
 }
 
-type ipResolver interface {
-	LookupIP(ctx context.Context, network, host string) ([]net.IP, error)
-}
-
-// guardedDialContext resolves the host and refuses link-local (including
-// cloud metadata endpoints), multicast and unspecified addresses, then dials
-// the checked IP itself so a second resolution can't swap it. Private and
-// loopback addresses stay allowed, as for chat requests: service URLs often
-// point at self-hosted gateways.
-func guardedDialContext(resolver ipResolver, dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	return func(ctx context.Context, netw, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid dial address %q: %w", addr, err)
-		}
-		ips, err := resolver.LookupIP(ctx, "ip", host)
-		if err != nil {
-			return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
-		}
-		if err = checkDialableIPs(host, ips); err != nil {
-			return nil, err
-		}
-		return dial(ctx, netw, net.JoinHostPort(ips[0].String(), port))
+// newGuardedDialer returns a dialer that refuses link-local (including cloud
+// metadata endpoints), multicast and unspecified addresses. The check runs
+// on each address the dialer actually connects to, after resolution, so
+// fallback across a host's addresses still works, every address tried is
+// checked, and a second resolution can't swap one in. Private and loopback
+// addresses stay allowed, as for chat requests: service URLs often point at
+// self-hosted gateways.
+func newGuardedDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   realtimeRequestTimeout,
+		KeepAlive: 30 * time.Second,
+		Control:   guardConnect,
 	}
 }
 
-func checkDialableIPs(host string, ips []net.IP) error {
-	if len(ips) == 0 {
-		return fmt.Errorf("DNS lookup for %s returned no addresses", host)
+func guardConnect(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid dial address %q: %w", address, err)
 	}
-	for _, ip := range ips {
-		if ip.IsUnspecified() || ip.IsMulticast() || bifrostnet.IsLinkLocal(ip) {
-			return fmt.Errorf("blocked connection to %s (host %s)", ip, host)
-		}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("refusing to connect to unresolved address %q", address)
+	}
+	return checkDialableIP(ip)
+}
+
+func checkDialableIP(ip net.IP) error {
+	if ip.IsUnspecified() || ip.IsMulticast() || bifrostnet.IsLinkLocal(ip) {
+		return fmt.Errorf("blocked connection to %s", ip)
 	}
 	return nil
 }
 
-// checkTarget applies the dial guard to the service host itself, for
-// requests that go through a proxy and so never dial it.
+// checkTarget applies the dial guard to the service host itself when the
+// request goes through a proxy, which then dials it instead of this server.
+// Since the proxy picks the address, every address must pass.
 func (c *RealtimeCallClient) checkTarget(ctx context.Context) error {
+	proxyURL, err := http.ProxyFromEnvironment(&http.Request{URL: c.baseURL})
+	if err != nil {
+		return fmt.Errorf("invalid proxy settings: %w", err)
+	}
+	if proxyURL == nil {
+		return nil
+	}
 	host := c.baseURL.Hostname()
 	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
 		return fmt.Errorf("DNS lookup failed for %s: %w", host, err)
 	}
-	return checkDialableIPs(host, ips)
+	if len(ips) == 0 {
+		return fmt.Errorf("DNS lookup for %s returned no addresses", host)
+	}
+	for _, ip := range ips {
+		if err = checkDialableIP(ip); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ParseRealtimeBaseURL accepts only an absolute http or https URL with a
@@ -499,8 +517,9 @@ func IsTransientRealtimeError(err error) bool {
 // Sideband is the server's own connection to a call. It sees every event
 // of the session, including transcripts: never log or store event content.
 type Sideband struct {
-	conn     *websocket.Conn
-	expected TranscriptionSessionRequest
+	conn         *websocket.Conn
+	expected     TranscriptionSessionRequest
+	pingInterval time.Duration
 }
 
 // Attach opens the sideband connection to callID, which must have been
@@ -545,7 +564,7 @@ func (c *RealtimeCallClient) Attach(ctx context.Context, callID string, req Tran
 		return nil, fmt.Errorf("sideband attach failed (status=%d): %w", status, llm.SanitizeProviderError(err, c.apiKey))
 	}
 	conn.SetReadLimit(realtimeEventMaxBytes)
-	return &Sideband{conn: conn, expected: req}, nil
+	return &Sideband{conn: conn, expected: req, pingInterval: sidebandPingInterval}, nil
 }
 
 // Run reads the call's events until ctx ends, the call ends
@@ -555,6 +574,10 @@ func (s *Sideband) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, func() { _ = s.conn.Close() })
 	defer stop()
 	defer s.conn.Close()
+
+	pingCtx, stopPings := context.WithCancel(ctx)
+	defer stopPings()
+	go s.ping(pingCtx)
 
 	for {
 		_, data, err := s.conn.ReadMessage()
@@ -571,6 +594,23 @@ func (s *Sideband) Run(ctx context.Context) error {
 		}
 		if !sessionEventMatches(data, s.expected) {
 			return ErrSessionChanged
+		}
+	}
+}
+
+// ping sends a WebSocket ping every pingInterval until ctx ends or a ping
+// fails. WriteControl is safe alongside the reader.
+func (s *Sideband) ping(ctx context.Context) {
+	ticker := time.NewTicker(s.pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(realtimeRequestTimeout)); err != nil {
+				return
+			}
 		}
 	}
 }
