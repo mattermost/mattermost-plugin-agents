@@ -4,7 +4,7 @@ Which fields each provider needs, and which native tools and reasoning controls 
 
 For settings every service has, such as token limits and fallbacks, see [Configure LLM services](llm_services.md).
 
-Pick the **Service type** when you add a service in **System Console > Plugins > Agents**. Credentials are stored in the plugin configuration.
+Pick the **Service type** when you add a service in **Agents > Settings > AI services**. Credentials are stored in the plugin configuration.
 
 ## Capabilities by provider
 
@@ -89,7 +89,7 @@ Gemini uses the Generative Language API (AI Studio) with one API key. Choose it 
 1. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 2. Add a service of type **Google Gemini**, paste the key, and enter a **Default model**, for example `gemini-2.5-pro`.
 
-There's no **API URL** field for Gemini in the System Console. The plugin calls `https://generativelanguage.googleapis.com/v1beta`. If you use an egress proxy, allow paths that start with `/v1beta/models/`.
+There's no **API URL** field for Gemini in the Agents settings. The plugin calls `https://generativelanguage.googleapis.com/v1beta`. If you use an egress proxy, allow paths that start with `/v1beta/models/`.
 
 ## Google Vertex AI
 
