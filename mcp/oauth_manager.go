@@ -10,11 +10,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
@@ -355,16 +358,16 @@ func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID st
 // space-separated scope from an insufficient_scope challenge when present
 // (treated as authoritative per the MCP specification).
 func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL, challengeScope string) (string, error) {
-	return m.initiateOAuthFlow(ctx, userID, serverConfig.ID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig))
+	return m.initiateOAuthFlow(ctx, userID, serverConfig.ID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig), serverConfig.AuthorizationParams)
 }
 
 // InitiateOAuthFlow starts a sign-in for a server known only by name and URL;
 // its grant is bound to the server's configuration ID at callback time.
 func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
-	return m.initiateOAuthFlow(ctx, userID, "", serverID, serverURL, metadataURL, challengeScope, staticCreds)
+	return m.initiateOAuthFlow(ctx, userID, "", serverID, serverURL, metadataURL, challengeScope, staticCreds, nil)
 }
 
-func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConfigID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
+func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConfigID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials, authorizationParams map[string]string) (string, error) {
 	// Generate PKCE parameters
 	codeVerifier := oauth2.GenerateVerifier()
 
@@ -386,6 +389,12 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 		resolved.config.Scopes = strings.Fields(challengeScope)
 	}
 
+	// Checked before the issuer pin, so a refused sign-in does not store one.
+	extraOpts, err := authorizationParamOptions(resolved.config.Endpoint.AuthURL, authorizationParams)
+	if err != nil {
+		return "", err
+	}
+
 	// Static credentials are pinned to the first issuer they were used with
 	// (trust on first use): a compromised MCP server that later advertises a
 	// different authorization server must not receive the static secret.
@@ -395,11 +404,12 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 
 	// Build authorization URL with PKCE and the canonical RFC 8707 resource
 	// so the authorization server audience-restricts the issued token to this
-	// MCP server.
-	authURL := resolved.config.AuthCodeURL(state,
+	// MCP server. Admin-configured parameters come last.
+	authOpts := []oauth2.AuthCodeOption{
 		oauth2.S256ChallengeOption(codeVerifier),
 		oauth2.SetAuthURLParam("resource", resolved.resource),
-	)
+	}
+	authURL := resolved.config.AuthCodeURL(state, append(authOpts, extraOpts...)...)
 
 	// Store OAuth session, bound to the discovery outcome so the callback
 	// exchanges the code against exactly these endpoints (see OAuthSession).
@@ -436,6 +446,37 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 // used with.
 type staticIssuerPin struct {
 	Issuer string `json:"issuer"`
+}
+
+// authorizationParamOptions returns the options for a server's configured
+// authorization parameters. Entries are validated when a config is saved, and
+// invalid ones are skipped here too because a stored config may not have gone
+// through that validation. A parameter the authorization endpoint URL already
+// carries is an error: AuthCodeURL would send it twice, which RFC 6749 section
+// 3.1 forbids.
+func authorizationParamOptions(authorizationEndpoint string, params map[string]string) ([]oauth2.AuthCodeOption, error) {
+	if len(params) == 0 {
+		return nil, nil
+	}
+	endpoint, err := url.Parse(authorizationEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid authorization endpoint: %w", err)
+	}
+	endpointParams, err := url.ParseQuery(endpoint.RawQuery)
+	if err != nil {
+		return nil, fmt.Errorf("invalid authorization endpoint query: %w", err)
+	}
+	opts := make([]oauth2.AuthCodeOption, 0, len(params))
+	for _, name := range slices.Sorted(maps.Keys(params)) {
+		if config.ValidateMCPAuthorizationParam(name, params[name]) != nil {
+			continue
+		}
+		if endpointParams.Has(name) {
+			return nil, fmt.Errorf("the authorization endpoint already sets the OAuth authorization parameter %q", name)
+		}
+		opts = append(opts, oauth2.SetAuthURLParam(name, params[name]))
+	}
+	return opts, nil
 }
 
 // checkStaticCredsIssuerPin enforces trust-on-first-use issuer pinning for

@@ -6,8 +6,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -175,8 +177,9 @@ func (c MCPConfig) ServerConflicts() []MCPServerConflict {
 // has not connected the server.
 const MaxMCPServerDescriptionRunes = 500
 
-// Validate reports duplicate remote MCP server names and endpoint URLs, and
-// descriptions longer than MaxMCPServerDescriptionRunes. It is used to reject
+// Validate reports duplicate remote MCP server names and endpoint URLs,
+// descriptions longer than MaxMCPServerDescriptionRunes, and OAuth
+// authorization parameters that are unnamed or reserved. It is used to reject
 // a new or updated configuration before it is persisted; already-stored
 // duplicates are tolerated at runtime (see ServerConflicts) so a bad stored
 // config cannot block plugin activation.
@@ -185,6 +188,11 @@ func (c MCPConfig) Validate() error {
 	for _, server := range c.Servers {
 		if n := utf8.RuneCountInString(server.Description); n > MaxMCPServerDescriptionRunes {
 			err = errors.Join(err, fmt.Errorf("MCP server %q description is %d characters; the limit is %d", server.Name, n, MaxMCPServerDescriptionRunes))
+		}
+		for _, key := range slices.Sorted(maps.Keys(server.AuthorizationParams)) {
+			if paramErr := ValidateMCPAuthorizationParam(key, server.AuthorizationParams[key]); paramErr != nil {
+				err = errors.Join(err, fmt.Errorf("MCP server %q %w", server.Name, paramErr))
+			}
 		}
 	}
 

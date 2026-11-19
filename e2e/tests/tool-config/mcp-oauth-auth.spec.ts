@@ -1,15 +1,17 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import { expect } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
+import { SystemConsoleHelper } from 'helpers/system-console';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 import { ToolConfigUIHelper } from 'helpers/tool-config';
 import {
+    MOCK_OAUTH_AUTHORIZE_URL,
     MOCK_OAUTH_SERVER_NAME,
     MOCK_OAUTH_SERVER_URL,
     registerMCPOAuthMocks,
@@ -60,6 +62,22 @@ const test = containerTest(async (own) => {
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
+
+async function openServerDialog(page: Page): Promise<Locator> {
+    await new MattermostPage(page).login(mattermost.url(), adminUsername, adminPassword);
+    await new SystemConsoleHelper(page).navigateToPluginConfig(mattermost.url());
+
+    await page.getByRole('button', { name: `Edit ${MOCK_OAUTH_SERVER_NAME}` }).click();
+    const dialog = page.getByRole('dialog', { name: `Edit ${MOCK_OAUTH_SERVER_NAME}` });
+    await expect(dialog).toBeVisible();
+    return dialog;
+}
+
+async function addAuthorizationParam(dialog: Locator, name: string, value: string) {
+    await dialog.getByRole('button', { name: 'Add Parameter' }).click();
+    await dialog.getByPlaceholder('Parameter value (e.g. offline)').last().fill(value);
+    await dialog.getByPlaceholder('Parameter name (e.g. access_type)').last().fill(name);
+}
 
 test.describe('MCP OAuth Authentication', () => {
     test.beforeAll(async ({ containers }) => {
@@ -143,6 +161,69 @@ test.describe('MCP OAuth Authentication', () => {
         expect(embeddedServer).toBeDefined();
         expect(embeddedServer.authenticated).toBe(true);
         expect(embeddedServer.needsOAuth).toBe(false);
+    });
+
+    test('authorization parameters set on the server reach the authorization URL', async ({ page, context }) => {
+        test.setTimeout(120000);
+
+        const dialog = await openServerDialog(page);
+        await addAuthorizationParam(dialog, 'access_type', 'offline');
+        await addAuthorizationParam(dialog, 'prompt', 'consent');
+        await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+
+        // The parameters do not end sign-ins, so the save needs no confirmation.
+        await expect(dialog).toBeHidden();
+
+        const adminClient = await mattermost.getAdminClient();
+        const apiHelper = await createToolConfigAPIHelper(mattermost);
+        const tools = await apiHelper.getUserMCPTools(adminClient.getToken());
+        const { authURL } = tools.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
+
+        // The provider lives on the Docker network, so the browser cannot load
+        // it: the request it attempts is what the test inspects.
+        const authorizeRequest = context.waitForEvent('request', (request) => request.url().startsWith(MOCK_OAUTH_AUTHORIZE_URL));
+        const signInPage = await context.newPage();
+        await signInPage.goto(authURL).catch(() => undefined);
+        const params = new URL((await authorizeRequest).url()).searchParams;
+        await signInPage.close();
+
+        expect(params.get('access_type')).toBe('offline');
+        expect(params.get('prompt')).toBe('consent');
+        expect(params.get('client_id')).toBe('test-client-id');
+        expect(params.get('resource')).toBe(MOCK_OAUTH_SERVER_URL);
+        expect(params.get('code_challenge_method')).toBe('S256');
+        expect(params.get('code_challenge')).toBeTruthy();
+        expect(params.get('state')).toBeTruthy();
+    });
+
+    test('a reserved authorization parameter is refused by the dialog and the API', async ({ page }) => {
+        test.setTimeout(60000);
+
+        const dialog = await openServerDialog(page);
+        await addAuthorizationParam(dialog, 'state', 'fixed');
+        await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+        await expect(dialog.getByText('state is set by the OAuth sign-in and cannot be changed.')).toBeVisible();
+        await expect(dialog).toBeVisible();
+
+        const adminClient = await mattermost.getAdminClient();
+        const configURL = `${mattermost.url()}/plugins/mattermost-ai/admin/config`;
+        const headers = { Authorization: `Bearer ${adminClient.getToken()}`, 'Content-Type': 'application/json' };
+        const config = await (await fetch(configURL, { headers })).json();
+
+        // The same config is accepted without the reserved parameter, so the
+        // rejection below can only come from it.
+        const accepted = await fetch(configURL, { method: 'PUT', headers, body: JSON.stringify(config) });
+        expect(accepted.status).toBe(200);
+
+        const server = config.mcp.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
+        server.authorizationParams = { ...server.authorizationParams, state: 'fixed' };
+
+        const response = await fetch(configURL, { method: 'PUT', headers, body: JSON.stringify(config) });
+        expect(response.status).toBe(400);
+
+        const stored = await (await fetch(configURL, { headers })).json();
+        const storedServer = stored.mcp.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
+        expect(storedServer.authorizationParams?.state).toBeUndefined();
     });
 
     test('system console should show updated OAuth description text', async ({ page }) => {
