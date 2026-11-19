@@ -41,7 +41,7 @@ describe('Segmenter', () => {
         {name: 'two phrases with a long pause between', steps: [speech(1000), silence(silenceCommitMs + 200), speech(1000), silence(silenceCommitMs + 200)], commits: 2},
         {name: 'silence without speech never commits an empty buffer', steps: [silence(5000)], commits: 0},
         {name: 'continuous speech under the cap', steps: [speech(maxSegmentMs - 100)], commits: 0},
-        {name: 'continuous speech is committed at the cap, then again', steps: [speech(maxSegmentMs * 2 + 200)], commits: 2},
+        {name: 'continuous speech is committed at the cap, then again', steps: [speech((maxSegmentMs * 2) + 200)], commits: 2},
     ])('$name: $commits commits', ({steps, commits}) => {
         const {segmenter, onCommit} = setup();
         let now = 0;

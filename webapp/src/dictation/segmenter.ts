@@ -18,6 +18,7 @@ export type SegmenterOptions = {
 
 export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
     speechThreshold: 0.02,
+
     // Each committed segment is transcribed on its own, capitalized and
     // punctuated as a whole utterance, so committing on a thinking pause
     // breaks sentences. Live text streams before the commit either way.
