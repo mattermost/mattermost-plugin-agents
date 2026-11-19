@@ -374,14 +374,13 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rec, err := a.channelArtifacts.VersionOf(entry, version)
-	if err != nil {
-		a.logArtifactError("Failed to load channel artifact version", err, entry.ID)
+	if err := a.channelArtifacts.CheckReadable(auth.SessionIDFromContext(c.Request.Context()), entry, version); err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	if !rec.Available {
-		a.writeChannelArtifactError(c, channelartifacts.ErrUnavailable)
+	rec, err := a.channelArtifacts.VersionOf(entry, version)
+	if err != nil {
+		a.writeChannelArtifactError(c, err)
 		return
 	}
 	token := libraryArtifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), entry.ID, nonce)
@@ -423,7 +422,6 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 
 	body, err := a.channelArtifacts.ReadContent(auth.SessionIDFromContext(c.Request.Context()), entry, version, artifactRenderLimit(cfg))
 	if err != nil {
-		a.logArtifactError("Failed to read channel artifact", err, entry.ID)
 		a.writeChannelArtifactError(c, err)
 		return
 	}
@@ -449,7 +447,6 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 	}
 	body, err := a.channelArtifacts.ReadContent(auth.SessionIDFromContext(c.Request.Context()), entry, version, artifactRenderLimit(a.mmClient.GetConfig()))
 	if err != nil {
-		a.logArtifactError("Failed to read channel artifact", err, entry.ID)
 		a.writeChannelArtifactError(c, err)
 		return
 	}
