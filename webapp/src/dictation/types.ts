@@ -19,20 +19,25 @@ export type DictationAvailability = {
     reason?: DictationUnavailableReason;
 };
 
-// POST /dictation/session
+// POST /dictation/session with the browser's SDP offer. The server
+// exchanges it with the provider and keeps a control channel to the session;
+// the browser never holds a provider credential.
 export type DictationSession = {
-    clientSecret: string;
 
-    // Unix milliseconds; the secret is only needed until the connection is made.
-    expiresAt: number;
-    callsURL: string;
+    // The provider's SDP answer.
+    sdp: string;
+    sessionId: string;
     provider: DictationProvider;
     model: string;
 
     // "none" means the provider does no turn detection and the client
     // commits each segment itself (gpt-live-transcribe).
     turnDetection: 'none' | 'server_vad';
+    maxDurationSeconds: number;
 };
+
+// Why the server ended a session (custom_mattermost-ai_dictation_session_ended).
+export type DictationSessionEndReason = 'duration_limit' | 'policy' | 'shutdown';
 
 export type DictationErrorReason =
     | 'mic_blocked'
@@ -43,19 +48,38 @@ export type DictationErrorReason =
     | 'provider_unreachable'
     | 'provider_error'
     | 'connection_lost'
-    | 'audio_blocked';
+    | 'audio_blocked'
+    | 'offer_too_large'
+    | 'session_time_limit'
+    | 'session_policy'
+    | 'session_shutdown';
 
-// errorReasonForStatus maps a POST /dictation/session failure to an error state.
-export function errorReasonForStatus(status: number): DictationErrorReason {
-    switch (status) {
+// errorReasonForStatus maps a POST /dictation/session failure to an error
+// state. No status means the request never got an answer.
+export function errorReasonForStatus(status: number | undefined): DictationErrorReason {
+    switch (status ?? 0) {
     case 403:
         return 'forbidden';
+    case 413:
+        return 'offer_too_large';
     case 429:
         return 'rate_limited';
+    case 0:
     case 502:
         return 'provider_unreachable';
     default:
         return 'unavailable';
+    }
+}
+
+export function errorReasonForSessionEnd(reason: DictationSessionEndReason): DictationErrorReason {
+    switch (reason) {
+    case 'duration_limit':
+        return 'session_time_limit';
+    case 'policy':
+        return 'session_policy';
+    default:
+        return 'session_shutdown';
     }
 }
 

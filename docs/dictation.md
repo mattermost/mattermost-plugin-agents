@@ -7,11 +7,11 @@ Dictation needs an Enterprise license or above. It uses its own transcription se
 ## How it works
 
 1. A user selects the microphone button and allows microphone access.
-2. The browser asks the plugin for a dictation session. The plugin checks the license, the settings, and the user's access to the service, then asks OpenAI for a short-lived browser key with the service's API key. The key expires 15 seconds after it is issued. That only limits how long the browser has to connect: a session that has connected keeps running after its key expires.
-3. The browser connects to OpenAI over WebRTC with that key and streams the microphone audio.
+2. The browser sends a WebRTC connection offer to the plugin. The plugin checks the license, the settings, the user's access to the service and the limits below, then opens the session with OpenAI using the service's API key. It returns OpenAI's answer to the browser and keeps a control connection to the session. The browser never receives an OpenAI credential.
+3. The browser streams the microphone audio to OpenAI over WebRTC.
 4. OpenAI sends the transcript back to the browser, which types it into the message box at the cursor.
 
-The Mattermost Server never receives audio or transcript text. It sees one request each time a user starts dictating.
+The plugin ends a session after 10 minutes, and also ends a session whose settings a client changed (model, language, turn detection or session type). The user sees why dictation stopped.
 
 ## Set it up
 
@@ -25,7 +25,7 @@ Guest accounts and bot accounts can't dictate. An access policy on the transcrip
 | Setting | Config key | Default | Details |
 |---|---|---|---|
 | Enable dictation | `dictation.enabled` | Off | Shows the microphone button to users who can use the transcription service. Can't be turned on below Enterprise. |
-| Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing, isn't an OpenAI service, has no API key, or has an **API URL** with anything but a scheme, host and path (no credentials, query or fragment). Browsers receive a URL derived from the API URL. |
+| Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing, isn't an OpenAI service, has no API key, or has an **API URL** with anything but an `http` or `https` scheme, a host and a path (no credentials, query or fragment). |
 | Transcription model | `dictation.model` | `gpt-live-transcribe` | `gpt-live-transcribe` shows text while the user speaks. OpenAI has deprecated its earlier transcription models (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe` and `whisper-1`), so don't use them for new setups. |
 | Language | `dictation.language` | Empty (detected) | An ISO-639-1 code such as `en` or `de` for the language users speak. |
 
@@ -44,30 +44,31 @@ If the transcription service is later deleted, changed to another type, or the l
 
 ## Network requirements
 
-Each user's browser or desktop app connects to OpenAI itself, so the network between users and OpenAI matters, not only the server's.
+The audio goes from each user's browser or desktop app to OpenAI, so the network between users and OpenAI matters, not only the server's.
 
-- Browsers need HTTPS access to the OpenAI API host of the service (`api.openai.com` unless the service sets an **API URL**) and WebRTC media traffic to OpenAI, over UDP or a TCP fallback.
-- Networks where only the Mattermost Server can reach the internet can't use dictation. A proxy for the server's own traffic doesn't apply to browsers.
-- A reverse proxy that adds a `Content-Security-Policy` with `connect-src`, or a `Permissions-Policy` with `microphone=()`, blocks dictation. Allow the OpenAI API host in `connect-src` and `microphone=(self)` for the Mattermost origin. Mattermost doesn't set either header itself.
+- The Mattermost Server needs HTTPS and secure WebSocket access to the OpenAI API host of the service (`api.openai.com` unless the service sets an **API URL**). It opens each session and keeps its control connection.
+- Browsers need WebRTC media traffic to OpenAI, over UDP or a TCP fallback. They don't contact the OpenAI API host themselves.
+- Networks where only the Mattermost Server can reach the internet can't use dictation. A proxy for the server's own traffic doesn't apply to browsers' media.
+- A reverse proxy that adds a `Permissions-Policy` with `microphone=()` blocks dictation. Allow `microphone=(self)` for the Mattermost origin. Mattermost doesn't set that header itself.
 - Mattermost must be served over HTTPS (or `localhost`), because browsers only allow microphone access on secure pages.
 
 ## Privacy
 
 - Audio goes from the user's device directly to OpenAI and is processed under your organization's agreement with OpenAI, under the API key of the transcription service.
 - Mattermost and the plugin don't store audio. Dictated text goes into the message box like typed text, so until the user sends or deletes it, it can be saved as a draft, on the server too when server-synced drafts are on (`ServiceSettings.AllowSyncedDrafts`, the default).
-- The browser key is never logged or kept in audit records or traces.
+- The OpenAI API key stays on the server; browsers never receive a provider credential.
 - Starting a dictation session is recorded in the server audit log (`createDictationSession`) with the transcription service ID. See [Audit logging](observability.md#audit-logging).
 
 ## Cost and limits
 
-OpenAI bills transcription to the transcription service's API key. The browser receives a provider key, not one locked session, and the server can't end a session once the key is issued:
+OpenAI bills transcription to the transcription service's API key. The plugin opens every session and controls it:
 
-- Within its 15-second connect window, one key can open any number of concurrent sessions, and each keeps running for up to OpenAI's 60-minute maximum after the key expires.
-- A modified client holding a key can change the session's transcription model, possibly to a pricier one, and its turn detection, language and prompt. It can't change the session type, so it can't turn the session into a speech-to-speech one.
-- The plugin limits each user to 10 key requests in any 60 seconds, failed ones included, and at most 2 unexpired keys at a time. Over either limit, starting dictation fails until a slot frees up. The limits are kept in memory on each server, so a high-availability cluster multiplies them by its node count. They count keys, not sessions or audio minutes.
-- The browser stops dictating after 30 seconds without speech and after 10 minutes in any case. A modified client can ignore these caps.
+- Each user can start dictation at most 10 times a minute, failed starts included, and can have at most 2 sessions running at a time across all servers. Over either limit, starting dictation fails until a slot frees up.
+- The plugin ends every session after 10 minutes.
+- The plugin ends a session whose settings a client changed: its transcription model, language, prompt, turn detection or session type. A modified client can't switch to a pricier model on your key without the session ending.
+- The browser also stops dictating after 30 seconds without speech.
 
-So an authenticated, licensed user who scripts key requests can run far more transcription than one dictation session, billed to your API key. Bounding audio minutes needs a server relay that holds the key, which this version doesn't have. Use a dedicated API key for dictation with a tight spending limit at OpenAI. Each issued key is audited (`createDictationSession`), and the server log records each one with the user, the service and the configured model, which may not be the model a modified client is billed for.
+So one user can run at most 2 transcription streams at a time, each for at most 10 minutes. Use a dedicated API key for dictation so you can watch and limit its usage on its own. Each session start is audited (`createDictationSession`), and the server log records each one with the user, the service and the model.
 
 Dictation isn't included in [token usage logging](observability.md#token-usage-log), because the server never sees the transcription usage. Use OpenAI's usage dashboard for the service's API key, or a dedicated key for dictation.
 
@@ -83,6 +84,9 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 |---|---|
 | No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user isn't a guest and has access to the service, and the formatting bar is shown. |
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
-| "The speech service could not be reached" | The browser can't reach OpenAI over HTTPS or WebRTC, or a `Content-Security-Policy` blocks it. See [Network requirements](#network-requirements). The server log has the reason when OpenAI refused to create the session. |
-| "Dictation was started too often" | The user requested 10 keys in the last 60 seconds or already holds 2 unexpired keys. Waiting a minute clears it. |
+| "The speech service could not be reached" | The server couldn't open the session with OpenAI, or the browser can't reach OpenAI over WebRTC. See [Network requirements](#network-requirements). The server log has the reason when OpenAI refused the session. |
+| "Dictation can't start right now" | The user started dictation 10 times in the last minute, or already has 2 sessions running, for example in another window. Stopping dictation there, or waiting a minute, clears it. |
+| "Dictation stopped at its time limit" | The session reached the 10-minute limit. Starting again opens a new session. |
+| "Dictation stopped because its session settings were changed" | Something changed the running session's settings, which only a modified client does. The plugin ended the session. |
+| "Dictation stopped because the Agents plugin restarted" | The plugin was disabled, upgraded or restarted while the user was dictating. |
 | "You don't have access to dictation" | The user lacks access to the transcription service, or the license is below Enterprise. |

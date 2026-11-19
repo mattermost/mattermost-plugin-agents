@@ -4,17 +4,22 @@
 import {createDictationSession} from '@/client';
 
 import {Segmenter, rmsLevel} from './segmenter';
+import {onDictationSessionEnded} from './session_events';
 import {Transcript} from './transcript';
 import {
     DictationError,
     DictationSession,
     DictationTransport,
     TranscriptUpdate,
+    errorReasonForSessionEnd,
     errorReasonForStatus,
 } from './types';
 
-const SDP_EXCHANGE_TIMEOUT_MS = 15000;
 const CHANNEL_OPEN_TIMEOUT_MS = 15000;
+
+// When the server ends a session, the data channel closes about when its
+// websocket event arrives; a lost connection waits this long for the reason.
+const SESSION_END_GRACE_MS = 1000;
 const FINAL_TRANSCRIPT_WAIT_MS = 1500;
 const LEVEL_SAMPLE_INTERVAL_MS = 50;
 
@@ -31,9 +36,8 @@ export type LevelMeter = {
 
 export type TranscriberDeps = {
     getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-    createSession: () => Promise<DictationSession>;
+    createSession: (offerSDP: string) => Promise<DictationSession>;
     createPeerConnection: () => RTCPeerConnection;
-    fetch: typeof fetch;
     createLevelMeter: () => LevelMeter;
     now: () => number;
     setInterval: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
@@ -76,7 +80,6 @@ export const browserTranscriberDeps = (): TranscriberDeps => ({
     getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
     createSession: createDictationSession,
     createPeerConnection: () => new RTCPeerConnection(),
-    fetch: (...args) => window.fetch(...args),
     createLevelMeter: createAnalyserLevelMeter,
     now: () => Date.now(),
     setInterval: (fn, ms) => setInterval(fn, ms),
@@ -113,7 +116,10 @@ type ProviderEvent = {
 const COMMIT_EMPTY_ERROR = 'input_audio_buffer_commit_empty';
 
 // WebRTCTranscriber streams the microphone to OpenAI's realtime transcription
-// over WebRTC with an ephemeral key minted by the plugin server.
+// over WebRTC. The plugin server exchanges the connection offer with OpenAI
+// and keeps a control channel to the session, so the browser never holds a
+// provider credential. The client only commits audio; it never sends
+// session.update.
 export class WebRTCTranscriber implements DictationTransport {
     private readonly deps: TranscriberDeps;
     private readonly transcript = new Transcript();
@@ -138,6 +144,9 @@ export class WebRTCTranscriber implements DictationTransport {
     // Commits sent and not yet acknowledged. Their segments aren't in the
     // transcript yet, so stop waits for them too.
     private outstandingCommits = 0;
+
+    private unsubscribeSessionEnded: (() => void) | null = null;
+    private lostTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(deps: TranscriberDeps = browserTranscriberDeps()) {
         this.deps = deps;
@@ -178,8 +187,8 @@ export class WebRTCTranscriber implements DictationTransport {
     private async connect() {
         this.meter = this.deps.createLevelMeter();
 
-        // The microphone is requested before minting so a permission prompt
-        // the user dismisses doesn't spend a token.
+        // The microphone is requested before the session so a permission
+        // prompt the user dismisses doesn't start one.
         try {
             this.stream = await this.deps.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}});
         } catch (err) {
@@ -190,15 +199,6 @@ export class WebRTCTranscriber implements DictationTransport {
         const meterRunning = this.meter.attach(this.stream);
         meterRunning.catch(() => { /* awaited below */ });
 
-        let session: DictationSession;
-        try {
-            session = await this.deps.createSession();
-        } catch (err) {
-            throw new DictationError(errorReasonForStatus((err as {status_code?: number})?.status_code ?? 0));
-        }
-        this.throwIfStopped();
-        this.clientCommits = session.turnDetection === 'none';
-
         const pc = this.deps.createPeerConnection();
         this.pc = pc;
         for (const track of this.stream.getAudioTracks()) {
@@ -208,10 +208,10 @@ export class WebRTCTranscriber implements DictationTransport {
         const channel = pc.createDataChannel('oai-events');
         this.channel = channel;
         channel.addEventListener('message', (e: MessageEvent) => this.handleEvent(e.data));
-        channel.addEventListener('close', () => this.fail(new DictationError('connection_lost')));
+        channel.addEventListener('close', () => this.connectionLost());
         pc.addEventListener('connectionstatechange', () => {
             if (pc.connectionState === 'failed') {
-                this.fail(new DictationError('connection_lost'));
+                this.connectionLost();
             }
         });
 
@@ -226,7 +226,7 @@ export class WebRTCTranscriber implements DictationTransport {
         // pending timeout from surfacing as an unhandled rejection.
         opened.catch(() => { /* handled by the await below */ });
         try {
-            await this.negotiate(pc, session);
+            await this.negotiate(pc);
             this.throwIfStopped();
             await opened;
         } finally {
@@ -244,32 +244,40 @@ export class WebRTCTranscriber implements DictationTransport {
         this.started = true;
     }
 
-    private async negotiate(pc: RTCPeerConnection, session: DictationSession) {
+    // negotiate sends the offer through the plugin and applies the answer.
+    private async negotiate(pc: RTCPeerConnection) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        this.throwIfStopped();
 
-        const abort = new AbortController();
-        const abortTimer = setTimeout(() => abort.abort(), SDP_EXCHANGE_TIMEOUT_MS);
-        let answer: string;
+        let session: DictationSession;
         try {
-            const response = await this.deps.fetch(session.callsURL, {
-                method: 'POST',
-                body: offer.sdp,
-                headers: {
-                    Authorization: `Bearer ${session.clientSecret}`,
-                    'Content-Type': 'application/sdp',
-                },
-                signal: abort.signal,
-            });
-            if (!response.ok) {
-                throw new DictationError('provider_unreachable');
-            }
-            answer = await response.text();
-        } finally {
-            clearTimeout(abortTimer);
+            session = await this.deps.createSession(offer.sdp ?? '');
+        } catch (err) {
+            throw new DictationError(errorReasonForStatus((err as {status_code?: number})?.status_code));
         }
         this.throwIfStopped();
-        await pc.setRemoteDescription({type: 'answer', sdp: answer});
+        if (typeof session?.sdp !== 'string' || !session.sdp || typeof session.sessionId !== 'string' || !session.sessionId) {
+            throw new DictationError('provider_unreachable');
+        }
+        this.clientCommits = session.turnDetection === 'none';
+        this.unsubscribeSessionEnded = onDictationSessionEnded(session.sessionId, (reason) => {
+            this.fail(new DictationError(errorReasonForSessionEnd(reason)));
+        });
+        await pc.setRemoteDescription({type: 'answer', sdp: session.sdp});
+    }
+
+    // connectionLost reports a lost connection after a short wait, in case
+    // the server ended the session and its reason is on the way.
+    private connectionLost() {
+        if (this.stopped || this.lostTimer !== null) {
+            return;
+        }
+        if (!this.started) {
+            this.fail(new DictationError('connection_lost'));
+            return;
+        }
+        this.lostTimer = setTimeout(() => this.fail(new DictationError('connection_lost')), SESSION_END_GRACE_MS);
     }
 
     private throwIfStopped() {
@@ -446,6 +454,12 @@ export class WebRTCTranscriber implements DictationTransport {
     }
 
     private release() {
+        if (this.lostTimer !== null) {
+            clearTimeout(this.lostTimer);
+            this.lostTimer = null;
+        }
+        this.unsubscribeSessionEnded?.();
+        this.unsubscribeSessionEnded = null;
         if (this.sampler !== null) {
             this.deps.clearInterval(this.sampler);
             this.sampler = null;

@@ -11,6 +11,7 @@ import manifest from './manifest';
 import {
     artifactPath,
     artifactURL,
+    createDictationSession,
     doChannelAnalysis,
     doLoopInAgent,
     doRunSearch,
@@ -545,5 +546,30 @@ describe('getAIThreads', () => {
 
         await expect(request).rejects.toThrow('aborted');
         timeoutSpy.mockRestore();
+    });
+});
+
+describe('createDictationSession', () => {
+    test('sends the offer as JSON to the plugin route, refusing redirects', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 201, json: () => Promise.resolve({sdp: 'ANSWER', sessionId: 's'})} as unknown as Response);
+
+        await expect(createDictationSession('OFFER')).resolves.toEqual({sdp: 'ANSWER', sessionId: 's'});
+
+        const [url, init] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/dictation/session`);
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body as string)).toEqual({sdp: 'OFFER'});
+        expect(init.redirect).toBe('error');
+        expect(init.signal).toBeDefined();
+    });
+
+    test.each([413, 429, 502])('a %s rejects with its status', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: () => Promise.resolve({error: 'x'})} as unknown as Response);
+        await expect(createDictationSession('OFFER')).rejects.toMatchObject({status_code: status});
+    });
+
+    test('a network failure or timeout rejects with status 0', async () => {
+        mockFetch.mockRejectedValue(new DOMException('timed out', 'TimeoutError'));
+        await expect(createDictationSession('OFFER')).rejects.toMatchObject({status_code: 0});
     });
 });

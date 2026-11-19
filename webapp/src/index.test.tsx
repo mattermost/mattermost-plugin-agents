@@ -235,6 +235,18 @@ describe('dictation', () => {
         expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
     });
 
+    test('the session-ended event reaches the session it names', async () => {
+        const {websocketHandlers} = await initializePlugin();
+
+        // eslint-disable-next-line global-require
+        const {onDictationSessionEnded} = require('./dictation/session_events');
+        const listener = jest.fn();
+        onDictationSessionEnded('session-1', listener);
+
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_session_ended', {data: {session_id: 'session-1', reason: 'duration_limit'}});
+        expect(listener).toHaveBeenCalledWith('duration_limit');
+    });
+
     test('repeated availability-changed events from HA nodes refetch once', async () => {
         const {websocketHandlers, dispatch} = await initializePlugin();
         mockGetDictationAvailability.mockResolvedValue(unlicensed);

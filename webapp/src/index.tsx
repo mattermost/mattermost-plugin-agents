@@ -63,6 +63,7 @@ import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
 import DictationButton from './components/dictation/dictation_button';
 import {refreshDictationAvailability, scheduleDictationAvailabilityRefresh} from './dictation/availability';
+import {notifyDictationSessionEnded} from './dictation/session_events';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -238,6 +239,14 @@ export default class Plugin {
         registry.registerWebSocketEventHandler('custom_mattermost-ai_dictation_availability_changed', () => {
             scheduleDictationAvailabilityRefresh(store.dispatch);
         });
+
+        // The server ended one of this user's dictation sessions.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_dictation_session_ended',
+            (msg: PluginWebSocketMessage<{session_id?: unknown; reason?: unknown}>) => {
+                notifyDictationSessionEnded(msg.data?.session_id, msg.data?.reason);
+            },
+        );
 
         if (registry.registerPostEditorActionComponent) {
             registry.registerPostEditorActionComponent(DictationButton);

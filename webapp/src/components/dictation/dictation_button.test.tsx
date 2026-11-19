@@ -432,7 +432,9 @@ describe('DictationButton', () => {
 
     test.each([
         {reason: 'mic_blocked', message: 'Microphone access is blocked. Allow it in your browser settings and try again.'},
-        {reason: 'rate_limited', message: 'Dictation was started too often. Wait a minute and try again.'},
+        {reason: 'rate_limited', message: 'Dictation can\'t start right now: it was started too often, or you\'re already dictating in another window. Stop dictating there, or wait a minute, and try again.'},
+        {reason: 'offer_too_large', message: 'Your browser\'s connection request was too large. Reload the page and try again.'},
+        {reason: 'forbidden', message: 'You don\'t have access to dictation.'},
         {reason: 'provider_unreachable', message: 'The speech service could not be reached.'},
     ] as const)('a start failure ($reason) shows an error state', async ({reason, message}) => {
         const {transports} = renderButton({message: '', channelId: 'c1'});
@@ -445,5 +447,24 @@ describe('DictationButton', () => {
 
         fireEvent.click(button());
         expect(transports).toHaveLength(2);
+    });
+
+    test.each([
+        {reason: 'session_time_limit', message: 'Dictation stopped at its time limit. Start it again to keep going.'},
+        {reason: 'session_policy', message: 'Dictation stopped because its session settings were changed. Start it again.'},
+        {reason: 'session_shutdown', message: 'Dictation stopped because the Agents plugin restarted. Start it again.'},
+    ] as const)('the server ending the session ($reason) explains why and keeps the text', async ({reason, message}) => {
+        const {transports, draft} = renderButton({message: '', channelId: 'c1'});
+        await startListening(() => transports[0]);
+        act(() => transports[0].transcript({text: 'spoken words'}));
+        await waitFor(() => expect(draft()).toBe('spoken words'));
+
+        await act(async () => {
+            transports[0].error(new DictationError(reason));
+        });
+
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('error'));
+        expect(screen.getByRole('status').textContent).toBe(message);
+        expect(draft()).toBe('spoken words');
     });
 });

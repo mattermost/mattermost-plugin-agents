@@ -118,7 +118,15 @@ const DictationControl = ({draft, getSelectedText, updateText, createTransport =
         case 'no_mic':
             return intl.formatMessage({defaultMessage: 'No microphone was found.'});
         case 'rate_limited':
-            return intl.formatMessage({defaultMessage: 'Dictation was started too often. Wait a minute and try again.'});
+            return intl.formatMessage({defaultMessage: 'Dictation can\'t start right now: it was started too often, or you\'re already dictating in another window. Stop dictating there, or wait a minute, and try again.'});
+        case 'offer_too_large':
+            return intl.formatMessage({defaultMessage: 'Your browser\'s connection request was too large. Reload the page and try again.'});
+        case 'session_time_limit':
+            return intl.formatMessage({defaultMessage: 'Dictation stopped at its time limit. Start it again to keep going.'});
+        case 'session_policy':
+            return intl.formatMessage({defaultMessage: 'Dictation stopped because its session settings were changed. Start it again.'});
+        case 'session_shutdown':
+            return intl.formatMessage({defaultMessage: 'Dictation stopped because the Agents plugin restarted. Start it again.'});
         case 'forbidden':
             return intl.formatMessage({defaultMessage: 'You don\'t have access to dictation.'});
         case 'audio_blocked':

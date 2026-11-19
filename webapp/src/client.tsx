@@ -608,13 +608,30 @@ export async function getDictationAvailability(): Promise<DictationAvailability>
     });
 }
 
-// The returned client secret is a short-lived provider credential: never log
-// it or keep it after the connection is made.
-export async function createDictationSession(): Promise<DictationSession> {
+// The server needs time for its own exchange with the provider and for
+// attaching its control channel before it answers.
+const DICTATION_SESSION_TIMEOUT_MS = 20000;
+
+// createDictationSession sends the browser's SDP offer to the plugin, which
+// exchanges it with the provider and returns the answer. A failure, timeout
+// included, throws a ClientError whose status_code is 0 when there was no
+// response.
+export async function createDictationSession(offerSDP: string): Promise<DictationSession> {
     const url = `${baseRoute()}/dictation/session`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'POST',
-    }));
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...Client4.getOptions({
+                method: 'POST',
+                body: JSON.stringify({sdp: offerSDP}),
+                headers: {'Content-Type': 'application/json'},
+            }),
+            redirect: 'error',
+            signal: AbortSignal.timeout(DICTATION_SESSION_TIMEOUT_MS),
+        });
+    } catch {
+        throw new ClientError(Client4.url, {message: '', status_code: 0, url});
+    }
 
     if (response.ok) {
         return response.json();

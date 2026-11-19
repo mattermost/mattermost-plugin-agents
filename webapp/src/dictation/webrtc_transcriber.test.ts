@@ -1,7 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {waitFor} from '@testing-library/react';
+
 import {DictationError, DictationSession} from './types';
+
+import {notifyDictationSessionEnded} from './session_events';
 import {TranscriberDeps, WebRTCTranscriber, createAnalyserLevelMeter} from './webrtc_transcriber';
 
 jest.mock('@/client', () => ({createDictationSession: jest.fn()}));
@@ -70,12 +74,12 @@ class FakePeerConnection extends FakeTarget {
 }
 
 const session = (overrides: Partial<DictationSession> = {}): DictationSession => ({
-    clientSecret: 'ek_SENTINEL',
-    expiresAt: Date.now() + 60000,
-    callsURL: 'https://api.openai.test/v1/realtime/calls',
+    sdp: 'ANSWER_SDP',
+    sessionId: 'session-1',
     provider: 'openai',
     model: 'gpt-live-transcribe',
     turnDetection: 'none',
+    maxDurationSeconds: 600,
     ...overrides,
 });
 
@@ -96,7 +100,6 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
         getUserMedia: jest.fn(async () => stream),
         createSession: jest.fn(async () => session()),
         createPeerConnection: () => pc as unknown as RTCPeerConnection,
-        fetch: jest.fn(async () => ({ok: true, text: async () => 'ANSWER_SDP'})) as unknown as typeof fetch,
         createLevelMeter: jest.fn(() => ({attach: meterAttach, level: () => level, close: meterClose})),
         now: () => now,
         setInterval: ((fn: () => void) => {
@@ -122,7 +125,7 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
 const commits = (pc: FakePeerConnection) => pc.channel.sent.filter((e) => e.type === 'input_audio_buffer.commit').length;
 
 describe('WebRTCTranscriber', () => {
-    test('requests the mic before minting, then posts the SDP offer with the ephemeral key', async () => {
+    test('requests the mic first, then sends the offer through the plugin and applies its answer', async () => {
         const {deps, pc} = setup();
         const order: string[] = [];
         (deps.getUserMedia as jest.Mock).mockImplementation(async () => {
@@ -130,20 +133,29 @@ describe('WebRTCTranscriber', () => {
             return {getAudioTracks: () => [new FakeTrack()], getTracks: () => []};
         });
         (deps.createSession as jest.Mock).mockImplementation(async () => {
-            order.push('mint');
+            order.push('session');
             return session();
         });
 
         await new WebRTCTranscriber(deps).start();
 
-        expect(order).toEqual(['mic', 'mint']);
+        expect(order).toEqual(['mic', 'session']);
         expect(deps.getUserMedia).toHaveBeenCalledWith({audio: {echoCancellation: true, noiseSuppression: true}});
-        expect(deps.fetch).toHaveBeenCalledWith('https://api.openai.test/v1/realtime/calls', expect.objectContaining({
-            method: 'POST',
-            body: 'OFFER_SDP',
-            headers: {Authorization: 'Bearer ek_SENTINEL', 'Content-Type': 'application/sdp'},
-        }));
+        expect(deps.createSession).toHaveBeenCalledWith('OFFER_SDP');
         expect(pc.remoteDescription).toEqual({type: 'answer', sdp: 'ANSWER_SDP'});
+    });
+
+    test('never sends session.update, only commits', async () => {
+        const {deps, pc, advance} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        await transcriber.start();
+        advance(0.3, 1000);
+        advance(0, 2100);
+        advance(0.3, 500);
+        await transcriber.stop();
+
+        expect(pc.channel.sent.length).toBeGreaterThan(0);
+        expect(pc.channel.sent.every((e) => e.type === 'input_audio_buffer.commit')).toBe(true);
     });
 
     test('a blocked microphone fails without minting a session', async () => {
@@ -156,12 +168,15 @@ describe('WebRTCTranscriber', () => {
     });
 
     test.each([
+        {status: 0, reason: 'provider_unreachable'},
+        {status: 400, reason: 'unavailable'},
         {status: 403, reason: 'forbidden'},
         {status: 404, reason: 'unavailable'},
+        {status: 413, reason: 'offer_too_large'},
         {status: 429, reason: 'rate_limited'},
         {status: 502, reason: 'provider_unreachable'},
         {status: 503, reason: 'unavailable'},
-    ])('a $status from the mint route fails with $reason and releases the mic', async ({status, reason}) => {
+    ])('a $status from the session route fails with $reason and releases the mic and connection', async ({status, reason}) => {
         const {deps, track} = setup({createSession: jest.fn(async () => {
             throw Object.assign(new Error(''), {status_code: status});
         })});
@@ -170,12 +185,65 @@ describe('WebRTCTranscriber', () => {
         expect(track.stop).toHaveBeenCalled();
     });
 
-    test('a rejected SDP offer fails and releases the mic and connection', async () => {
-        const {deps, track, pc} = setup({fetch: jest.fn(async () => ({ok: false, text: async () => 'upstream body'})) as unknown as typeof fetch});
+    test.each([
+        {name: 'no answer', answer: {sdp: ''}},
+        {name: 'a non-string answer', answer: {sdp: 42}},
+        {name: 'no session id', answer: {sessionId: ''}},
+    ])('a session response with $name fails and releases the mic and connection', async ({answer}) => {
+        const {deps, track, pc} = setup({createSession: jest.fn(async () => ({...session(), ...answer}) as unknown as DictationSession)});
 
         await expect(new WebRTCTranscriber(deps).start()).rejects.toMatchObject({reason: 'provider_unreachable'});
         expect(track.stop).toHaveBeenCalled();
         expect(pc.close).toHaveBeenCalled();
+    });
+
+    test.each([
+        {reason: 'duration_limit', want: 'session_time_limit'},
+        {reason: 'policy', want: 'session_policy'},
+        {reason: 'shutdown', want: 'session_shutdown'},
+    ])('the server ending the session ($reason) reports $want and tears down', async ({reason, want}) => {
+        const {deps, pc, track} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+
+        // The server hangs up, which closes the data channel, and tells the user why.
+        pc.channel.dispatch('close');
+        notifyDictationSessionEnded('session-1', reason);
+
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason: want}));
+        expect(pc.close).toHaveBeenCalled();
+        expect(track.stop).toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'another session', sessionId: 'session-2', reason: 'policy'},
+        {name: 'an unknown reason', sessionId: 'session-1', reason: 'whatever'},
+        {name: 'a non-string session id', sessionId: 1, reason: 'policy'},
+    ])('ignores a session end for $name', async ({sessionId, reason}) => {
+        const {deps, pc} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+
+        notifyDictationSessionEnded(sessionId, reason);
+        expect(onError).not.toHaveBeenCalled();
+        expect(pc.close).not.toHaveBeenCalled();
+    });
+
+    test('a session end after stop is ignored', async () => {
+        const {deps} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+        await transcriber.stop();
+
+        notifyDictationSessionEnded('session-1', 'policy');
+        expect(onError).not.toHaveBeenCalled();
     });
 
     test('emits partial and final transcripts in speaking order', async () => {
@@ -357,9 +425,11 @@ describe('WebRTCTranscriber', () => {
         transcriber.onError(onError);
         await transcriber.start();
 
+        // Without a reason from the server, the loss is reported after a short wait.
         pc.channel.dispatch('close');
+        expect(onError).not.toHaveBeenCalled();
 
-        expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason: 'connection_lost'}));
+        await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason: 'connection_lost'})), {timeout: 2000});
         expect(pc.close).toHaveBeenCalled();
         expect(track.stop).toHaveBeenCalled();
     });
@@ -504,22 +574,22 @@ describe('WebRTCTranscriber', () => {
         }
     });
 
-    test('stop during connecting releases the mic and makes start fail', async () => {
-        let resolveMint: (s: DictationSession) => void = () => { /* set below */ };
-        const {deps, track} = setup({createSession: jest.fn(() => new Promise<DictationSession>((resolve) => {
-            resolveMint = resolve;
+    test('stop during connecting releases the mic and connection and makes start fail', async () => {
+        let resolveSession: (s: DictationSession) => void = () => { /* set below */ };
+        const {deps, track, pc} = setup({createSession: jest.fn(() => new Promise<DictationSession>((resolve) => {
+            resolveSession = resolve;
         }))});
         const transcriber = new WebRTCTranscriber(deps);
         const starting = transcriber.start();
-        await Promise.resolve();
-        await Promise.resolve();
+        await waitFor(() => expect(deps.createSession).toHaveBeenCalled());
 
         await transcriber.stop();
-        resolveMint(session());
+        resolveSession(session());
 
         await expect(starting).rejects.toBeInstanceOf(DictationError);
         expect(track.stop).toHaveBeenCalled();
-        expect(deps.fetch).not.toHaveBeenCalled();
+        expect(pc.close).toHaveBeenCalled();
+        expect(pc.remoteDescription).toBeNull();
     });
 
     test.each([
@@ -541,7 +611,7 @@ describe('WebRTCTranscriber', () => {
 
         trigger(pc);
 
-        expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason}));
+        await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason})), {timeout: 2000});
         expect(pc.close).toHaveBeenCalled();
         expect(track.stop).toHaveBeenCalled();
     });
