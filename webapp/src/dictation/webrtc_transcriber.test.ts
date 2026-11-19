@@ -342,32 +342,40 @@ describe('WebRTCTranscriber', () => {
     });
 
     test.each([
-        {name: 'nothing arrives within the wait', advanceTo: [[0.3, 1000], [0, 2100]], waitForFinal: true, minMs: 1400},
-        {name: 'the final text is discarded', advanceTo: [[0.3, 1000], [0, 2100]], waitForFinal: false, maxMs: 100},
-        {name: 'only an earlier commit arrived before stop', advanceTo: [[0.3, 1000], [0, 2100]], committed: true, waitForFinal: true, minMs: 1400},
-        {name: 'the speech ended long ago', advanceTo: [[0.3, 1000], [0, 3100]], waitForFinal: true, maxMs: 100},
-    ])('with server VAD, stop after a pause when $name', async ({advanceTo, waitForFinal, committed, minMs, maxMs}) => {
+        {name: 'nothing arrives within the wait', silenceMs: 2100, waitForFinal: true, waits: true},
+        {name: 'the final text is discarded', silenceMs: 2100, waitForFinal: false, waits: false},
+        {name: 'only an earlier commit arrived before stop', silenceMs: 2100, committed: true, waitForFinal: true, waits: true},
+        {name: 'the speech ended long ago', silenceMs: 3100, waitForFinal: true, waits: false},
+    ])('with server VAD, stop after a pause when $name waits: $waits', async ({silenceMs, waitForFinal, committed, waits}) => {
         const {deps, pc, advance} = setup({createSession: jest.fn(async () => session({model: 'gpt-4o-transcribe', turnDetection: 'server_vad'}))});
         const transcriber = new WebRTCTranscriber(deps);
         await transcriber.start();
-        advance(...advanceTo[0] as [number, number]);
+        advance(0.3, 1000);
         if (committed) {
             pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
             pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'done'});
         }
-        advance(...advanceTo[1] as [number, number]);
+        advance(0, silenceMs);
 
-        const startedAt = Date.now();
-        await transcriber.stop({waitForFinal});
-        const tookMs = Date.now() - startedAt;
-
-        expect(pc.close).toHaveBeenCalled();
-        if (typeof minMs === 'number') {
-            expect(tookMs).toBeGreaterThanOrEqual(minMs);
-            expect(tookMs).toBeLessThan(2500);
-        }
-        if (typeof maxMs === 'number') {
-            expect(tookMs).toBeLessThan(maxMs);
+        jest.useFakeTimers();
+        try {
+            let done = false;
+            const stopped = transcriber.stop({waitForFinal}).then(() => {
+                done = true;
+            });
+            await jest.advanceTimersByTimeAsync(0);
+            expect(done).toBe(!waits);
+            if (waits) {
+                await jest.advanceTimersByTimeAsync(1499);
+                expect(done).toBe(false);
+                expect(pc.close).not.toHaveBeenCalled();
+                await jest.advanceTimersByTimeAsync(1);
+            }
+            await stopped;
+            expect(done).toBe(true);
+            expect(pc.close).toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
         }
     });
 
