@@ -215,7 +215,6 @@ const LibraryArtifactDeepLink = () => {
                     fileId={entry.id}
                     fileName={entry.title}
                     artifactKind='library'
-                    startedByClick={true}
                     canEdit={library.canEdit}
                     canDelete={library.canDelete}
                     headVersion={entry.version}

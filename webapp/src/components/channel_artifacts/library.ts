@@ -9,6 +9,8 @@ import {GlobalState} from '@mattermost/types/store';
 import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
 import {channelSupportsArtifacts, getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
+import {unpinLibraryArtifactBookmark} from './bookmark';
+
 type LibraryDispatch = (action: Record<string, unknown>) => unknown;
 
 const inflight = new Map<string, Promise<void>>();
@@ -103,8 +105,15 @@ export function useChannelLibrary(channelId: string): ChannelLibrary {
 
 const NO_ENTRIES: ChannelArtifactEntry[] = [];
 
-/** Applies a library websocket event to the cache. */
-export function applyLibraryEvent(dispatch: LibraryDispatch, event: string, data: Record<string, unknown> | undefined) {
+type LibraryStore = {dispatch: LibraryDispatch; getState: () => unknown};
+
+/**
+ * Applies a library websocket event to the cache. A removed entry also drops
+ * its channel bookmark pin on this client when the user may delete bookmarks,
+ * so a removal by an agent or another member does not leave a dead pin.
+ */
+export function applyLibraryEvent(store: LibraryStore, event: string, data: Record<string, unknown> | undefined) {
+    const {dispatch} = store;
     if (!data) {
         return;
     }
@@ -112,6 +121,9 @@ export function applyLibraryEvent(dispatch: LibraryDispatch, event: string, data
     if (event === 'deleted') {
         if (channelId && typeof data.id === 'string') {
             dispatch({type: 'CHANNEL_ARTIFACT_REMOVE', channelId, id: data.id});
+            unpinLibraryArtifactBookmark(store.getState() as GlobalState, channelId, data.id, dispatch as never).catch(() => {
+                // The entry is already gone; a leftover pin explains itself when opened.
+            });
         }
         return;
     }

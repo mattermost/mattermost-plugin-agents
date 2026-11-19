@@ -10,10 +10,15 @@ import {listChannelArtifacts, type ChannelArtifactEntry, type ChannelArtifactLis
 import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 
+import {unpinLibraryArtifactBookmark} from './bookmark';
 import {applyLibraryEvent, useChannelLibrary} from './library';
 
 jest.mock('@/client', () => ({
     listChannelArtifacts: jest.fn(),
+}));
+
+jest.mock('./bookmark', () => ({
+    unpinLibraryArtifactBookmark: jest.fn().mockResolvedValue(false),
 }));
 
 const channelId = 'channelid0123456789012345';
@@ -116,17 +121,17 @@ describe('channel artifact library cache', () => {
         await waitFor(() => expect(screen.getByTestId('consumer-1').textContent).toBe('ready:One:true'));
 
         act(() => {
-            applyLibraryEvent(store.dispatch as never, 'created', {channel_id: channelId, artifact: entry('a2', 'Two')});
+            applyLibraryEvent(store as never, 'created', {channel_id: channelId, artifact: entry('a2', 'Two')});
         });
         expect(screen.getByTestId('consumer-0').textContent).toBe('ready:Two,One:true');
 
         act(() => {
-            applyLibraryEvent(store.dispatch as never, 'updated', {channel_id: channelId, artifact: entry('a1', 'Renamed')});
+            applyLibraryEvent(store as never, 'updated', {channel_id: channelId, artifact: entry('a1', 'Renamed')});
         });
         expect(screen.getByTestId('consumer-1').textContent).toBe('ready:Two,Renamed:true');
 
         act(() => {
-            applyLibraryEvent(store.dispatch as never, 'deleted', {channel_id: channelId, id: 'a2'});
+            applyLibraryEvent(store as never, 'deleted', {channel_id: channelId, id: 'a2'});
         });
         expect(screen.getByTestId('consumer-0').textContent).toBe('ready:Renamed:true');
         expect(listChannelArtifacts).toHaveBeenCalledTimes(1);
@@ -144,13 +149,26 @@ describe('channel artifact library cache', () => {
             store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry: entry('new', 'Saved meanwhile')});
         });
         act(() => {
-            applyLibraryEvent(store.dispatch as never, 'deleted', {channel_id: channelId, id: 'gone'});
+            applyLibraryEvent(store as never, 'deleted', {channel_id: channelId, id: 'gone'});
         });
         await act(async () => {
             resolveList?.(list([entry('gone', 'Deleted meanwhile'), entry('kept', 'Kept')]));
         });
 
         expect(screen.getByTestId('consumer-0').textContent).toBe('ready:Saved meanwhile,Kept:true');
+    });
+
+    test('a deleted event also drops the channel bookmark pin, even when the removal came from elsewhere', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(list([entry('a1')]));
+        jest.mocked(unpinLibraryArtifactBookmark).mockClear();
+        const store = setup();
+        await waitFor(() => expect(screen.getByTestId('consumer-0').textContent).toBe('ready:a1:true'));
+
+        act(() => {
+            applyLibraryEvent(store as never, 'deleted', {channel_id: channelId, id: 'a1'});
+        });
+
+        expect(unpinLibraryArtifactBookmark).toHaveBeenCalledWith(store.getState(), channelId, 'a1', store.dispatch);
     });
 
     test('turning the feature off clears the cache', async () => {

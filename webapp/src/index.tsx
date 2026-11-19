@@ -238,7 +238,7 @@ export default class Plugin {
         for (const event of ['created', 'updated', 'deleted']) {
             registry.registerWebSocketEventHandler(
                 `custom_mattermost-ai_channel_artifact_${event}`,
-                (msg: {data?: Record<string, unknown>}) => applyLibraryEvent(store.dispatch as never, event, msg.data),
+                (msg: {data?: Record<string, unknown>}) => applyLibraryEvent(store as never, event, msg.data),
             );
         }
 

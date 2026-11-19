@@ -30,8 +30,15 @@ jest.mock('react-intl', () => {
 });
 
 jest.mock('../html_artifacts/html_artifact_fullscreen', () => {
-    return function MockFullscreen(props: {fileId: string}) {
-        return <div data-testid='html-artifact-fullscreen'>{props.fileId}</div>;
+    return function MockFullscreen(props: {fileId: string; startedByClick?: boolean}) {
+        return (
+            <div
+                data-testid='html-artifact-fullscreen'
+                data-started-by-click={String(Boolean(props.startedByClick))}
+            >
+                {props.fileId}
+            </div>
+        );
     };
 });
 
@@ -120,6 +127,7 @@ describe('LibraryArtifactDeepLink', () => {
         });
         const viewer = await screen.findByTestId('html-artifact-fullscreen');
         expect(viewer.textContent).toBe(artifactId);
+        expect(viewer.dataset.startedByClick).toBe('false'); // a link or pasted URL is not the viewer's click on the artifact
         expect(getChannelArtifact).toHaveBeenCalledWith(artifactId);
         await waitFor(() => expect(window.location.search).not.toContain('mm_ai_library_artifact'));
     });
