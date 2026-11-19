@@ -123,7 +123,7 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
 
         // Stop delivers the last segment's final text through onTranscript.
         // A segment that didn't finalize in time keeps its streamed text.
-        await session.transport.stop();
+        await session.transport.stop({waitForFinal: keepFinal});
 
         const current = draftRef.current;
         if (session.keepFinal && isSameEditor(session, current) && session.writer.isOwnWrite(current.message ?? '')) {

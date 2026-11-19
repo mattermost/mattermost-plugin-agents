@@ -47,8 +47,7 @@ export function dictationServices(services: LLMService[]): LLMService[] {
     return services.filter((s) => Boolean(s.id) && DICTATION_SERVICE_TYPES.includes(s.type));
 }
 
-// Browsers receive a URL derived from the service's API URL, so it may hold
-// only a scheme, host and path.
+// The API URL may hold only an http(s) scheme, a host and a path.
 function isPlainAPIURL(apiURL: string): boolean {
     let url: URL;
     try {
@@ -56,7 +55,7 @@ function isPlainAPIURL(apiURL: string): boolean {
     } catch {
         return false;
     }
-    return Boolean(url.host) && !url.username && !url.password && !url.search && !url.hash;
+    return (url.protocol === 'https:' || url.protocol === 'http:') && Boolean(url.host) && !url.username && !url.password && !url.search && !url.hash;
 }
 
 export type DictationConfigErrors = {

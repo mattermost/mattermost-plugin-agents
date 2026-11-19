@@ -79,9 +79,10 @@ export interface DictationTransport {
     // Resolves once audio is flowing to the provider. Rejects with a DictationError.
     start(): Promise<void>;
 
-    // Finalizes the last segment, waits briefly for its transcript, then
-    // releases the microphone and the connection. Safe to call at any time.
-    stop(): Promise<void>;
+    // Releases the microphone at once. With waitForFinal, it then finalizes
+    // the last segment and waits briefly for its transcript before closing
+    // the connection; without, it closes right away. Safe to call at any time.
+    stop(options?: {waitForFinal?: boolean}): Promise<void>;
 
     // The microphone is granted and the connection is being made.
     onConnecting(handler: () => void): void;

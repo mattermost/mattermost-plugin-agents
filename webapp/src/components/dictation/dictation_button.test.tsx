@@ -335,6 +335,10 @@ describe('DictationButton', () => {
         // The transport already tore down (a provider error), so stop has no final to deliver.
         stopDeliversFinal?: boolean;
         unmounts?: boolean;
+
+        // Whether stop waits for the last segment's final text; a stop that
+        // keeps nothing releases the microphone and connection at once.
+        waits: boolean;
         draft?: string;
         status?: 'idle' | 'error';
     };
@@ -343,31 +347,34 @@ describe('DictationButton', () => {
     const setMessage = (ctx: Ctx, message: string) => ctx.controls.setDraft((d) => ({...d, message}));
 
     const rows: Row[] = [
-        {name: 'the button', trigger: () => fireEvent.click(button()), draft: FINAL, status: 'idle'},
-        {name: 'the button, with no final before the grace period ends', trigger: () => fireEvent.click(button()), stopDeliversFinal: false, draft: PARTIAL, status: 'idle'},
-        {name: 'Esc', trigger: () => fireEvent.keyDown(editor(), {key: 'Escape'}), draft: FINAL, status: 'idle'},
-        {name: 'silence',
+        {waits: true, name: 'the button', trigger: () => fireEvent.click(button()), draft: FINAL, status: 'idle'},
+        {waits: true, name: 'the button, with no final before the grace period ends', trigger: () => fireEvent.click(button()), stopDeliversFinal: false, draft: PARTIAL, status: 'idle'},
+        {waits: true, name: 'Esc', trigger: () => fireEvent.keyDown(editor(), {key: 'Escape'}), draft: FINAL, status: 'idle'},
+        {waits: true,
+            name: 'silence',
             trigger: ({transport}) => {
                 transport.idle();
             },
             draft: FINAL,
             status: 'idle'},
-        {name: 'the session cap', maxSessionMs: 500, trigger: ({transport}) => waitFor(() => expect(transport.stop).toHaveBeenCalled(), {timeout: 2000}), draft: FINAL, status: 'idle'},
-        {name: 'a provider error',
+        {waits: true, name: 'the session cap', maxSessionMs: 500, trigger: ({transport}) => waitFor(() => expect(transport.stop).toHaveBeenCalled(), {timeout: 2000}), draft: FINAL, status: 'idle'},
+        {waits: true,
+            name: 'a provider error',
             trigger: ({transport}) => {
                 transport.error(new DictationError('provider_error'));
             },
             stopDeliversFinal: false,
             draft: PARTIAL,
             status: 'error'},
-        {name: 'typing', trigger: (ctx) => setMessage(ctx, PARTIAL + '!'), draft: PARTIAL + '!', status: 'idle'},
-        {name: 'sending', trigger: (ctx) => setMessage(ctx, ''), draft: '', status: 'idle'},
-        {name: 'a channel switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, channelId: 'c2'})), draft: PARTIAL, status: 'idle'},
-        {name: 'a thread switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, rootId: 'r2'})), draft: PARTIAL, status: 'idle'},
-        {name: 'unmounting', trigger: ({unmount}) => unmount(), unmounts: true},
-        {name: 'the button, then typing while stopping', trigger: () => fireEvent.click(button()), duringStop: (ctx) => setMessage(ctx, 'mine'), draft: 'mine', status: 'idle'},
-        {name: 'the button, then unmounting while stopping', trigger: () => fireEvent.click(button()), duringStop: ({unmount}) => unmount(), unmounts: true},
-        {name: 'the button, then a provider error while stopping',
+        {waits: false, name: 'typing', trigger: (ctx) => setMessage(ctx, PARTIAL + '!'), draft: PARTIAL + '!', status: 'idle'},
+        {waits: false, name: 'sending', trigger: (ctx) => setMessage(ctx, ''), draft: '', status: 'idle'},
+        {waits: false, name: 'a channel switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, channelId: 'c2'})), draft: PARTIAL, status: 'idle'},
+        {waits: false, name: 'a thread switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, rootId: 'r2'})), draft: PARTIAL, status: 'idle'},
+        {waits: false, name: 'unmounting', trigger: ({unmount}) => unmount(), unmounts: true},
+        {waits: true, name: 'the button, then typing while stopping', trigger: () => fireEvent.click(button()), duringStop: (ctx) => setMessage(ctx, 'mine'), draft: 'mine', status: 'idle'},
+        {waits: true, name: 'the button, then unmounting while stopping', trigger: () => fireEvent.click(button()), duringStop: ({unmount}) => unmount(), unmounts: true},
+        {waits: true,
+            name: 'the button, then a provider error while stopping',
             trigger: () => fireEvent.click(button()),
             duringStop: ({transport}) => {
                 transport.error(new DictationError('provider_error'));
@@ -399,6 +406,7 @@ describe('DictationButton', () => {
             await row.trigger(ctx);
         });
         await waitFor(() => expect(transport.stop).toHaveBeenCalledTimes(1));
+        expect(transport.stop).toHaveBeenCalledWith({waitForFinal: row.waits});
 
         if (!row.unmounts || row.duringStop) {
             expect(button().getAttribute('data-status')).toBe('stopping');

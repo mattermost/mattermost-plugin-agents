@@ -485,6 +485,19 @@ describe('AgentsSettingsPage dictation', () => {
     ];
     const invalid = Object.assign(new Error('invalid dictation configuration: transcription service "svc-openai" is not configured'), {server_error_id: 'invalid_dictation'});
 
+    it('keeps the dictation fields read-only while a save is pending', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation: {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'}});
+        renderPage('dictation');
+        const language = await screen.findByPlaceholderText('en') as HTMLInputElement;
+        fireEvent.change(language, {target: {value: 'de'}});
+
+        (savePluginConfig as jest.Mock).mockImplementation(() => new Promise(() => { /* never resolves */ }));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(language.disabled).toBe(true));
+        expect(radioFor('Enable dictation', 'false').disabled).toBe(true);
+    });
+
     it('has its own section', async () => {
         renderPage('dictation');
         expect(await screen.findByRole('tab', {name: 'Dictation'})).toBeTruthy();

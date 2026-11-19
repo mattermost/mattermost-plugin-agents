@@ -433,6 +433,57 @@ describe('WebRTCTranscriber', () => {
         expect(track.stop).not.toHaveBeenCalled();
     });
 
+    test('stop turns the microphone off before waiting for the last segment', async () => {
+        const {deps, pc, track} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        await transcriber.start();
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'last'});
+
+        const stopped = transcriber.stop();
+        expect(track.stop).toHaveBeenCalled();
+        expect(pc.close).not.toHaveBeenCalled();
+
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'last words'});
+        await stopped;
+        expect(pc.close).toHaveBeenCalled();
+    });
+
+    test('stop without waiting for the final closes at once and commits nothing', async () => {
+        const {deps, pc, track, advance} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        await transcriber.start();
+        advance(0.3, 500);
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'discarded'});
+
+        await transcriber.stop({waitForFinal: false});
+        expect(commits(pc)).toBe(0);
+        expect(track.stop).toHaveBeenCalled();
+        expect(pc.close).toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'a numeric delta', event: {type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 42}},
+        {name: 'an object item id', event: {type: 'conversation.item.input_audio_transcription.delta', item_id: {}, delta: 'x'}},
+        {name: 'a numeric transcript', event: {type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 7}},
+        {name: 'a numeric previous item id', event: {type: 'input_audio_buffer.committed', item_id: 'b', previous_item_id: 3}},
+        {name: 'a null error', event: {type: 'error', error: null}},
+        {name: 'null', event: null},
+        {name: 'an array', event: ['x']},
+        {name: 'a string', event: 'x'},
+    ])('ignores malformed provider fields: $name', async ({event}) => {
+        const {deps, pc} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        transcriber.onTranscript(onTranscript);
+        transcriber.onError(jest.fn());
+        await transcriber.start();
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'ok'});
+
+        expect(() => pc.channel.dispatch('message', {data: JSON.stringify(event)})).not.toThrow();
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: ' still'});
+        expect(onTranscript).toHaveBeenLastCalledWith({text: expect.stringMatching(/^ok/)});
+    });
+
     test('stop gives up waiting for a final transcript after the grace period', async () => {
         jest.useFakeTimers();
         try {

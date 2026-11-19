@@ -99,6 +99,11 @@ describe('validateDictationConfig', () => {
         {name: 'query in the API URL', apiKey: 'sk', apiURL: 'https://proxy.example.com/?token=x', invalid: true},
         {name: 'fragment in the API URL', apiKey: 'sk', apiURL: 'https://proxy.example.com/#x', invalid: true},
         {name: 'relative API URL', apiKey: 'sk', apiURL: 'proxy.example.com', invalid: true},
+        {name: 'protocol-relative API URL', apiKey: 'sk', apiURL: '//proxy.example.com', invalid: true},
+        {name: 'ftp API URL', apiKey: 'sk', apiURL: 'ftp://proxy.example.com', invalid: true},
+        {name: 'websocket API URL', apiKey: 'sk', apiURL: 'wss://proxy.example.com', invalid: true},
+        {name: 'javascript API URL', apiKey: 'sk', apiURL: 'javascript://proxy.example.com/x', invalid: true}, // eslint-disable-line no-script-url -- the validator must reject it
+        {name: 'plain http API URL for a local proxy', apiKey: 'sk', apiURL: 'http://realtime:8095', invalid: false},
     ])('service with $name: invalid=$invalid', ({apiKey, apiURL, invalid}) => {
         const svc = {...openai, apiKey, apiURL};
         expect(Boolean(validateDictationConfig(enabled, [svc], intl).serviceID)).toBe(invalid);

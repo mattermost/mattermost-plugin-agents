@@ -100,12 +100,12 @@ function micError(err: unknown): DictationError {
 
 // Provider realtime events read from the "oai-events" data channel.
 type ProviderEvent = {
-    type?: string;
-    item_id?: string;
-    previous_item_id?: string | null;
-    delta?: string;
-    transcript?: string;
-    error?: {code?: string};
+    type?: unknown;
+    item_id?: unknown;
+    previous_item_id?: unknown;
+    delta?: unknown;
+    transcript?: unknown;
+    error?: {code?: unknown} | null;
 };
 
 // Sent when a commit holds under 100 ms of audio, e.g. a stop right after a
@@ -320,23 +320,34 @@ export class WebRTCTranscriber implements DictationTransport {
         } catch {
             return;
         }
-        const itemId = event.item_id;
+        if (event === null || typeof event !== 'object') {
+            return;
+        }
+
+        // Provider events are untrusted input: anything not a string is ignored.
+        const itemId = typeof event.item_id === 'string' && event.item_id ? event.item_id : null;
+        const text = (value: unknown) => (typeof value === 'string' ? value : '');
         switch (event.type) {
         case 'input_audio_buffer.committed':
             if (itemId) {
-                this.transcript.committed(itemId, event.previous_item_id);
+                this.transcript.committed(itemId, typeof event.previous_item_id === 'string' ? event.previous_item_id : null);
             }
             this.acknowledgeCommit();
             return;
         case 'conversation.item.input_audio_transcription.delta':
-            if (itemId && event.delta) {
-                this.transcript.delta(itemId, event.delta);
+            if (itemId && text(event.delta)) {
+                this.transcript.delta(itemId, text(event.delta));
                 this.transcriptHandler(this.transcript.snapshot());
             }
             return;
         case 'conversation.item.input_audio_transcription.completed':
             if (itemId) {
-                this.transcript.completed(itemId, event.transcript ?? '');
+                if (typeof event.transcript === 'string') {
+                    this.transcript.completed(itemId, event.transcript);
+                } else {
+                    // Without a usable final, keep what streamed.
+                    this.transcript.failed(itemId);
+                }
                 this.emitFinal();
             }
             return;
@@ -390,14 +401,14 @@ export class WebRTCTranscriber implements DictationTransport {
         }
     }
 
-    stop(): Promise<void> {
+    stop({waitForFinal = true}: {waitForFinal?: boolean} = {}): Promise<void> {
         if (!this.stopping) {
-            this.stopping = this.finish();
+            this.stopping = this.finish(waitForFinal);
         }
         return this.stopping;
     }
 
-    private async finish() {
+    private async finish(waitForFinal: boolean) {
         if (this.stopped) {
             return;
         }
@@ -413,10 +424,14 @@ export class WebRTCTranscriber implements DictationTransport {
 
         // Server VAD commits only after it hears the speech end, so speech
         // still in the buffer is committed here for every model.
-        if (this.segmenter?.flush()) {
+        if (waitForFinal && this.segmenter?.flush()) {
             this.commit();
         }
-        if (this.hasOutstandingWork()) {
+
+        // No audio is sent after stop: the mic goes off now, and only the
+        // transcript of audio already sent is awaited.
+        this.stream?.getTracks().forEach((track) => track.stop());
+        if (waitForFinal && this.hasOutstandingWork()) {
             await new Promise<void>((resolve) => {
                 const timer = setTimeout(resolve, FINAL_TRANSCRIPT_WAIT_MS);
                 this.finalWaiter = () => {
