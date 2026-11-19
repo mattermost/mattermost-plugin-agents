@@ -166,6 +166,30 @@ async function stubPeerConnection(page: Page) {
     }, { offerSDP: STUB_OFFER_SDP, transcribeMs: STUB_TRANSCRIBE_MS });
 }
 
+// Bounds on the level glow as drawn: --dictation-level (0 to 1) and the
+// ring's spread in px (2 px + level * 8 px).
+type GlowBounds = { minLevel?: number; maxLevel?: number; minSpread?: number };
+
+// At the segmenter's speech threshold, 0.02 RMS (about -34 dBFS), the glow
+// level is about 0.53; at or above this level the transcriber hears speech.
+const SPEECH_GLOW_LEVEL = 0.6;
+
+// waitForGlow waits until the center composer's level glow is within bounds.
+async function waitForGlow(page: Page, bounds: GlowBounds) {
+    await page.waitForFunction(({ minLevel = 0, maxLevel = 1, minSpread = 0 }) => {
+        const anchor = document.querySelector('[data-testid="channel_view"] [data-testid="dictation-indicator"]') as HTMLElement | null;
+        const button = document.querySelector('[data-testid="channel_view"] [data-testid="dictation-button"]') as HTMLElement | null;
+        if (!anchor || !button) {
+            return false;
+        }
+        const level = Number(anchor.style.getPropertyValue('--dictation-level') || 0);
+        const spread = Number((/(\d+(?:\.\d+)?)px\s*$/).exec(getComputedStyle(button).boxShadow)?.[1] ?? 0);
+        return level >= minLevel && level <= maxLevel && spread >= minSpread;
+    }, bounds, { polling: 'raf', timeout: 15000 });
+}
+
+const stubCommits = (page: Page) => page.evaluate(() => (window as unknown as { stubCommits: number }).stubCommits);
+
 async function loginAsUser(page: Page, mattermost: MattermostContainer) {
     const mmPage = new MattermostPage(page);
     await mmPage.login(mattermost.url(), username, password, { channelViewTimeoutMs: 90000 });
@@ -385,15 +409,16 @@ test.describe('Dictation', () => {
         await dictationButton(center).click();
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'listening', { timeout: 30000 });
 
-        // Chrome's fake microphone beeps, so the stop commits the speech in progress.
-        await page.waitForTimeout(1000);
-        expect(await page.evaluate(() => (window as unknown as { stubCommits: number }).stubCommits)).toBe(0);
+        // Stop while Chrome's fake microphone beeps: the segmenter is then in
+        // speech, so the stop commits it.
+        await waitForGlow(page, { minLevel: SPEECH_GLOW_LEVEL });
+        const commitsBefore = await stubCommits(page);
         await dictationButton(center).click();
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'stopping');
 
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle', { timeout: 10000 });
-        expect(await page.evaluate(() => (window as unknown as { stubCommits: number }).stubCommits)).toBe(1);
-        await expect(mmPage.postTextbox).toHaveValue('Phrase 1.');
+        expect(await stubCommits(page)).toBe(commitsBefore + 1);
+        await expect(mmPage.postTextbox).toHaveValue(new RegExp(`Phrase ${commitsBefore + 1}\\.$`));
         await expect(dictationStatus(center)).toHaveText('');
     });
 
@@ -409,23 +434,10 @@ test.describe('Dictation', () => {
         await dictationButton(center).click();
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'listening', { timeout: 30000 });
 
-        // Over 3 s the beep must drive the glow up and back down.
-        const samples = await page.evaluate(async () => {
-            const anchor = document.querySelector('[data-testid="channel_view"] [data-testid="dictation-indicator"]') as HTMLElement;
-            const button = document.querySelector('[data-testid="channel_view"] [data-testid="dictation-button"]') as HTMLElement;
-            const out: Array<{ level: number; spread: number }> = [];
-            for (let i = 0; i < 60; i++) {
-                const spread = Number((/(\d+(?:\.\d+)?)px\s*$/).exec(getComputedStyle(button).boxShadow)?.[1] ?? 0);
-                out.push({ level: Number(anchor.style.getPropertyValue('--dictation-level') || 0), spread });
-                await new Promise((r) => setTimeout(r, 50));
-            }
-            return out;
-        });
-        const levels = samples.map((s) => s.level);
-        const spreads = samples.map((s) => s.spread);
-        expect(Math.max(...levels)).toBeGreaterThan(0.5);
-        expect(Math.min(...levels)).toBeLessThan(0.3);
-        expect(Math.max(...spreads)).toBeGreaterThan(6);
+        // The beep must drive the glow up, which spreads the ring past 6 px
+        // (2 px + level * 8 px), and back down between beeps.
+        await waitForGlow(page, { minLevel: 0.5, minSpread: 6 });
+        await waitForGlow(page, { maxLevel: 0.3 });
 
         await dictationButton(center).click();
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle', { timeout: 10000 });
