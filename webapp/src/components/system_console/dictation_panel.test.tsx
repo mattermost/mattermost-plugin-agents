@@ -139,6 +139,14 @@ describe('DictationPanel', () => {
         expect(screen.getByText(/not an OpenAI service/)).toBeTruthy();
     });
 
+    test('marks the enable toggle as experimental', () => {
+        renderPanel(defaultDictationConfig, [openai]);
+        const group = screen.getByRole('radiogroup', {name: /^Enable dictation/});
+        expect(group.getAttribute('aria-labelledby')).toBeTruthy();
+        const label = document.getElementById(group.getAttribute('aria-labelledby')!);
+        expect(label?.textContent).toBe('Enable dictationEXPERIMENTAL');
+    });
+
     test('pre-fills gpt-live-transcribe as the model', () => {
         renderPanel(defaultDictationConfig, [openai]);
         expect(screen.getByDisplayValue('gpt-live-transcribe')).toBeTruthy();

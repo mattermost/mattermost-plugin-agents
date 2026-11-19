@@ -3,9 +3,11 @@
 
 import React from 'react';
 import {FormattedMessage, IntlShape, useIntl} from 'react-intl';
+import styled from 'styled-components';
 
 import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import {useIsLicensedFor} from '@/license';
 
@@ -121,7 +123,15 @@ const DictationPanel = ({value, services, errors, saveError, onChange}: Props) =
                     />
                 )}
                 <BooleanItem
-                    label={intl.formatMessage({defaultMessage: 'Enable dictation'})}
+                    label={
+                        <ExperimentalLabel>
+                            <FormattedMessage defaultMessage='Enable dictation'/>
+                            <Tag
+                                type='info'
+                                label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                            />
+                        </ExperimentalLabel>
+                    }
                     value={value.enabled}
                     disableTrue={!licensed}
                     extra={!licensed && <LicenseChip capability='dictation'/>}
@@ -169,3 +179,10 @@ const DictationPanel = ({value, services, errors, saveError, onChange}: Props) =
 };
 
 export default DictationPanel;
+
+const ExperimentalLabel = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xxxs);
+`;

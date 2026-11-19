@@ -122,7 +122,10 @@ async function clickSave(): Promise<PluginConfig> {
     return (savePluginConfig as jest.Mock).mock.calls.at(-1)?.[0] as PluginConfig;
 }
 
-function radioFor(label: string, value: 'true' | 'false'): HTMLInputElement {
+// The dictation toggle's name also carries its EXPERIMENTAL tag.
+const ENABLE_DICTATION = /^Enable dictation/;
+
+function radioFor(label: string | RegExp, value: 'true' | 'false'): HTMLInputElement {
     const group = screen.getByRole('radiogroup', {name: label});
     return group.querySelector(`input[value="${value}"]`) as HTMLInputElement;
 }
@@ -495,21 +498,21 @@ describe('AgentsSettingsPage dictation', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         await waitFor(() => expect(language.disabled).toBe(true));
-        expect(radioFor('Enable dictation', 'false').disabled).toBe(true);
+        expect(radioFor(ENABLE_DICTATION, 'false').disabled).toBe(true);
     });
 
     it('has its own section', async () => {
         renderPage('dictation');
         expect(await screen.findByRole('tab', {name: 'Dictation'})).toBeTruthy();
-        expect(screen.getByRole('radiogroup', {name: 'Enable dictation'})).toBeTruthy();
+        expect(screen.getByRole('radiogroup', {name: ENABLE_DICTATION})).toBeTruthy();
     });
 
     it('pre-fills the model for a server that has never saved dictation settings', async () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices});
         renderPage('dictation');
-        await waitFor(() => expect(radioFor('Enable dictation', 'true')).toBeTruthy());
+        await waitFor(() => expect(radioFor(ENABLE_DICTATION, 'true')).toBeTruthy());
 
-        fireEvent.click(radioFor('Enable dictation', 'true'));
+        fireEvent.click(radioFor(ENABLE_DICTATION, 'true'));
         const saved = await clickSave();
         expect(saved.dictation).toEqual({enabled: true, serviceID: '', model: 'gpt-live-transcribe', language: ''});
     });
