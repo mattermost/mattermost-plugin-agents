@@ -4,12 +4,15 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 )
@@ -40,7 +43,18 @@ func (a *API) handleGetDictationAvailability(c *gin.Context) {
 	c.JSON(http.StatusOK, a.dictationService.Availability(c.Request.Context(), userID))
 }
 
-// POST /dictation/session
+// WebsocketEventDictationSessionEnded tells the user the server ended one
+// of their dictation sessions (webapp: custom_mattermost-ai_<name>).
+const WebsocketEventDictationSessionEnded = "dictation_session_ended"
+
+var errDictationOfferTooLarge = errors.New("the SDP offer is too large")
+
+type createDictationSessionRequest struct {
+	SDP string `json:"sdp"`
+}
+
+// POST /dictation/session exchanges the browser's SDP offer for an answer on
+// a call the server creates and watches.
 func (a *API) handleCreateDictationSession(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if a.dictationService == nil {
@@ -48,25 +62,45 @@ func (a *API) handleCreateDictationSession(c *gin.Context) {
 		return
 	}
 
-	if d := a.config.Dictation(); d.Enabled {
-		audit.AddParam(auditRec(c), audit.KeyServiceID, d.ServiceID)
+	// The JSON envelope adds a little to the SDP limit.
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, bifrost.MaxSDPBytes+4096+1))
+	if err != nil {
+		abortDictation(c, http.StatusBadRequest, dictation.ErrInvalidOffer)
+		return
+	}
+	if len(body) > bifrost.MaxSDPBytes+4096 {
+		abortDictation(c, http.StatusRequestEntityTooLarge, errDictationOfferTooLarge)
+		return
+	}
+	var req createDictationSessionRequest
+	if err = json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.SDP) == "" {
+		abortDictation(c, http.StatusBadRequest, dictation.ErrInvalidOffer)
+		return
+	}
+	if len(req.SDP) > bifrost.MaxSDPBytes {
+		abortDictation(c, http.StatusRequestEntityTooLarge, errDictationOfferTooLarge)
+		return
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	session, err := a.dictationService.CreateSession(c.Request.Context(), userID)
+	session, err := a.dictationService.CreateSession(c.Request.Context(), userID, req.SDP)
 	switch {
 	case err == nil:
-		c.JSON(http.StatusOK, session)
+		c.JSON(http.StatusCreated, session)
 	case errors.Is(err, enterprise.ErrNotLicensed):
 		abortNotLicensed(c, err)
+	case errors.Is(err, dictation.ErrInvalidOffer):
+		abortDictation(c, http.StatusBadRequest, dictation.ErrInvalidOffer)
 	case errors.Is(err, dictation.ErrDisabled):
 		abortDictation(c, http.StatusNotFound, dictation.ErrDisabled)
 	case errors.Is(err, dictation.ErrAccessDenied):
 		abortDictation(c, http.StatusForbidden, dictation.ErrAccessDenied)
-	case errors.Is(err, dictation.ErrMisconfigured):
-		abortDictation(c, http.StatusServiceUnavailable, dictation.ErrMisconfigured)
+	case errors.Is(err, dictation.ErrMisconfigured), errors.Is(err, dictation.ErrSessionsShutdown):
+		abortDictation(c, http.StatusServiceUnavailable, errDictationUnavailable)
 	case errors.Is(err, dictation.ErrRateLimited):
 		abortDictation(c, http.StatusTooManyRequests, dictation.ErrRateLimited)
+	case errors.Is(err, dictation.ErrConcurrentLimit):
+		abortDictation(c, http.StatusTooManyRequests, dictation.ErrConcurrentLimit)
 	case errors.Is(err, dictation.ErrProvider):
 		abortDictation(c, http.StatusBadGateway, dictation.ErrProvider)
 	default:

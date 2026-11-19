@@ -4,17 +4,16 @@
 package dictation
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -26,20 +25,21 @@ func setConfig(c *config.Container, d config.DictationConfig, services ...llm.Se
 	c.Update(&config.Config{Services: services, Dictation: d})
 }
 
-type levelChecker struct{ level atomic.Int32 }
-
-func newLevelChecker(level enterprise.Level) *levelChecker {
-	c := &levelChecker{}
-	c.level.Store(int32(level))
-	return c
+func openAIService(id, key string) llm.ServiceConfig {
+	return llm.ServiceConfig{ID: id, Name: id, Type: llm.ServiceTypeOpenAI, APIKey: key}
 }
 
-func (c *levelChecker) Check(capability enterprise.Capability) error {
-	level := enterprise.Level(c.level.Load())
-	if level >= enterprise.RequiredLevel(capability) {
+func enabled(serviceID string) config.DictationConfig {
+	return config.DictationConfig{Enabled: true, ServiceID: serviceID, Model: "gpt-live-transcribe"}
+}
+
+type levelChecker struct{ level enterprise.Level }
+
+func (c levelChecker) Check(capability enterprise.Capability) error {
+	if c.level >= enterprise.RequiredLevel(capability) {
 		return nil
 	}
-	return enterprise.NewLicenseError(capability, level)
+	return enterprise.NewLicenseError(capability, c.level)
 }
 
 type accessFunc func(ctx context.Context, userID, serviceID string) error
@@ -50,213 +50,140 @@ func (f accessFunc) CanUseService(ctx context.Context, userID, serviceID string)
 
 var allowAll = accessFunc(func(context.Context, string, string) error { return nil })
 
+type usersFunc func(string) (*model.User, error)
+
+func (f usersFunc) GetUser(id string) (*model.User, error) { return f(id) }
+
+var regularUser = usersFunc(func(id string) (*model.User, error) {
+	return &model.User{Id: id, Roles: model.SystemUserRoleId}, nil
+})
+
 type nopLogger struct{}
 
 func (nopLogger) Info(string, ...any) {}
 func (nopLogger) Warn(string, ...any) {}
 
-type fakeMinter struct {
-	svc      llm.ServiceConfig
-	err      error
-	panics   bool
-	shutdown chan struct{}
+// memoryLeases is a LeaseStore with the KV store's compare-and-set
+// semantics, shared by every Service in a test like the KV store is by
+// every node.
+type memoryLeases struct {
+	mu     sync.Mutex
+	values map[string][]byte
 }
 
-func (m *fakeMinter) CreateTranscriptionSession(_ context.Context, req bifrost.TranscriptionSessionRequest) (*bifrost.TranscriptionSession, error) {
-	if m.panics {
-		panic("provider client panicked")
+func newMemoryLeases() *memoryLeases { return &memoryLeases{values: map[string][]byte{}} }
+
+func (m *memoryLeases) Get(key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.values[key], nil
+}
+
+func (m *memoryLeases) CompareAndSet(key string, old, value []byte, _ time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, exists := m.values[key]
+	if (old == nil && exists) || (old != nil && !bytes.Equal(current, old)) {
+		return false, nil
 	}
-	if m.err != nil {
-		return nil, m.err
-	}
-	return &bifrost.TranscriptionSession{
-		ClientSecret: "ek_" + m.svc.ID,
-		ExpiresAt:    time.Now().Add(15 * time.Second).UnixMilli(),
-		KeyExpiresAt: time.Now().Add(15 * time.Second).UnixMilli(),
-		Provider:     m.svc.Type,
-		Model:        req.Model,
-	}, nil
+	m.values[key] = value
+	return true, nil
 }
 
-func (m *fakeMinter) Shutdown() { close(m.shutdown) }
-
-type minterFactory struct {
-	mu      sync.Mutex
-	built   []*fakeMinter
-	mintErr error
-	panics  bool
-}
-
-func (f *minterFactory) build(svc llm.ServiceConfig) (sessionMinter, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	m := &fakeMinter{svc: svc, err: f.mintErr, panics: f.panics, shutdown: make(chan struct{})}
-	f.built = append(f.built, m)
-	return m, nil
-}
-
-func openAIService(id, key string) llm.ServiceConfig {
-	return llm.ServiceConfig{ID: id, Name: id, Type: llm.ServiceTypeOpenAI, APIKey: key}
-}
-
-func enabled(serviceID string) config.DictationConfig {
-	return config.DictationConfig{Enabled: true, ServiceID: serviceID, Model: "gpt-live-transcribe"}
-}
-
-func newTestService(cfg *config.Container, license LicenseChecker, access AccessChecker) (*Service, *minterFactory) {
-	factory := &minterFactory{}
-	svc := New(cfg, license, access, nopLogger{})
-	svc.newMinter = factory.build
-	return svc, factory
-}
-
-// The outcomes reachable through the API are covered there; these are the
-// nil-dependency cases the server never wires.
-func TestNilCheckersFailClosed(t *testing.T) {
+func TestNilDependenciesFailClosed(t *testing.T) {
 	tests := []struct {
 		name       string
 		license    LicenseChecker
 		access     AccessChecker
+		users      UserGetter
+		leases     LeaseStore
 		wantReason string
 		wantErr    error
 	}{
-		{name: "nil license checker", access: allowAll, wantReason: ReasonLicense, wantErr: enterprise.ErrNotLicensed},
-		{name: "nil access checker", license: newLevelChecker(enterprise.LevelEnterprise), wantReason: ReasonAccessDenied, wantErr: ErrAccessDenied},
+		{name: "nil license checker", access: allowAll, users: regularUser, leases: newMemoryLeases(), wantReason: ReasonLicense, wantErr: enterprise.ErrNotLicensed},
+		{name: "nil access checker", license: levelChecker{enterprise.LevelEnterprise}, users: regularUser, leases: newMemoryLeases(), wantReason: ReasonUnavailable, wantErr: ErrAccessDenied},
+		{name: "nil user getter", license: levelChecker{enterprise.LevelEnterprise}, access: allowAll, leases: newMemoryLeases(), wantReason: ReasonUnavailable, wantErr: ErrAccessDenied},
+		{name: "nil lease store", license: levelChecker{enterprise.LevelEnterprise}, access: allowAll, users: regularUser, wantErr: ErrMisconfigured},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Container{}
 			setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
-			svc, factory := newTestService(cfg, tt.license, tt.access)
+			svc := New(cfg, tt.license, tt.access, tt.users, tt.leases, nopLogger{})
+			built := 0
+			svc.newClient = func(llm.ServiceConfig) (callClient, error) { built++; return nil, assert.AnError }
 
-			avail := svc.Availability(context.Background(), testUserID)
-			assert.False(t, avail.Available)
-			assert.Equal(t, tt.wantReason, avail.Reason)
-
-			session, err := svc.CreateSession(context.Background(), testUserID)
+			if tt.wantReason != "" {
+				avail := svc.Availability(context.Background(), testUserID)
+				assert.False(t, avail.Available)
+				assert.Equal(t, tt.wantReason, avail.Reason)
+			}
+			session, err := svc.CreateSession(context.Background(), testUserID, "v=0\r\n")
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.Nil(t, session)
-			assert.Empty(t, factory.built, "no provider client is built for a denied request")
+			assert.Zero(t, built, "no call is attempted for a denied request")
 		})
 	}
 }
 
-func TestEveryMintUsesAndShutsDownItsOwnClient(t *testing.T) {
-	tests := []struct {
-		name    string
-		mintErr error
-		panics  bool
-		wantErr error
-	}{
-		{name: "success"},
-		{name: "provider error", mintErr: errors.New("upstream 500"), wantErr: ErrProvider},
-		{name: "provider panic", panics: true},
-	}
+func TestSessionLeases(t *testing.T) {
+	store := newMemoryLeases()
+	clock := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return clock }
+	// Two nodes share the store, as they share the KV store.
+	nodeA := &sessionLeases{store: store, max: 2, leaseTTL: 11 * time.Minute, now: now}
+	nodeB := &sessionLeases{store: store, max: 2, leaseTTL: 11 * time.Minute, now: now}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Container{}
-			setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-1"))
-			svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
-			factory.mintErr = tt.mintErr
-			factory.panics = tt.panics
+	require.NoError(t, nodeA.acquire(testUserID, "s1"))
+	require.NoError(t, nodeB.acquire(testUserID, "s2"))
+	assert.ErrorIs(t, nodeA.acquire(testUserID, "s3"), errConcurrentLimit, "the cap holds across nodes")
+	require.NoError(t, nodeA.acquire("othe12345678901234567890ab", "s4"), "the cap is per user")
 
-			mint := func(userID string) error {
-				if tt.panics {
-					assert.Panics(t, func() { _, _ = svc.CreateSession(context.Background(), userID) })
-					return nil
-				}
-				_, err := svc.CreateSession(context.Background(), userID)
-				return err
-			}
+	require.NoError(t, nodeA.release(testUserID, "s2"), "any node can release a lease")
+	require.NoError(t, nodeB.acquire(testUserID, "s5"))
+	assert.ErrorIs(t, nodeB.acquire(testUserID, "s6"), errConcurrentLimit)
 
-			err := mint(testUserID)
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-			} else {
-				assert.NoError(t, err)
-			}
-			setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-2"))
-			_ = mint("othe12345678901234567890ab")
+	// A node that stops without releasing leaves leases that expire by this
+	// server's clock.
+	clock = clock.Add(11*time.Minute + time.Second)
+	require.NoError(t, nodeA.acquire(testUserID, "s7"))
+}
 
-			require.Len(t, factory.built, 2)
-			assert.Equal(t, "key-1", factory.built[0].svc.APIKey)
-			assert.Equal(t, "key-2", factory.built[1].svc.APIKey, "a mint uses the config current at its checks")
-			for i, m := range factory.built {
-				assert.True(t, isShutdown(m), "client %d was not shut down after its mint", i)
+func TestSessionLeasesConcurrentAcquire(t *testing.T) {
+	store := newMemoryLeases()
+	leases := &sessionLeases{store: store, max: 2, leaseTTL: time.Minute, now: time.Now}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	acquired := 0
+	for range 8 {
+		wg.Go(func() {
+			if leases.acquire(testUserID, model.NewId()) == nil {
+				mu.Lock()
+				acquired++
+				mu.Unlock()
 			}
 		})
 	}
+	wg.Wait()
+	assert.LessOrEqual(t, acquired, 2, "compare-and-set keeps the cap under races")
 }
 
-func TestConfigChangeDuringAccessCheck(t *testing.T) {
-	tests := []struct {
-		name    string
-		change  func(cfg *config.Container)
-		wantErr error
-	}{
-		{
-			name: "dictation disabled",
-			change: func(cfg *config.Container) {
-				setConfig(cfg, config.DictationConfig{}, openAIService("openai1", "key-1"))
-			},
-			wantErr: ErrDisabled,
-		},
-		{
-			name:    "service key replaced",
-			change:  func(cfg *config.Container) { setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-2")) },
-			wantErr: ErrMisconfigured,
-		},
-		{
-			name: "unrelated setting changed",
-			change: func(cfg *config.Container) {
-				c := cfg.Config().Clone()
-				c.AgentVersionsToKeep = 7
-				cfg.Update(c)
-			},
-		},
+func TestRateLimiter(t *testing.T) {
+	clock := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	l := newRateLimiter()
+	l.now = func() time.Time { return clock }
+
+	for range sessionStartsPerWindow {
+		require.True(t, l.allow(testUserID))
+		clock = clock.Add(time.Second)
 	}
+	assert.False(t, l.allow(testUserID))
+	assert.True(t, l.allow("othe12345678901234567890ab"), "limits are per user")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Container{}
-			setConfig(cfg, enabled("openai1"), openAIService("openai1", "key-1"))
-			var svc *Service
-			changeDuringCheck := accessFunc(func(context.Context, string, string) error {
-				tt.change(cfg)
-				svc.Reconcile()
-				return nil
-			})
-			svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), changeDuringCheck)
-
-			session, err := svc.CreateSession(context.Background(), testUserID)
-
-			if tt.wantErr == nil {
-				require.NoError(t, err)
-				assert.NotNil(t, session)
-				return
-			}
-			assert.ErrorIs(t, err, tt.wantErr)
-			assert.Nil(t, session)
-			assert.Empty(t, factory.built, "no client is built from the config read before the change")
-		})
-	}
-}
-
-func TestPanickingMintsDoNotHoldKeySlots(t *testing.T) {
-	cfg := &config.Container{}
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
-	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
-
-	factory.panics = true
-	for range maxUnexpiredKeys {
-		assert.Panics(t, func() { _, _ = svc.CreateSession(context.Background(), testUserID) })
-	}
-	factory.panics = false
-
-	_, err := svc.CreateSession(context.Background(), testUserID)
-	assert.NoError(t, err)
+	clock = clock.Add(sessionStartWindow)
+	assert.True(t, l.allow(testUserID))
 }
 
 // blockingLicense blocks its first Check until released, to hold one
@@ -279,7 +206,7 @@ func TestConcurrentReconcilesKeepTheLatestState(t *testing.T) {
 	cfg := &config.Container{}
 	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
 	license := &blockingLicense{entered: make(chan struct{}), release: make(chan struct{})}
-	svc := New(cfg, nil, allowAll, nopLogger{})
+	svc := New(cfg, nil, allowAll, regularUser, newMemoryLeases(), nopLogger{})
 	svc.license = license
 
 	slowDone := make(chan struct{})
@@ -306,108 +233,4 @@ func TestConcurrentReconcilesKeepTheLatestState(t *testing.T) {
 	svc.mu.Lock()
 	defer svc.mu.Unlock()
 	assert.False(t, svc.siteState.Enabled, "the state from the earlier config must not overwrite the later one")
-}
-
-func TestCreateSessionProviderFailure(t *testing.T) {
-	cfg := &config.Container{}
-	setConfig(cfg, enabled("openai1"), openAIService("openai1", "k"))
-	svc, factory := newTestService(cfg, newLevelChecker(enterprise.LevelEnterprise), allowAll)
-	factory.mintErr = errors.New("upstream 500")
-
-	for range maxUnexpiredKeys + 1 {
-		_, err := svc.CreateSession(context.Background(), testUserID)
-		assert.ErrorIs(t, err, ErrProvider, "a failed mint must not hold a key slot")
-	}
-}
-
-func TestRateLimiter(t *testing.T) {
-	session := func(expiresIn time.Duration, now time.Time) *bifrost.TranscriptionSession {
-		return &bifrost.TranscriptionSession{ExpiresAt: now.Add(expiresIn).UnixMilli(), KeyExpiresAt: now.Add(expiresIn).UnixMilli()}
-	}
-
-	tests := []struct {
-		name string
-		run  func(t *testing.T, l *rateLimiter, clock *time.Time)
-	}{
-		{
-			name: "unexpired keys are capped",
-			run: func(t *testing.T, l *rateLimiter, clock *time.Time) {
-				for range maxUnexpiredKeys {
-					release, ok := l.reserve(testUserID)
-					require.True(t, ok)
-					release(session(time.Minute, *clock))
-				}
-				_, ok := l.reserve(testUserID)
-				assert.False(t, ok)
-
-				_, ok = l.reserve("othe12345678901234567890ab")
-				assert.True(t, ok, "limits are per user")
-
-				*clock = clock.Add(time.Minute + time.Second)
-				_, ok = l.reserve(testUserID)
-				assert.True(t, ok, "expired keys free their slot")
-			},
-		},
-		{
-			name: "mints per window are capped",
-			run: func(t *testing.T, l *rateLimiter, clock *time.Time) {
-				for range mintsPerWindow {
-					release, ok := l.reserve(testUserID)
-					require.True(t, ok)
-					release(session(time.Second, *clock))
-					*clock = clock.Add(2 * time.Second)
-				}
-				_, ok := l.reserve(testUserID)
-				assert.False(t, ok)
-
-				*clock = clock.Add(mintWindow)
-				_, ok = l.reserve(testUserID)
-				assert.True(t, ok)
-			},
-		},
-		{
-			name: "keys are counted until the provider's expiry, not the reported one",
-			run: func(t *testing.T, l *rateLimiter, clock *time.Time) {
-				for range maxUnexpiredKeys {
-					release, ok := l.reserve(testUserID)
-					require.True(t, ok)
-					release(&bifrost.TranscriptionSession{
-						ExpiresAt:    clock.Add(time.Second).UnixMilli(),
-						KeyExpiresAt: clock.Add(40 * time.Second).UnixMilli(),
-					})
-				}
-				*clock = clock.Add(20 * time.Second)
-				_, ok := l.reserve(testUserID)
-				assert.False(t, ok, "keys the provider still honors hold their slots")
-			},
-		},
-		{
-			name: "failed mints release their key slot",
-			run: func(t *testing.T, l *rateLimiter, _ *time.Time) {
-				for range maxUnexpiredKeys + 1 {
-					release, ok := l.reserve(testUserID)
-					require.True(t, ok)
-					release(nil)
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			clock := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-			l := newRateLimiter()
-			l.now = func() time.Time { return clock }
-			tt.run(t, l, &clock)
-		})
-	}
-}
-
-func isShutdown(m *fakeMinter) bool {
-	select {
-	case <-m.shutdown:
-		return true
-	default:
-		return false
-	}
 }

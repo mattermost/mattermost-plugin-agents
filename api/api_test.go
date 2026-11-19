@@ -82,10 +82,6 @@ type testConfigImpl struct {
 	dictation                       config.DictationConfig
 }
 
-func (tc *testConfigImpl) Dictation() config.DictationConfig {
-	return tc.dictation
-}
-
 func (tc *testConfigImpl) Config() *config.Config {
 	return &config.Config{Services: slices.Clone(tc.services), Dictation: tc.dictation}
 }
@@ -1108,7 +1104,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		autoReplyStore,
 		newPassthroughAccessChecker(),
 	)
-	api.SetDictationService(dictation.New(cfg, enterprise.NewLicenseChecker(client), api.accessChecker, &client.Log))
+	api.SetDictationService(dictation.New(cfg, enterprise.NewLicenseChecker(client), api.accessChecker, pluginUserGetter{client}, newMemoryLeaseStore(), &client.Log))
 
 	return &TestEnvironment{
 		api:               api,

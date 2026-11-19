@@ -233,10 +233,6 @@ func (c *Container) EnableAmbientAutoReply() bool {
 	return c.Config().EnableAmbientAutoReply
 }
 
-func (c *Container) Dictation() DictationConfig {
-	return c.Config().Dictation
-}
-
 func (c *Container) AllowNativeWebSearchInChannels() bool {
 	return c.Config().AllowNativeWebSearchInChannels
 }

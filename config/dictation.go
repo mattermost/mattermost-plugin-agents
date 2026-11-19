@@ -46,12 +46,13 @@ func (c *Config) DictationService() (llm.ServiceConfig, error) {
 	if svc.APIKey == "" {
 		return llm.ServiceConfig{}, fmt.Errorf("%w: service %q has no API key", ErrInvalidDictationConfig, svc.Name)
 	}
-	// Browsers receive a URL derived from the API URL, so it must not carry
-	// credentials or anything but a scheme, host and path.
+	// The server sends the service key to this URL and derives the sideband
+	// WebSocket URL from it.
 	if svc.APIURL != "" {
 		u, err := url.Parse(svc.APIURL)
-		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
-			return llm.ServiceConfig{}, fmt.Errorf("%w: service %q needs an API URL with only a scheme, host and path", ErrInvalidDictationConfig, svc.Name)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Opaque != "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return llm.ServiceConfig{}, fmt.Errorf("%w: service %q needs an absolute http or https API URL with only a host and path", ErrInvalidDictationConfig, svc.Name)
 		}
 	}
 	if strings.TrimSpace(d.Model) == "" {

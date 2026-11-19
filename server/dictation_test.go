@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
@@ -34,11 +36,6 @@ func (m *mutableLicense) Check(capability enterprise.Capability) error {
 type allowAllServices struct{}
 
 func (allowAllServices) CanUseService(context.Context, string, string) error { return nil }
-
-type nopDictationLogger struct{}
-
-func (nopDictationLogger) Info(string, ...any) {}
-func (nopDictationLogger) Warn(string, ...any) {}
 
 func TestDictationAvailabilityChangePublishesWebsocketEvent(t *testing.T) {
 	openAI := llm.ServiceConfig{ID: "openai1", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "k"}
@@ -100,7 +97,7 @@ func TestDictationAvailabilityChangePublishesWebsocketEvent(t *testing.T) {
 			p.configuration.Update(enabledCfg)
 			license := &mutableLicense{level: enterprise.LevelEnterprise}
 			ws := &recordingPublisher{}
-			p.newDictationService(license, allowAllServices{}, nopDictationLogger{}, ws)
+			p.newDictationService(pluginapi.NewClient(&plugintest.API{}, nil), license, allowAllServices{}, ws)
 
 			tt.change(p, license)
 

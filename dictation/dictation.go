@@ -1,9 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Package dictation mints short-lived browser sessions for live dictation.
-// The browser streams audio straight to the provider; the server only
-// decides who may dictate and holds the provider credentials.
+// Package dictation brokers live dictation calls. The browser's audio goes
+// straight to the provider over WebRTC; the server creates each call with
+// its own key and the admin's session settings, watches it over a sideband
+// connection, and ends it when it breaks policy or runs too long.
 package dictation
 
 import (
@@ -12,7 +13,11 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -22,20 +27,44 @@ import (
 // TransportWebRTC is the only browser transport in v1.
 const TransportWebRTC = "webrtc"
 
-// Reasons reported by Availability when dictation is not available.
+// Reasons reported by Availability when dictation is not available. A
+// misconfigured service and a denied user both report ReasonUnavailable, so
+// users learn nothing about the configuration or access policies.
 const (
-	ReasonDisabled      = "disabled"
-	ReasonLicense       = "license"
-	ReasonMisconfigured = "misconfigured"
-	ReasonAccessDenied  = "access_denied"
+	ReasonDisabled    = "disabled"
+	ReasonLicense     = "license"
+	ReasonUnavailable = "unavailable"
+)
+
+// Reasons sent with a session-ended notification for calls the server ends.
+const (
+	EndReasonDurationLimit = "duration_limit"
+	EndReasonPolicy        = "policy"
+	EndReasonShutdown      = "shutdown"
+)
+
+const (
+	// DefaultMaxSessionDuration is how long the server lets a call run.
+	DefaultMaxSessionDuration = 10 * time.Minute
+	// maxConcurrentSessions is the per-user cap across every node.
+	maxConcurrentSessions = 2
+	// leaseSlack lets a lease outlive its session's duration cap while the
+	// hangup completes.
+	leaseSlack     = time.Minute
+	hangupTimeout  = 10 * time.Second
+	shutdownWait   = 15 * time.Second
+	callSetupLimit = 20 * time.Second
 )
 
 var (
-	ErrDisabled      = errors.New("dictation is disabled")
-	ErrMisconfigured = errors.New("the dictation service is not configured correctly")
-	ErrAccessDenied  = errors.New("you do not have access to the dictation service")
-	ErrRateLimited   = errors.New("too many dictation sessions; try again shortly")
-	ErrProvider      = errors.New("the transcription provider could not start a session")
+	ErrDisabled         = errors.New("dictation is disabled")
+	ErrMisconfigured    = errors.New("the dictation service is not configured correctly")
+	ErrAccessDenied     = errors.New("you do not have access to dictation")
+	ErrRateLimited      = errors.New("too many dictation sessions started; try again shortly")
+	ErrConcurrentLimit  = errors.New("too many active dictation sessions")
+	ErrProvider         = errors.New("the transcription provider could not start a session")
+	ErrInvalidOffer     = errors.New("the request needs an SDP offer")
+	ErrSessionsShutdown = errors.New("dictation is shutting down")
 )
 
 // Config is the configuration the service reads on every call.
@@ -53,19 +82,44 @@ type AccessChecker interface {
 	CanUseService(ctx context.Context, userID, serviceID string) error
 }
 
-// Logger logs mint outcomes. Never pass secrets or provider responses.
+// UserGetter looks up the requesting user.
+type UserGetter interface {
+	GetUser(userID string) (*model.User, error)
+}
+
+// Logger logs session outcomes. Never pass secrets, provider responses or
+// sideband event content.
 type Logger interface {
 	Info(message string, keyValuePairs ...any)
 	Warn(message string, keyValuePairs ...any)
 }
 
-type sessionMinter interface {
-	CreateTranscriptionSession(ctx context.Context, req bifrost.TranscriptionSessionRequest) (*bifrost.TranscriptionSession, error)
-	Shutdown()
+// SessionEndNotifier tells userID that the server ended sessionID.
+type SessionEndNotifier func(userID, sessionID, reason string)
+
+type callClient interface {
+	CreateTranscriptionCall(ctx context.Context, offerSDP string, req bifrost.TranscriptionSessionRequest) (*bifrost.RealtimeCall, error)
+	Attach(ctx context.Context, callID string, req bifrost.TranscriptionSessionRequest) (sideband, error)
+	Hangup(ctx context.Context, callID string) error
 }
 
-func newBifrostMinter(svc llm.ServiceConfig) (sessionMinter, error) {
-	return bifrost.NewRealtimeSessionMinter(svc)
+type sideband interface {
+	Run(ctx context.Context) error
+	Close()
+}
+
+type bifrostCallClient struct{ *bifrost.RealtimeCallClient }
+
+func (c bifrostCallClient) Attach(ctx context.Context, callID string, req bifrost.TranscriptionSessionRequest) (sideband, error) {
+	return c.RealtimeCallClient.Attach(ctx, callID, req)
+}
+
+func newBifrostCallClient(svc llm.ServiceConfig) (callClient, error) {
+	c, err := bifrost.NewRealtimeCallClient(svc)
+	if err != nil {
+		return nil, err
+	}
+	return bifrostCallClient{c}, nil
 }
 
 // Availability tells the webapp whether to show the dictation button.
@@ -78,40 +132,80 @@ type Availability struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// Service decides who may dictate and mints their sessions.
-//
-// Each mint builds its own provider client and shuts it down afterwards
-// (about 2 ms and 400 KB), so no client outlives the config and license
-// checks it was built under.
+// Session is what the browser needs to finish connecting.
+type Session struct {
+	AnswerSDP          string `json:"sdp"`
+	SessionID          string `json:"sessionId"`
+	Provider           string `json:"provider"`
+	Model              string `json:"model"`
+	TurnDetection      string `json:"turnDetection"`
+	MaxDurationSeconds int    `json:"maxDurationSeconds"`
+}
+
+// Service decides who may dictate, creates their calls, and polices them.
 type Service struct {
-	config    Config
-	license   LicenseChecker
-	access    AccessChecker
-	log       Logger
-	limiter   *rateLimiter
-	newMinter func(llm.ServiceConfig) (sessionMinter, error)
+	config      Config
+	license     LicenseChecker
+	access      AccessChecker
+	users       UserGetter
+	log         Logger
+	limiter     *rateLimiter
+	leases      *sessionLeases
+	newClient   func(llm.ServiceConfig) (callClient, error)
+	maxDuration time.Duration
+	notifyEnd   SessionEndNotifier
+
+	// ctx ends every watched call when the service shuts down.
+	ctx      context.Context
+	cancel   context.CancelFunc
+	watchers sync.WaitGroup
 
 	// reconcileMu serializes Reconcile, so the last config or license change
 	// is the one whose state is kept.
 	reconcileMu sync.Mutex
 
-	mu sync.Mutex
+	mu       sync.Mutex
+	shutdown bool
 	// siteState is the user-independent availability last seen by
 	// Reconcile; onAvailabilityChange runs when it changes.
 	siteState            Availability
 	onAvailabilityChange func()
 }
 
-// New builds a dictation service. A nil license or access checker denies
-// every request.
-func New(cfg Config, license LicenseChecker, access AccessChecker, log Logger) *Service {
+// Option adjusts a Service.
+type Option func(*Service)
+
+// WithMaxSessionDuration overrides DefaultMaxSessionDuration.
+func WithMaxSessionDuration(d time.Duration) Option {
+	return func(s *Service) { s.maxDuration = d }
+}
+
+// WithSessionEndNotifier sets the notifier for calls the server ends.
+func WithSessionEndNotifier(n SessionEndNotifier) Option {
+	return func(s *Service) { s.notifyEnd = n }
+}
+
+// New builds a dictation service. A nil license checker, access checker,
+// user getter or lease store denies every request.
+func New(cfg Config, license LicenseChecker, access AccessChecker, users UserGetter, leases LeaseStore, log Logger, opts ...Option) *Service {
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
-		config:    cfg,
-		license:   license,
-		access:    access,
-		log:       log,
-		limiter:   newRateLimiter(),
-		newMinter: newBifrostMinter,
+		config:      cfg,
+		license:     license,
+		access:      access,
+		users:       users,
+		log:         log,
+		limiter:     newRateLimiter(),
+		newClient:   newBifrostCallClient,
+		maxDuration: DefaultMaxSessionDuration,
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if leases != nil {
+		s.leases = &sessionLeases{store: leases, max: maxConcurrentSessions, leaseTTL: s.maxDuration + leaseSlack, now: time.Now}
 	}
 	s.siteState = availabilityFor(s.resolve())
 	return s
@@ -130,17 +224,18 @@ func (s *Service) OnAvailabilityChange(f func()) {
 // on an unexpected error.
 func availabilityFor(r resolved, err error) Availability {
 	avail := Availability{Enabled: r.dictation.Enabled, Transport: TransportWebRTC}
-	if err != nil {
-		reason, ok := reasonFor(err)
-		if !ok {
-			reason = ReasonMisconfigured
-		}
-		avail.Reason = reason
-		return avail
+	switch {
+	case err == nil:
+		avail.Available = true
+		avail.Provider = r.service.Type
+		avail.Model = r.dictation.Model
+	case errors.Is(err, ErrDisabled):
+		avail.Reason = ReasonDisabled
+	case errors.Is(err, enterprise.ErrNotLicensed):
+		avail.Reason = ReasonLicense
+	default:
+		avail.Reason = ReasonUnavailable
 	}
-	avail.Available = true
-	avail.Provider = r.service.Type
-	avail.Model = r.dictation.Model
 	return avail
 }
 
@@ -149,6 +244,10 @@ func availabilityFor(r resolved, err error) Availability {
 type resolved struct {
 	dictation config.DictationConfig
 	service   llm.ServiceConfig
+}
+
+func (r resolved) request() bifrost.TranscriptionSessionRequest {
+	return bifrost.TranscriptionSessionRequest{Model: r.dictation.Model, Language: r.dictation.Language}
 }
 
 func (s *Service) checkLicense() error {
@@ -177,7 +276,26 @@ func (s *Service) resolve() (resolved, error) {
 	return r, nil
 }
 
+// checkUser denies guests, bots and deactivated accounts. A failed lookup
+// denies too.
+func (s *Service) checkUser(userID string) error {
+	if s.users == nil {
+		return ErrAccessDenied
+	}
+	user, err := s.users.GetUser(userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("%w: user lookup failed", ErrAccessDenied)
+	}
+	if user.IsGuest() || user.IsBot || user.DeleteAt != 0 {
+		return ErrAccessDenied
+	}
+	return nil
+}
+
 func (s *Service) checkAccess(ctx context.Context, userID, serviceID string) error {
+	if err := s.checkUser(userID); err != nil {
+		return err
+	}
 	if s.access == nil {
 		return ErrAccessDenied
 	}
@@ -196,24 +314,14 @@ func (s *Service) Availability(ctx context.Context, userID string) Availability 
 	return availabilityFor(r, err)
 }
 
-func reasonFor(err error) (string, bool) {
-	switch {
-	case errors.Is(err, ErrDisabled):
-		return ReasonDisabled, true
-	case errors.Is(err, enterprise.ErrNotLicensed):
-		return ReasonLicense, true
-	case errors.Is(err, ErrMisconfigured):
-		return ReasonMisconfigured, true
-	case errors.Is(err, ErrAccessDenied):
-		return ReasonAccessDenied, true
-	default:
-		return "", false
+// CreateSession creates a call for userID from the browser's SDP offer.
+// Every check runs on every call, so a license downgrade or config change
+// applies immediately. The sideband is attached before the answer is
+// returned, so the browser cannot change the session unobserved.
+func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*Session, error) {
+	if offerSDP == "" || len(offerSDP) > bifrost.MaxSDPBytes {
+		return nil, ErrInvalidOffer
 	}
-}
-
-// CreateSession mints a dictation session for userID. Every check runs on
-// every call, so a license downgrade or config change applies immediately.
-func (s *Service) CreateSession(ctx context.Context, userID string) (session *bifrost.TranscriptionSession, err error) {
 	r, err := s.resolve()
 	if err != nil {
 		return nil, err
@@ -222,47 +330,124 @@ func (s *Service) CreateSession(ctx context.Context, userID string) (session *bi
 		return nil, err
 	}
 	// The access check can take a while; a config or license change during
-	// it must not let the request mint with what it read before.
+	// it must not let the request use what it read before.
 	if current, recheckErr := s.resolve(); recheckErr != nil {
 		return nil, recheckErr
 	} else if !reflect.DeepEqual(current, r) {
 		return nil, fmt.Errorf("%w: the configuration changed during the request", ErrMisconfigured)
 	}
+	audit.AddParam(audit.RecordFromContext(ctx), audit.KeyServiceID, r.service.ID)
 
-	release, ok := s.limiter.reserve(userID)
-	if !ok {
+	if !s.limiter.allow(userID) {
 		return nil, ErrRateLimited
 	}
-	defer func() { release(session) }()
-
-	session, err = s.mint(ctx, r)
-	switch {
-	case errors.Is(err, errMinterBuild):
-		s.log.Warn("Failed to build the dictation session minter", "service_id", r.service.ID, "error", err.Error())
-		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
-	case err != nil:
-		s.log.Warn("Failed to mint a dictation session", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
-		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
+	if s.leases == nil {
+		return nil, fmt.Errorf("%w: no session store", ErrMisconfigured)
 	}
 
-	s.log.Info("Minted a dictation session", "user_id", userID, "service_id", r.service.ID, "model", r.dictation.Model)
+	sessionID := model.NewId()
+	if err = s.leases.acquire(userID, sessionID); err != nil {
+		if errors.Is(err, errConcurrentLimit) {
+			return nil, ErrConcurrentLimit
+		}
+		s.log.Warn("Failed to reserve a dictation session", "user_id", userID, "error", err.Error())
+		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
+	}
+	session, err := s.startCall(ctx, userID, sessionID, r, offerSDP)
+	if err != nil {
+		s.releaseLease(userID, sessionID)
+		return nil, err
+	}
 	return session, nil
 }
 
-var errMinterBuild = errors.New("failed to build the session minter")
-
-// mint shuts its client down on every exit, including a panic in the
-// provider call.
-func (s *Service) mint(ctx context.Context, r resolved) (*bifrost.TranscriptionSession, error) {
-	minter, err := s.newMinter(r.service)
+func (s *Service) startCall(ctx context.Context, userID, sessionID string, r resolved, offerSDP string) (*Session, error) {
+	client, err := s.newClient(r.service)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errMinterBuild, err)
+		s.log.Warn("Failed to build the dictation call client", "service_id", r.service.ID, "error", err.Error())
+		return nil, fmt.Errorf("%w: %w", ErrMisconfigured, err)
 	}
-	defer minter.Shutdown()
-	return minter.CreateTranscriptionSession(ctx, bifrost.TranscriptionSessionRequest{
-		Model:    r.dictation.Model,
-		Language: r.dictation.Language,
-	})
+
+	setupCtx, cancel := context.WithTimeout(ctx, callSetupLimit)
+	defer cancel()
+	req := r.request()
+	call, err := client.CreateTranscriptionCall(setupCtx, offerSDP, req)
+	if err != nil {
+		s.log.Warn("Failed to create a dictation call", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
+		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
+	}
+
+	// From here a call exists on the provider: every failure hangs it up.
+	sb, err := client.Attach(setupCtx, call.CallID, req)
+	if err != nil {
+		s.log.Warn("Failed to attach to a dictation call; hanging up", "user_id", userID, "service_id", r.service.ID, "error", err.Error())
+		s.hangup(client, call.CallID, userID)
+		return nil, fmt.Errorf("%w: %w", ErrProvider, err)
+	}
+
+	s.mu.Lock()
+	if s.shutdown {
+		s.mu.Unlock()
+		sb.Close()
+		s.hangup(client, call.CallID, userID)
+		return nil, ErrSessionsShutdown
+	}
+	s.watchers.Add(1)
+	s.mu.Unlock()
+	go s.watch(client, sb, call.CallID, userID, sessionID)
+
+	s.log.Info("Started a dictation session", "user_id", userID, "service_id", r.service.ID, "session_id", sessionID, "model", r.dictation.Model)
+	return &Session{
+		AnswerSDP:          call.AnswerSDP,
+		SessionID:          sessionID,
+		Provider:           r.service.Type,
+		Model:              r.dictation.Model,
+		TurnDetection:      call.TurnDetection,
+		MaxDurationSeconds: int(s.maxDuration / time.Second),
+	}, nil
+}
+
+// watch polices one call until it ends, then frees its lease.
+func (s *Service) watch(client callClient, sb sideband, callID, userID, sessionID string) {
+	defer s.watchers.Done()
+	defer s.releaseLease(userID, sessionID)
+
+	runCtx, cancel := context.WithTimeout(s.ctx, s.maxDuration)
+	defer cancel()
+	err := sb.Run(runCtx)
+
+	reason := ""
+	switch {
+	case errors.Is(err, bifrost.ErrSessionChanged):
+		reason = EndReasonPolicy
+	case s.ctx.Err() != nil:
+		reason = EndReasonShutdown
+	case errors.Is(err, context.DeadlineExceeded):
+		reason = EndReasonDurationLimit
+	}
+	if reason == "" {
+		s.log.Info("Dictation session ended", "user_id", userID, "session_id", sessionID)
+		return
+	}
+	s.log.Info("Ending a dictation session", "user_id", userID, "session_id", sessionID, "reason", reason)
+	s.hangup(client, callID, userID)
+	if s.notifyEnd != nil {
+		s.notifyEnd(userID, sessionID, reason)
+	}
+}
+
+func (s *Service) hangup(client callClient, callID, userID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
+	defer cancel()
+	if err := client.Hangup(ctx, callID); err != nil {
+		s.log.Warn("Failed to hang up a dictation call", "user_id", userID, "error", err.Error())
+	}
+}
+
+func (s *Service) releaseLease(userID, sessionID string) {
+	if err := s.leases.release(userID, sessionID); err != nil {
+		s.log.Warn("Failed to release a dictation session; it expires on its own", "user_id", userID, "session_id", sessionID, "error", err.Error())
+	}
 }
 
 // Reconcile reports an availability change. Call it on config and license
@@ -281,5 +466,25 @@ func (s *Service) Reconcile() {
 
 	if changed && notify != nil {
 		notify()
+	}
+}
+
+// Shutdown hangs up every call this node watches and waits, up to a bound,
+// for them to end. Call it on plugin deactivation.
+func (s *Service) Shutdown() {
+	s.mu.Lock()
+	s.shutdown = true
+	s.mu.Unlock()
+	s.cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.watchers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(shutdownWait):
+		s.log.Warn("Timed out hanging up dictation sessions on shutdown")
 	}
 }
