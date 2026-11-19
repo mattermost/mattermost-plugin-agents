@@ -60,7 +60,7 @@ type UpdateGroupArgs struct {
 	DisplayName    *string `json:"display_name,omitempty" jsonschema:"New display name"`
 	Name           *string `json:"name,omitempty" jsonschema:"New mention handle (lowercase letters, numbers, periods, dashes, underscores),maxLength=64"`
 	Description    *string `json:"description,omitempty" jsonschema:"New description. Pass an empty string to clear it,maxLength=1024"`
-	AllowReference *bool   `json:"allow_reference,omitempty" jsonschema:"Whether the group can be mentioned with @name. Custom groups must stay mentionable. Enabling mentions keeps the group's existing handle"`
+	AllowReference *bool   `json:"allow_reference,omitempty" jsonschema:"Whether the group can be @mentioned. Custom groups must stay mentionable. Omit name to keep the stored handle; a group with no handle needs name. A supplied name can rename the group"`
 }
 
 const (
@@ -71,7 +71,7 @@ const (
 	getTeamGroupsDescription           = "Get the groups synced to a team. Parameters: team_id (required), page, per_page."
 	getUsersInGroupChannelsDescription = "Get the members of given group-message (GM) channels. Parameters: channel_ids (required list)."
 	createGroupDescription             = "Create a custom user group. Parameters: display_name (required), name (required mention handle), description (optional). Custom groups are mentionable. LDAP and plugin-synced groups cannot be created this way."
-	updateGroupDescription             = "Update a user group's display name, mention handle, description, or whether it can be @mentioned. Parameters: group_id (required), plus any of display_name, name, description, allow_reference. Custom groups must stay mentionable. Enabling mentions keeps the group's existing handle. Does not add or remove members."
+	updateGroupDescription             = "Update a user group's display name, mention handle, description, or whether it can be @mentioned. Parameters: group_id (required), plus any of display_name, name, description, allow_reference. Custom groups must stay mentionable. Omit name to keep the stored handle; a group with no handle needs name to enable mentions. A supplied name can rename the group. Does not add or remove members."
 )
 
 // getGroupTools returns the group tools.
@@ -305,6 +305,16 @@ func keepStoredMentionHandle(mcpContext *MCPToolContext, args UpdateGroupArgs, p
 		return "", nil
 	}
 	if args.Name != nil {
+		// Repeating the handle of a group that is already mentionable makes
+		// Mattermost's duplicate-name check find the group itself and reject
+		// the whole patch, including unrelated field changes.
+		if group.AllowReference && *args.Name == group.GetName() {
+			patch.Name = nil
+			patch.AllowReference = nil
+			if patch.DisplayName == nil && patch.Description == nil {
+				return fmt.Sprintf("Group '%s' (ID: %s) is already mentionable; the mention handle was left unchanged", group.DisplayName, group.Id), nil
+			}
+		}
 		return "", nil
 	}
 	if group.GetName() == "" {

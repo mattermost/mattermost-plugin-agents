@@ -198,7 +198,7 @@ The 123 tools of the built-in Mattermost MCP server, each marked read-only or st
 | `get_team_groups` | Read-only | Get the groups synced to a team |
 | `get_users_in_group_channels` | Read-only | Get the members of given group-message (GM) channels |
 | `create_group` | Changes state | Create a mentionable custom user group with a display name and a mention handle. Can't create LDAP or plugin-synced groups |
-| `update_group` | Changes state | Update a group's display name, mention handle, description, or whether it can be @mentioned. Custom groups cannot turn mentions off. Enabling mentions keeps the existing handle. Doesn't change membership |
+| `update_group` | Changes state | Update a group's display name, mention handle, description, or whether it can be @mentioned. Custom groups cannot turn mentions off. Omit the handle to keep the stored one; a group with no handle needs one before mentions can be enabled. Supplying a handle can rename the group. Doesn't change membership |
 
 ## Roles and permissions
 

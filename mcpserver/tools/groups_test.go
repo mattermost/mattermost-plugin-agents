@@ -195,6 +195,7 @@ func TestToolUpdateGroup(t *testing.T) {
 		wantDisplay  string
 		wantDescNil  bool
 		wantDesc     *string
+		wantExact    bool
 	}{
 		{
 			name:        "patches supplied fields",
@@ -206,10 +207,10 @@ func TestToolUpdateGroup(t *testing.T) {
 			wantDescNil: true,
 		},
 		{
-			name:     "clears description",
-			args:     UpdateGroupArgs{Description: &cleared},
-			wantText: "Successfully updated group",
-			wantDesc: &cleared,
+			name:      "clears description",
+			args:      UpdateGroupArgs{Description: &cleared},
+			wantText:  "Successfully updated group",
+			wantExact: true,
 		},
 		{
 			name: "enabling mentions keeps the stored handle",
@@ -250,6 +251,32 @@ func TestToolUpdateGroup(t *testing.T) {
 			wantNameNil:  true,
 			wantAllowNil: true,
 			wantDisplay:  displayName,
+		},
+		{
+			name: "repeating the current handle still applies other fields",
+			stored: &model.Group{
+				Name:           &name,
+				DisplayName:    "Engineering",
+				Source:         model.GroupSourceCustom,
+				AllowReference: true,
+			},
+			args:         UpdateGroupArgs{Name: &name, AllowReference: &allow, Description: &cleared},
+			wantText:     "Successfully updated group",
+			wantNameNil:  true,
+			wantAllowNil: true,
+			wantDesc:     &cleared,
+		},
+		{
+			name: "repeating only the current handle does not patch",
+			stored: &model.Group{
+				Name:           &name,
+				DisplayName:    displayName,
+				Source:         model.GroupSourceCustom,
+				AllowReference: true,
+			},
+			args:        UpdateGroupArgs{Name: &name, AllowReference: &allow},
+			wantNoPatch: true,
+			wantText:    "already mentionable",
 		},
 		{
 			name: "custom group cannot turn mentions off",
@@ -347,6 +374,10 @@ func TestToolUpdateGroup(t *testing.T) {
 				return
 			}
 			require.NotNil(t, got)
+			if tt.wantExact {
+				assert.Equal(t, model.GroupPatch{Description: &cleared}, *got)
+				return
+			}
 			if tt.wantNameNil {
 				assert.Nil(t, got.Name)
 			} else if tt.wantName != "" {
