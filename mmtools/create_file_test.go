@@ -53,6 +53,7 @@ func TestCreateFileToolHTMLArtifactDescription(t *testing.T) {
 			tool := NewCreateFileTool(nil, tt.htmlArtifacts)
 			require.True(t, strings.HasPrefix(tool.Description, createFileDescription))
 			require.Equal(t, tt.htmlArtifacts, strings.Contains(tool.Description, "window.mattermost.getCurrentUser()"))
+			require.Equal(t, tt.htmlArtifacts, strings.Contains(tool.Description, "window.mattermost.download("))
 			require.Equal(t, tt.htmlArtifacts, strings.Contains(tool.Description, "--mm-center-channel-bg"))
 		})
 	}
