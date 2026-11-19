@@ -17,6 +17,7 @@ import {getCustomPrompts, getPinnedPromptIds, isCustomPromptsLoaded, isPinnedPro
 import type {CustomPrompt} from '@/types';
 
 import {CHAT_CONTENT_MAX_WIDTH, HOST_COMPOSER_CONTAINER_CLASS, hostComposerInset} from './agent_chat_host_styles';
+import {AGENT_HIDDEN_COMPOSER_CONTROLS} from './host_composer_controls';
 import PinnedSkills from './pinned_skills';
 
 // Greeting pairs for the new-chat state. The titles are the prototype's
@@ -217,6 +218,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout}: AgentNewChatProps) =>
                             // Host agent mode: hide channel chrome for this composer only.
                             // Older servers ignore the prop.
                             agentMode={true}
+                            hiddenControls={AGENT_HIDDEN_COMPOSER_CONTROLS}
                         />
                     </Composer>
                 )}

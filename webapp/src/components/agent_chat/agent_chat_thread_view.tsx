@@ -14,6 +14,7 @@ import {useThreadProfiles} from './use_thread_profiles';
 import {useThreadScroll} from './use_thread_scroll';
 import {AGENT_CHAT_SURFACE, AgentChatSurfaceContext} from './agent_chat_surface_context';
 import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
+import {AGENT_HIDDEN_COMPOSER_CONTROLS} from './host_composer_controls';
 import type {AgentNewChatLayout} from './agent_new_chat';
 
 interface AgentChatThreadViewProps {
@@ -77,6 +78,7 @@ const AgentChatThreadView = ({rootId, agentName, layout, isThreadView, testId, v
                         // Host agent mode, forwarded to the reply composer.
                         // Older servers ignore the prop.
                         agentMode={true}
+                        hiddenControls={AGENT_HIDDEN_COMPOSER_CONTROLS}
                     />
                     <JumpToLatest
                         visible={scrolledUp}
