@@ -89,13 +89,13 @@ test.describe.serial('AI-generated link domain allowlist', () => {
         await expect(postText).not.toContainText('Blocked : https://evil.example.net/login');
     });
 
-    test('system console saves the allowlist, rejects invalid entries, and hides it while links are plain text', async ({ page }) => {
+    test('the Agents settings save the allowlist, rejects invalid entries, and hides it while links are plain text', async ({ page }) => {
         await setAllowedLinkDomains('');
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'general');
         await systemConsole.getFunctionsPanel().scrollIntoViewIfNeeded();
 
         const field = page.getByLabel('Allowed Link Domains (csv)');

@@ -1,6 +1,6 @@
 # Secure AI-generated links and HTML
 
-Two settings under **System Console > Plugins > Agents > AI Functions**, both off by default, decide whether agent replies can contain clickable links (with an optional domain allowlist) and run sandboxed HTML artifacts. A model can be steered by a prompt injection or a poisoned document into writing a link or HTML page that harms the reader.
+Two settings under **Agents > Settings > General**, both off by default, decide whether agent replies can contain clickable links (with an optional domain allowlist) and run sandboxed HTML artifacts. A model can be steered by a prompt injection or a poisoned document into writing a link or HTML page that harms the reader.
 
 ## Render AI-generated links
 

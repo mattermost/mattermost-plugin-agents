@@ -55,6 +55,10 @@ export type PolicyEditorProps = {
     // it cannot be created or saved. Used when attribute-based access is
     // not licensed.
     allowEdit?: boolean;
+
+    // Whether the policy can be removed. Independent of allowEdit, which is also
+    // false below the license level: turning a capability off is never gated.
+    allowRemove?: boolean;
 };
 
 // EditorMode is the user-selectable editor; 'unsupported' is the read-only
@@ -113,7 +117,7 @@ function policyClientFor(resourceType: PolicyResourceType) {
 const DELETE_POLICY_TITLE_ID = 'delete-access-policy-title';
 
 const PolicyEditorContent = (props: PolicyEditorProps) => {
-    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz, hideWhenEmpty, allowEdit = true} = props;
+    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz, hideWhenEmpty, allowEdit = true, allowRemove = true} = props;
     const intl = useIntl();
     const editors = getAccessControlEditors();
     const client = useMemo(() => policyClientFor(resourceType), [resourceType]);
@@ -381,7 +385,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                         destructive={true}
                         size='small'
                         onClick={() => setShowDeleteConfirm(true)}
-                        disabled={saving}
+                        disabled={saving || !allowRemove}
                     >
                         <FormattedMessage defaultMessage='Remove policy'/>
                     </Button>

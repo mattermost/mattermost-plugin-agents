@@ -7,7 +7,7 @@ Fix common Agents problems by symptom. Start with the Mattermost Server log, fil
 | Symptom | Cause and fix |
 |---|---|
 | The plugin won't enable and the log says "site URL not configured" | Set **Site URL** under **System Console > Environment > Web Server**. |
-| The Agents pane asks users to configure an LLM | No service is configured. Add one under **System Console > Plugins > Agents**. See [Configure LLM services](llm_services.md). |
+| The Agents pane asks users to configure an LLM | No service is configured. Add one under **Agents > Settings > AI services**. See [Configure LLM services](llm_services.md). |
 | A self-hosted model returns errors, or the agent never answers | The endpoint might not support the Responses API. For an OpenAI Compatible service, turn **Use Responses API** off. Also check that the **API URL** is reachable from the Mattermost Server process and that **Default model** matches a model the server exposes. See [Provider configuration](providers.md#openai-compatible-ollama-vllm-and-others). |
 | A self-hosted model ignores tools | The model might not support tool calling. Send a direct message that needs a tool and look for a tool call in the reply. If there is none, turn **Enable Tools** off for that agent. See [Verify a self-hosted model](providers.md#verify-a-self-hosted-model). |
 | A self-hosted model keeps calling tools without answering | Lower **Max tool turns** on the agent so it answers sooner, or turn **Enable Tools** off. |

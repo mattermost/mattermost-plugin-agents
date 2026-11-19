@@ -69,7 +69,7 @@ Migrated agents don't get native web search automatically. Turn it on in the age
 2. Upgrade to the latest v11.6 patch release and confirm Agents is enabled and healthy.
 3. Upgrade to v11.7.
 4. Watch the server logs for the migrations and the message `Migrated legacy config bots to self-service agents table`. The last appears only if bots existed.
-5. Open **System Console > Plugins > Agents** and select **Save** once. In v1 the embedded Mattermost MCP server was opt-in, and saving turns it on for a migrated configuration. Without this, agents have no Mattermost tools.
+5. Open **Agents > Settings** and select **Save** once. In v1 the embedded Mattermost MCP server was opt-in, and saving turns it on for a migrated configuration. Without this, agents have no Mattermost tools.
 6. Open the **Agents** page. Confirm each bot you recorded is there, with the same display name, username, and service. Open one and check its configuration, its **Access** tab, and that **Automatically enable all MCP tools** is on.
 
 **Plugin bundle on its own.**
@@ -90,7 +90,7 @@ Don't run only the down migrations. The v1 titles can't be recovered that way. R
 ## Verify
 
 - The plugin shows v2 enabled without errors in **Plugin Management**, and the logs show the migrations.
-- **System Console > Plugins > Agents > Model Context Protocol (MCP)** has no **Enable MCP Client** or **Enable Embedded Server** toggles.
+- **Agents > Settings > MCP servers** has no **Enable MCP Client** or **Enable Embedded Server** toggles.
 - If semantic search was on, **Embedding Search** shows healthy and no reindex job is stuck.
 
 In an HA cluster, check the logs on every node. If one node reports migration errors and another succeeds, stop and keep the logs. If migrations fail or agents don't appear, contact Mattermost Support with the server and plugin versions, the migration log lines, and whether the deployment is single-node or HA. You can also use the [issue tracker](https://github.com/mattermost/mattermost-plugin-agents/issues).
