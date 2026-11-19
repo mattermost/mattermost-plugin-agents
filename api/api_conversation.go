@@ -251,7 +251,7 @@ func turnsToResponse(
 				}
 				if message != stored {
 					blocks = conversation.WithTextContent(blocks, message)
-					if i == 0 && strings.TrimSpace(message) != strings.TrimSpace(withoutLeadingMention(stored)) {
+					if i == 0 && (!ok || strings.TrimSpace(message) != strings.TrimSpace(withoutLeadingMention(stored))) {
 						openingTextChanged = true
 					}
 				}
@@ -280,14 +280,12 @@ func turnsToResponse(
 
 // withoutLeadingMention drops the "@agent " the plugin puts in front of the
 // text of a turn it answers on its own (auto-reply, loop-in), which the post
-// itself never carried.
+// itself never carried. A bare mention, stored for a post with no text of its
+// own, leaves nothing.
 func withoutLeadingMention(text string) string {
 	if !strings.HasPrefix(text, "@") {
 		return text
 	}
-	_, rest, found := strings.Cut(text, " ")
-	if !found {
-		return text
-	}
+	_, rest, _ := strings.Cut(text, " ")
 	return rest
 }

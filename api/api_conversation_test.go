@@ -1623,6 +1623,33 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			wantTitle: "Padded title",
 		},
 		{
+			conversationID: "conv-bare-mention",
+			name:           "auto-reply thread whose post has no text keeps its title",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-bare-mention", "File only title", map[string]string{anchoredUserPostID: "@agent"},
+					[]*model.Post{livePost(anchoredUserPostID, "", "")})
+			},
+			status:    http.StatusOK,
+			texts:     []string{""},
+			wantTitle: "File only title",
+		},
+		{
+			conversationID: "conv-bare-mention-deleted",
+			name:           "title of a deleted post stored as a bare mention is blanked",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-bare-mention-deleted", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: "@agent"},
+					[]*model.Post{deletedPost(anchoredUserPostID, "", "")})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
 			name:           "non-member gets 403 and no turn text",
 			conversationID: "conv-nonmember",
 			userID:         testOtherUserID,
