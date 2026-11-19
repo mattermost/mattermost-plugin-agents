@@ -94,4 +94,7 @@ export interface DictationTransport {
 
     // No speech for the silence cap; the caller should stop.
     onIdle(handler: () => void): void;
+
+    // The microphone's RMS level (0 to 1), sampled while listening.
+    onLevel(handler: (level: number) => void): void;
 }

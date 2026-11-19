@@ -60,6 +60,12 @@ class FakeTransport implements DictationTransport {
         this.error = h;
     }
 
+    level: (level: number) => void = () => { /* set by hook */ };
+
+    onLevel(h: (level: number) => void) {
+        this.level = h;
+    }
+
     onIdle(h: () => void) {
         this.idle = h;
     }
@@ -179,21 +185,65 @@ describe('DictationButton', () => {
         expect(button().getAttribute('aria-label')).toBe('Start dictation');
         expect(button().getAttribute('aria-pressed')).toBe('false');
 
+        expect(screen.queryByTestId('dictation-getting-ready')).toBeNull();
+
         fireEvent.click(button());
         expect(button().getAttribute('data-status')).toBe('requesting_permission');
         expect(button().getAttribute('aria-label')).toBe('Stop dictation');
         expect(button().getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByTestId('dictation-getting-ready')).toBeTruthy();
+        expect(screen.getByRole('status').textContent).toBe('Getting ready. Allow microphone access if your browser asks.');
 
         act(() => transports[0].connecting());
         expect(button().getAttribute('data-status')).toBe('connecting');
-
+        expect(screen.getByTestId('dictation-getting-ready')).toBeTruthy();
+        expect(screen.getByRole('status').textContent).toBe('Getting ready. Wait before speaking.');
         await act(async () => transports[0].resolveStart());
         expect(button().getAttribute('data-status')).toBe('listening');
+        expect(screen.queryByTestId('dictation-getting-ready')).toBeNull();
+        expect(screen.getByRole('status').textContent).toBe('Listening. Speak now. Select to stop, or press Esc.');
 
         fireEvent.click(button());
         await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
         expect(transports[0].stop).toHaveBeenCalled();
         expect(button().getAttribute('aria-label')).toBe('Start dictation');
+        expect(screen.getByTestId('dictation-indicator').style.getPropertyValue('--dictation-level')).toBe('');
+        expect(screen.getByRole('status').textContent).toBe('');
+    });
+
+    test('the level ring follows the microphone level while listening', async () => {
+        const {transports} = renderButton({message: '', channelId: 'c1'});
+        fireEvent.click(button());
+
+        // Levels before listening are ignored: speech there isn't transcribed.
+        act(() => transports[0].level(0.5));
+        await act(async () => {
+            transports[0].connecting();
+            transports[0].resolveStart();
+        });
+        const ring = () => screen.getByTestId('dictation-indicator');
+        await new Promise((r) => setTimeout(r, 50));
+        expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.00');
+
+        act(() => transports[0].level(0.1));
+        await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.60'));
+
+        act(() => transports[0].level(0.5));
+        await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('1.00'));
+    });
+
+    test('with reduced motion the level ring stays still', async () => {
+        const matchMedia = window.matchMedia;
+        window.matchMedia = jest.fn((query: string) => ({matches: query.includes('reduce')})) as unknown as typeof window.matchMedia;
+        try {
+            const {transports} = renderButton({message: '', channelId: 'c1'});
+            await startListening(() => transports[0]);
+            act(() => transports[0].level(0.2));
+            await new Promise((r) => setTimeout(r, 50));
+            expect(screen.getByTestId('dictation-indicator').style.getPropertyValue('--dictation-level')).toBe('');
+        } finally {
+            window.matchMedia = matchMedia;
+        }
     });
 
     test('types the transcript at the caret as it grows', async () => {

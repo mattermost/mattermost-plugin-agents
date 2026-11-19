@@ -484,6 +484,18 @@ describe('WebRTCTranscriber', () => {
         expect(track.stop).toHaveBeenCalled();
     });
 
+    test('reports the microphone level on every sample', async () => {
+        const {deps, advance} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onLevel = jest.fn();
+        transcriber.onLevel(onLevel);
+        await transcriber.start();
+
+        advance(0.25, 100);
+        expect(onLevel).toHaveBeenCalledTimes(2);
+        expect(onLevel).toHaveBeenLastCalledWith(0.25);
+    });
+
     test('reports idle after 30 s of silence', async () => {
         const {deps, advance} = setup();
         const transcriber = new WebRTCTranscriber(deps);

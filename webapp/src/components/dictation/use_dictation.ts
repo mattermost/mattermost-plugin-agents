@@ -86,6 +86,10 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
     // one can't start while the previous transport tears down.
     const sessionRef = useRef<Session | null>(null);
 
+    // The live microphone level while listening, read by the level indicator
+    // once per frame rather than through state, so levels don't re-render.
+    const levelRef = useRef(0);
+
     // The host's updateText spreads the draft it captured at render time, so
     // every write must go through the latest one.
     const updateTextRef = useRef(updateText);
@@ -115,6 +119,7 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
             clearTimeout(session.capTimer);
         }
         setStatus('stopping');
+        levelRef.current = 0;
 
         // Stop delivers the last segment's final text through onTranscript.
         // A segment that didn't finalize in time keeps its streamed text.
@@ -171,6 +176,11 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         });
         transport.onError((err) => stopSession(session, {keepFinal: true, error: err.reason}));
         transport.onIdle(() => stopSession(session, {keepFinal: true}));
+        transport.onLevel((level) => {
+            if (session.phase === 'listening') {
+                levelRef.current = level;
+            }
+        });
 
         try {
             await transport.start();
@@ -245,5 +255,5 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
         }
     }, [stopSession]);
 
-    return {status, errorReason, toggle, active};
+    return {status, errorReason, toggle, active, levelRef};
 }

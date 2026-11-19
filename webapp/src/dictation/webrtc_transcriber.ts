@@ -113,6 +113,7 @@ export class WebRTCTranscriber implements DictationTransport {
     private transcriptHandler: (update: TranscriptUpdate) => void = () => { /* unset */ };
     private errorHandler: (error: DictationError) => void = () => { /* unset */ };
     private idleHandler: () => void = () => { /* unset */ };
+    private levelHandler: (level: number) => void = () => { /* unset */ };
     private connectingHandler: () => void = () => { /* unset */ };
 
     private stream: MediaStream | null = null;
@@ -145,6 +146,10 @@ export class WebRTCTranscriber implements DictationTransport {
 
     onError(handler: (error: DictationError) => void) {
         this.errorHandler = handler;
+    }
+
+    onLevel(handler: (level: number) => void) {
+        this.levelHandler = handler;
     }
 
     onIdle(handler: () => void) {
@@ -280,7 +285,9 @@ export class WebRTCTranscriber implements DictationTransport {
             onIdle: () => this.idleHandler(),
         }, this.deps.now());
         this.sampler = this.deps.setInterval(() => {
-            this.segmenter?.sample(meter.level(), this.deps.now());
+            const level = meter.level();
+            this.segmenter?.sample(level, this.deps.now());
+            this.levelHandler(level);
         }, LEVEL_SAMPLE_INTERVAL_MS);
     }
 
