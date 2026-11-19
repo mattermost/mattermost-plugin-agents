@@ -69,6 +69,10 @@ const AsyncMultiPicker = (props: AsyncMultiPickerProps) => {
         <Combobox
             multiple={true}
             filter={false}
+
+            // Compass Combobox no longer opens from focus alone. These pickers already search on an
+            // empty term, and focusing the field is how a result is chosen before any typing.
+            openOnFocus={true}
             value={props.selected.map((option) => option.value)}
             selectedOptions={props.selected}
             options={results}
