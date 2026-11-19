@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {createDictationSession} from '@/client';
+import {createDictationSession, endDictationSession} from '@/client';
 
 import {Segmenter, rmsLevel} from './segmenter';
 import {onDictationSessionEnded} from './session_events';
@@ -36,7 +36,8 @@ export type LevelMeter = {
 
 export type TranscriberDeps = {
     getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-    createSession: (offerSDP: string) => Promise<DictationSession>;
+    createSession: (offerSDP: string, signal: AbortSignal) => Promise<DictationSession>;
+    endSession: (sessionId: string) => Promise<void>;
     createPeerConnection: () => RTCPeerConnection;
     createLevelMeter: () => LevelMeter;
     now: () => number;
@@ -79,6 +80,7 @@ export function createAnalyserLevelMeter(): LevelMeter {
 export const browserTranscriberDeps = (): TranscriberDeps => ({
     getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
     createSession: createDictationSession,
+    endSession: endDictationSession,
     createPeerConnection: () => new RTCPeerConnection(),
     createLevelMeter: createAnalyserLevelMeter,
     now: () => Date.now(),
@@ -147,6 +149,12 @@ export class WebRTCTranscriber implements DictationTransport {
 
     private unsubscribeSessionEnded: (() => void) | null = null;
     private lostTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Aborts a session request still in flight when dictation stops.
+    private readonly connectAbort = new AbortController();
+
+    // Ended on release so the slot frees before the provider sees the peer close.
+    private sessionId: string | null = null;
 
     constructor(deps: TranscriberDeps = browserTranscriberDeps()) {
         this.deps = deps;
@@ -252,16 +260,26 @@ export class WebRTCTranscriber implements DictationTransport {
 
         let session: DictationSession;
         try {
-            session = await this.deps.createSession(offer.sdp ?? '');
+            session = await this.deps.createSession(offer.sdp ?? '', this.connectAbort.signal);
         } catch (err) {
+            this.throwIfStopped();
             throw new DictationError(errorReasonForStatus((err as {status_code?: number})?.status_code));
         }
+        if (typeof session?.sessionId === 'string' && session.sessionId) {
+            this.sessionId = session.sessionId;
+
+            // A stop that raced the response released before this id was known.
+            if (this.stopped) {
+                this.endSession();
+            }
+        }
         this.throwIfStopped();
-        if (typeof session?.sdp !== 'string' || !session.sdp || typeof session.sessionId !== 'string' || !session.sessionId) {
+        if (typeof session?.sdp !== 'string' || !session.sdp || !this.sessionId) {
             throw new DictationError('provider_unreachable');
         }
         this.clientCommits = session.turnDetection === 'none';
-        this.unsubscribeSessionEnded = onDictationSessionEnded(session.sessionId, (reason) => {
+        this.unsubscribeSessionEnded = onDictationSessionEnded(this.sessionId, (reason) => {
+            this.sessionId = null;
             this.fail(new DictationError(errorReasonForSessionEnd(reason)));
         });
         await pc.setRemoteDescription({type: 'answer', sdp: session.sdp});
@@ -453,7 +471,17 @@ export class WebRTCTranscriber implements DictationTransport {
         this.release();
     }
 
+    private endSession() {
+        const sessionId = this.sessionId;
+        this.sessionId = null;
+        if (sessionId) {
+            this.deps.endSession(sessionId).catch(() => { /* best effort; the provider ends it once the peer closes */ });
+        }
+    }
+
     private release() {
+        this.connectAbort.abort();
+        this.endSession();
         if (this.lostTimer !== null) {
             clearTimeout(this.lostTimer);
             this.lostTimer = null;

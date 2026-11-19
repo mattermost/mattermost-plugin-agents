@@ -99,6 +99,7 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
     const deps: TranscriberDeps = {
         getUserMedia: jest.fn(async () => stream),
         createSession: jest.fn(async () => session()),
+        endSession: jest.fn(async () => { /* ended */ }),
         createPeerConnection: () => pc as unknown as RTCPeerConnection,
         createLevelMeter: jest.fn(() => ({attach: meterAttach, level: () => level, close: meterClose})),
         now: () => now,
@@ -141,7 +142,7 @@ describe('WebRTCTranscriber', () => {
 
         expect(order).toEqual(['mic', 'session']);
         expect(deps.getUserMedia).toHaveBeenCalledWith({audio: {echoCancellation: true, noiseSuppression: true}});
-        expect(deps.createSession).toHaveBeenCalledWith('OFFER_SDP');
+        expect(deps.createSession).toHaveBeenCalledWith('OFFER_SDP', expect.any(AbortSignal));
         expect(pc.remoteDescription).toEqual({type: 'answer', sdp: 'ANSWER_SDP'});
     });
 
@@ -216,6 +217,7 @@ describe('WebRTCTranscriber', () => {
         expect(onError).toHaveBeenCalledWith(expect.objectContaining({reason: want}));
         expect(pc.close).toHaveBeenCalled();
         expect(track.stop).toHaveBeenCalled();
+        expect(deps.endSession).not.toHaveBeenCalled();
     });
 
     test.each([
@@ -574,9 +576,31 @@ describe('WebRTCTranscriber', () => {
         }
     });
 
-    test('stop during connecting releases the mic and connection and makes start fail', async () => {
+    test('stop during connecting aborts the session request and releases the mic and connection', async () => {
+        let signal: AbortSignal | null = null;
+        const {deps, track, pc} = setup({createSession: jest.fn((_sdp: string, abortSignal: AbortSignal) => {
+            signal = abortSignal;
+            return new Promise<DictationSession>((_resolve, reject) => {
+                abortSignal.addEventListener('abort', () => reject(new Error('aborted')));
+            });
+        })});
+        const transcriber = new WebRTCTranscriber(deps);
+        const starting = transcriber.start();
+        await waitFor(() => expect(deps.createSession).toHaveBeenCalled());
+
+        await transcriber.stop();
+
+        expect(signal!.aborted).toBe(true);
+        await expect(starting).rejects.toBeInstanceOf(DictationError);
+        expect(track.stop).toHaveBeenCalled();
+        expect(pc.close).toHaveBeenCalled();
+        expect(pc.remoteDescription).toBeNull();
+        expect(deps.endSession).not.toHaveBeenCalled();
+    });
+
+    test('a session that arrives after stop is ended and never connected', async () => {
         let resolveSession: (s: DictationSession) => void = () => { /* set below */ };
-        const {deps, track, pc} = setup({createSession: jest.fn(() => new Promise<DictationSession>((resolve) => {
+        const {deps, pc} = setup({createSession: jest.fn(() => new Promise<DictationSession>((resolve) => {
             resolveSession = resolve;
         }))});
         const transcriber = new WebRTCTranscriber(deps);
@@ -587,9 +611,58 @@ describe('WebRTCTranscriber', () => {
         resolveSession(session());
 
         await expect(starting).rejects.toBeInstanceOf(DictationError);
-        expect(track.stop).toHaveBeenCalled();
-        expect(pc.close).toHaveBeenCalled();
+        expect(deps.endSession).toHaveBeenCalledTimes(1);
+        expect(deps.endSession).toHaveBeenCalledWith('session-1');
         expect(pc.remoteDescription).toBeNull();
+    });
+
+    test.each([
+        {name: 'a normal stop', end: (t: WebRTCTranscriber) => t.stop()},
+        {name: 'a stop that discards the final text', end: (t: WebRTCTranscriber) => t.stop({waitForFinal: false})},
+        {
+            name: 'a lost connection',
+            end: async (_t: WebRTCTranscriber, pc: FakePeerConnection) => {
+                pc.connectionState = 'failed';
+                pc.dispatch('connectionstatechange');
+            },
+        },
+    ])('$name ends the plugin session once', async ({end}) => {
+        const {deps, pc} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        await transcriber.start();
+        jest.useFakeTimers();
+        try {
+            const ending = end(transcriber, pc);
+            await jest.runAllTimersAsync();
+            await ending;
+            await transcriber.stop();
+
+            expect(deps.endSession).toHaveBeenCalledTimes(1);
+            expect(deps.endSession).toHaveBeenCalledWith('session-1');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a failing end request does not surface an error', async () => {
+        const {deps} = setup({endSession: jest.fn(async () => {
+            throw new Error('offline');
+        })});
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+
+        await expect(transcriber.stop()).resolves.toBeUndefined();
+        expect(onError).not.toHaveBeenCalled();
+    });
+
+    test('a session response with an id but no answer is ended', async () => {
+        const {deps} = setup({createSession: jest.fn(async () => ({...session(), sdp: ''}))});
+        const transcriber = new WebRTCTranscriber(deps);
+
+        await expect(transcriber.start()).rejects.toMatchObject({reason: 'provider_unreachable'});
+        expect(deps.endSession).toHaveBeenCalledWith('session-1');
     });
 
     test.each([

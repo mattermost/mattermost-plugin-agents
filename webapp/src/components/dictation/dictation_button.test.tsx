@@ -211,6 +211,20 @@ describe('DictationButton', () => {
         expect(screen.getByRole('status').textContent).toBe('');
     });
 
+    test('a click while getting ready stops the transport, and its failed start shows no error', async () => {
+        const {transports} = renderButton({message: '', channelId: 'c1'});
+        fireEvent.click(button());
+        act(() => transports[0].connecting());
+
+        fireEvent.click(button());
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+        expect(transports[0].stop).toHaveBeenCalledTimes(1);
+
+        await act(async () => transports[0].rejectStart(new DictationError('unavailable', 'stopped')));
+        expect(button().getAttribute('data-status')).toBe('idle');
+        expect(screen.getByRole('status').textContent).toBe('');
+    });
+
     test('the level ring follows the microphone level while listening', async () => {
         const {transports} = renderButton({message: '', channelId: 'c1'});
         fireEvent.click(button());
