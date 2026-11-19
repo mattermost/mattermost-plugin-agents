@@ -388,3 +388,45 @@ func TestServiceVersionOfNamesTheSourceAgentForEveryVersion(t *testing.T) {
 		assert.Equal(t, "Helper", rec.SourceAgentDisplayName, "version %d", version)
 	}
 }
+
+func TestServiceVersionOfReportsWhoSavedEachVersionAndWhen(t *testing.T) {
+	e := newServiceEnv(t)
+	e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
+	entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
+	require.NoError(t, err)
+
+	secondPost, secondFile, saver := model.NewId(), model.NewId(), model.NewId()
+	seedSource(t, e.db, secondPost, secondFile)
+	savedAt := model.GetMillis() + 5000
+	require.NoError(t, e.store.AddVersion(entry.ID, channelartifacts.NewVersion{
+		PostID: secondPost, FileID: secondFile, SHA256: hashHex([]byte("v2")), Size: 2,
+		SourceBotUserID: e.botID, UserID: saver, At: savedAt,
+	}, 5))
+	current, err := e.svc.GetReadable(e.userID, entry.ID)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name         string
+		version      int
+		wantVersion  int
+		wantSavedBy  string
+		wantSavedAt  int64
+		wantIsHead   bool
+		wantSourceID string
+	}{
+		{name: "current version by default", version: 0, wantVersion: 2, wantSavedBy: saver, wantSavedAt: savedAt, wantIsHead: true, wantSourceID: secondFile},
+		{name: "current version by number", version: 2, wantVersion: 2, wantSavedBy: saver, wantSavedAt: savedAt, wantIsHead: true, wantSourceID: secondFile},
+		{name: "first version", version: 1, wantVersion: 1, wantSavedBy: e.userID, wantSavedAt: entry.CreateAt, wantSourceID: e.fileID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, err := e.svc.VersionOf(current, tt.version)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantVersion, rec.Version)
+			assert.Equal(t, tt.wantSavedBy, rec.CreatedBy, "the version's own author, not the artifact's creator")
+			assert.Equal(t, tt.wantSavedAt, rec.CreateAt)
+			assert.Equal(t, tt.wantIsHead, rec.Head)
+			assert.Equal(t, tt.wantSourceID, rec.SourceFileID)
+		})
+	}
+}
