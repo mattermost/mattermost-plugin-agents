@@ -45,7 +45,7 @@ const (
 
 // clientTurnDetectionModels need turn_detection: null, matched by prefix so
 // dated snapshots of the same model behave the same.
-var clientTurnDetectionModels = []string{"gpt-live-transcribe"}
+var clientTurnDetectionModels = []string{"gpt-live-transcribe", "gpt-realtime-whisper"}
 
 // TurnDetectionForModel returns the turn detection mode a transcription
 // session uses for model.

@@ -76,6 +76,14 @@ func TestCreateTranscriptionSession(t *testing.T) {
 			wantTurnMode:      TurnDetectionNone,
 		},
 		{
+			// OpenAI rejects server_vad for this model at mint time.
+			name:              "realtime whisper uses client turn detection",
+			model:             "gpt-realtime-whisper",
+			language:          "en",
+			wantTurnDetection: nil,
+			wantTurnMode:      TurnDetectionNone,
+		},
+		{
 			name:              "4o model uses server VAD",
 			model:             "gpt-4o-transcribe",
 			language:          "en",
@@ -150,6 +158,7 @@ func TestCreateTranscriptionSessionLanguageField(t *testing.T) {
 		{model: "gpt-4o-transcribe", language: "en", wantLanguage: "en"},
 		{model: "gpt-4o-mini-transcribe", language: "es", wantLanguage: "es"},
 		{model: "whisper-1", language: "en", wantLanguage: "en"},
+		{model: "gpt-realtime-whisper", language: "en", wantLanguage: "en"},
 		{model: "gpt-live-transcribe"},
 		{model: "gpt-4o-transcribe"},
 	}
@@ -334,6 +343,7 @@ func TestTurnDetectionForModel(t *testing.T) {
 	}{
 		{"gpt-live-transcribe", TurnDetectionNone},
 		{"gpt-live-transcribe-2026-10-01", TurnDetectionNone},
+		{"gpt-realtime-whisper", TurnDetectionNone},
 		{"gpt-4o-transcribe", TurnDetectionServerVAD},
 		{"gpt-4o-mini-transcribe", TurnDetectionServerVAD},
 		{"whisper-1", TurnDetectionServerVAD},
