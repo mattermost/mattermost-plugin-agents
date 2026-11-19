@@ -28,7 +28,8 @@ type BotDirectory interface {
 }
 
 // Op is a kind of change to a channel's library. Each maps to the channel
-// bookmark permission of the same name.
+// bookmark permission of the same name. Libraries exist only in public and
+// private channels, never in direct or group messages.
 type Op int
 
 const (
@@ -70,35 +71,52 @@ func permissionFor(op Op, channelType model.ChannelType) *model.Permission {
 	}
 }
 
-// Can reports whether userID may make the change in the channel. It follows the
-// permissions core channel bookmarks use, and checks them only after the
-// channel is known to exist and not be archived. Direct and group messages have
-// no bookmark permissions, so any non-guest member may manage them.
-func (s *Service) Can(userID, channelID string, op Op) bool {
-	if userID == "" || !model.IsValidId(channelID) {
-		return false
+// libraryChannel returns the channel when it can hold a library. Only public
+// and private channels can; direct and group messages cannot, and neither can a
+// channel that doesn't exist or whose lookup fails.
+func (s *Service) libraryChannel(channelID string) (*model.Channel, bool) {
+	if !model.IsValidId(channelID) {
+		return nil, false
 	}
 	channel, err := s.mm.GetChannel(channelID)
-	if err != nil || channel == nil || channel.DeleteAt != 0 {
+	if err != nil || channel == nil {
+		return nil, false
+	}
+	if channel.Type != model.ChannelTypeOpen && channel.Type != model.ChannelTypePrivate {
+		return nil, false
+	}
+	return channel, true
+}
+
+// SupportsChannelType reports whether a channel of this type can hold a library.
+func SupportsChannelType(channelType model.ChannelType) bool {
+	return channelType == model.ChannelTypeOpen || channelType == model.ChannelTypePrivate
+}
+
+// Can reports whether userID may make the change in the channel. It follows the
+// permissions core channel bookmarks use, and checks them only after the
+// channel is known to be a public or private channel that isn't archived.
+func (s *Service) Can(userID, channelID string, op Op) bool {
+	if userID == "" {
 		return false
 	}
-	switch channel.Type {
-	case model.ChannelTypeDirect, model.ChannelTypeGroup:
-		if !s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel) {
-			return false
-		}
-		user, userErr := s.mm.GetUser(userID)
-		return userErr == nil && user != nil && !user.IsGuest()
-	case model.ChannelTypeOpen, model.ChannelTypePrivate:
-		return s.mm.HasPermissionToChannel(userID, channelID, permissionFor(op, channel.Type))
-	default:
+	channel, ok := s.libraryChannel(channelID)
+	if !ok || channel.DeleteAt != 0 {
 		return false
 	}
+	return s.mm.HasPermissionToChannel(userID, channelID, permissionFor(op, channel.Type))
 }
 
 // CanRead reports whether userID may list and open the channel's library.
+// Direct and group messages have none.
 func (s *Service) CanRead(userID, channelID string) bool {
-	return userID != "" && s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel)
+	if userID == "" {
+		return false
+	}
+	if _, ok := s.libraryChannel(channelID); !ok {
+		return false
+	}
+	return s.mm.HasPermissionToChannel(userID, channelID, model.PermissionReadChannel)
 }
 
 // authorize returns ErrNotFound to callers who cannot read the channel, so a
