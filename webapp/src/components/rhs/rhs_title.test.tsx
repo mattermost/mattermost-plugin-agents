@@ -146,14 +146,45 @@ describe('RHSTitle', () => {
 
         const {unmount} = renderTitle(two, 'a');
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Switch agent', 'Recent chats', 'View all agents']);
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Switch agent', 'Recent chats', 'All agent chats', 'View all agents']);
         unmount();
 
         renderTitle(two, 'a', {selectedPostId: 'root1'});
         fireEvent.click(screen.getByTestId('bot-selector-rhs'));
 
         // An open chat belongs to its agent: no Switch agent, as in the product's chat header.
-        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Recent chats', 'All agent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+    });
+
+    test.each([
+        {
+            name: 'a new chat, under Recent chats',
+            rhs: {},
+            threads: [{id: 'c1', root_post_id: 'root1', title: 'Quarterly plan'}],
+            expected: ['Switch agent', 'Recent chats', 'All agent chats', 'View all agents'],
+        },
+        {
+            name: 'an open chat, under Recent chats',
+            rhs: {selectedPostId: 'root1'},
+            threads: [{id: 'c1', root_post_id: 'root1', title: 'Quarterly plan'}],
+            expected: ['Recent chats', 'All agent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents'],
+        },
+        {
+            name: 'an open chat with no recent chats',
+            rhs: {selectedPostId: 'root1'},
+            threads: [] as Array<{id: string; root_post_id: string; title: string}>,
+            expected: ['All agent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents'],
+        },
+    ])('All agent chats ($name) opens the chat history, the same as Back', ({rhs, threads, expected}) => {
+        mockThreads = threads;
+        renderTitle(two, 'a', rhs);
+
+        fireEvent.click(screen.getByTestId('bot-selector-rhs'));
+        expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(expected);
+
+        fireEvent.click(screen.getByRole('menuitem', {name: 'All agent chats'}));
+
+        expect(rhsActions()).toEqual([{type: 'AI_RHS_SET_TAB', tab: 'threads'}]);
     });
 
     test('choosing a recent chat opens it in the RHS', () => {
