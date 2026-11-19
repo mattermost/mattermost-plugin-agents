@@ -602,7 +602,9 @@ describe('endDictationSession', () => {
     });
 
     test.each([
-        {name: 'an error status', mock: () => mockFetch.mockResolvedValue({ok: false, status: 404} as unknown as Response), status: 404},
+        {name: 'an unknown session', mock: () => mockFetch.mockResolvedValue({ok: false, status: 404} as unknown as Response), status: 404},
+        {name: 'the end rate limit', mock: () => mockFetch.mockResolvedValue({ok: false, status: 429} as unknown as Response), status: 429},
+        {name: 'an unconfirmed hangup', mock: () => mockFetch.mockResolvedValue({ok: false, status: 502} as unknown as Response), status: 502},
         {name: 'a network failure', mock: () => mockFetch.mockRejectedValue(new TypeError('offline')), status: 0},
     ])('$name rejects with its status', async ({mock, status}) => {
         mock();
