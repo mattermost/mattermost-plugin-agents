@@ -589,7 +589,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const renderReview = () => discovered && review && (
         <StepBody>
             <ReviewIntro>
-                <FormattedMessage defaultMessage='Review tool approval policies before saving. Server-marked read-only tools default to Auto Run (DM); others ask first.'/>
+                <FormattedMessage defaultMessage='Review tool approval policies before saving. Server-marked read-only tools are pre-set to Auto Run (DM); others ask first.'/>
             </ReviewIntro>
             <MCPServerToolRow
                 server={discovered}

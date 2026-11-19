@@ -515,7 +515,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 label={intl.formatMessage({defaultMessage: 'Structured output'})}
                 value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
                 onChange={(structuredOutputPolicy) => props.onChange({...props.service, structuredOutputPolicy})}
-                helptext={intl.formatMessage({defaultMessage: 'Auto uses native JSON schema when supported and falls back to prompts otherwise. Combined across the fallback chain: if any fallback needs prompt mode, it is used.'})}
+                helptext={intl.formatMessage({defaultMessage: 'Auto uses native JSON schema when known to be supported and falls back to prompts otherwise. Combined across the fallback chain: if any fallback needs prompt mode, it is used.'})}
                 options={[
                     {value: StructuredOutputPolicyAuto, label: intl.formatMessage({defaultMessage: 'Auto (recommended)'})},
                     {value: StructuredOutputPolicyNative, label: intl.formatMessage({defaultMessage: 'Native supported'})},
