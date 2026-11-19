@@ -1,5 +1,5 @@
 // spec: Agents settings access — the System Console delegates the Agents
-// settings to read-only and read/write users, and every agent to agent managers.
+// settings to read/write users, and every agent to agent managers.
 
 import { expect, type Page } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
@@ -17,15 +17,13 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * Test Suite: Agents settings access
  *
  * The plugin configuration lives in the Agents product's Settings view. The
- * System Console only lists who besides system admins may view (read-only,
- * without credentials) or change (read/write) it, and who may manage every
- * agent (agent managers).
+ * System Console only lists who besides system admins may change (read/write)
+ * it, and who may manage every agent (agent managers).
  */
 
 const SERVICE_ID = 'delegationservice000000000';
 const SERVICE_API_KEY = 'sk-delegation-sentinel-key';
 const PASSWORD = 'Delegate-pass1';
-const VIEWER = 'settingsviewer';
 const EDITOR = 'settingseditor';
 const OUTSIDER = 'settingsoutsider';
 const MANAGER = 'agentsmanager';
@@ -78,7 +76,6 @@ test.describe.serial('Agents settings access', () => {
     test.beforeAll(async ({ containers }) => {
         ({ mattermost } = containers);
         await withDeadline('Seeding the delegated users', 60000, async () => {
-            await seedUser(mattermost, VIEWER);
             await seedUser(mattermost, EDITOR);
             await seedUser(mattermost, OUTSIDER);
             await seedUser(mattermost, MANAGER);
@@ -94,7 +91,6 @@ test.describe.serial('Agents settings access', () => {
         await settings.navigateToSystemConsole(mattermost.url());
 
         await grant(page, 'Search for people to give read and write access', EDITOR);
-        await grant(page, 'Search for people to give read-only access', VIEWER);
         await grant(page, 'Search for people to make agent managers', MANAGER);
         const [response] = await Promise.all([
             page.waitForResponse((r) => r.request().method() === 'PUT' && r.url().includes(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/settings-access`)),
@@ -107,38 +103,20 @@ test.describe.serial('Agents settings access', () => {
         await expect(settings.getServicesPanel()).toBeVisible();
     });
 
-    test('a read-only user sees the settings without credentials and cannot change them', async ({ page }) => {
-        test.setTimeout(90000);
-        const mmPage = new MattermostPage(page);
-        const settings = new SystemConsoleHelper(page);
-
-        await mmPage.login(mattermost.url(), VIEWER, PASSWORD);
-        const configResponse = page.waitForResponse((r) => r.request().method() === 'GET' && r.url().endsWith(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/config`));
-        await settings.navigateToAgentsSettings(mattermost.url(), 'general');
-
-        const body = await (await configResponse).text();
-        expect(body).toContain('Delegation Service');
-        expect(body).not.toContain(SERVICE_API_KEY);
-
-        await expect(page.getByText('You have read-only access')).toBeVisible();
-        await expect(settingsRow(page)).toBeVisible();
-        await expect(page.getByRole('radiogroup', { name: 'Render AI-generated links' }).getByRole('radio').first()).toBeDisabled();
-
-        await settings.openSection('services');
-        await expect(page.getByText('Delegation Service').first()).toBeVisible();
-        await expect(page.getByRole('button', { name: /add.*ai.*service/i })).toHaveCount(0);
-        await expect(page.getByRole('button', { name: 'Delete service' })).toHaveCount(0);
-        await expect(settings.getSaveButton()).toHaveCount(0);
-    });
-
     test('a read/write user changes a setting', async ({ page }) => {
         test.setTimeout(90000);
         const mmPage = new MattermostPage(page);
         const settings = new SystemConsoleHelper(page);
 
         await mmPage.login(mattermost.url(), EDITOR, PASSWORD);
+        const configResponse = page.waitForResponse((r) => r.request().method() === 'GET' && r.url().endsWith(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/config`));
         await settings.navigateToAgentsSettings(mattermost.url(), 'general');
-        await expect(page.getByText('You have read-only access')).toHaveCount(0);
+
+        // The stored API key never reaches the browser, even for someone who can change it.
+        const body = await (await configResponse).text();
+        expect(body).toContain('Delegation Service');
+        expect(body).not.toContain(SERVICE_API_KEY);
+        await expect(settingsRow(page)).toBeVisible();
 
         await page.getByRole('radiogroup', { name: 'Render AI-generated links' }).getByRole('radio', { name: 'True' }).check();
         await settings.clickSave();

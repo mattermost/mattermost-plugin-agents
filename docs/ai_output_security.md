@@ -52,8 +52,21 @@ If you need full isolation, enable artifacts only where everyone uses a supporte
 - A permissions policy denies the camera, microphone, geolocation, clipboard read, payment, USB, serial, HID, and Bluetooth.
 - Artifacts can't open the URL in a new tab and see content. Any load that Mattermost's own page didn't start gets a static page that says the artifact can only be viewed inside Mattermost.
 - The only data an artifact can reach is the viewer's theme and locale, and, after the viewer explicitly allows it, the viewer's name and username through `window.mattermost.getCurrentUser()`. It never gets the user ID, email, roles, or tokens.
+- An artifact can't download files by itself, because its sandbox doesn't allow downloads. It can ask Mattermost to save a file it generated, such as a chart or a CSV report, with `window.mattermost.download()`. See [Downloads from artifacts](#downloads-from-artifacts).
 - A bordered header that the artifact can't draw over always tells viewers the content is AI-generated and that they should never enter passwords or sensitive information.
 - The **Download** button gives the original file. Opened from disk, it has none of these protections, so treat it like any untrusted HTML file.
+
+### Downloads from artifacts
+
+An artifact calls `window.mattermost.download({filename, mimeType, data})` to save a file it generated. Mattermost's own page saves the file, so the artifact's sandbox stays closed.
+
+- The viewer confirms every download in a prompt drawn by Mattermost that shows the file name, type, and size, set apart from the sentence Mattermost writes. Mattermost never remembers the answer, and the prompt ignores clicks for a moment after it appears, so an artifact can't trick the viewer into confirming.
+- An artifact can ask only while the viewer is interacting with it, only one prompt shows at a time, and the request must follow a click or key press inside the artifact in browsers that report user activation. After the viewer cancels a download, or Mattermost refuses a file, the artifact must be clicked again before it can ask again.
+- Only these types can be saved: PNG, JPEG, GIF, and WebP images, plain text, CSV, Markdown, JSON, and PDF. HTML, SVG, XML, scripts, and executables are refused.
+- Mattermost rebuilds the file with the allowed type. It removes path separators, control characters, and characters that can disguise a name from the file name, and adds an extension that matches the type, so `report.html` saved as plain text becomes `report.html.txt`.
+- A file can be at most 25 MiB.
+
+Treat a downloaded file like any file from an untrusted source. A PDF in particular can contain links or scripts that run in your PDF reader.
 
 ### Known limitations
 
