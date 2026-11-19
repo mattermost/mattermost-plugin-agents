@@ -6,7 +6,7 @@ import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import {DictationError, DictationTransport, TranscriptUpdate} from '@/dictation/types';
 
-import DictationButton from './dictation_button';
+import DictationButton, {displayLevel} from './dictation_button';
 import {EditorDraft} from './use_dictation';
 
 jest.mock('react-intl', () => {
@@ -225,22 +225,35 @@ describe('DictationButton', () => {
         await new Promise((r) => setTimeout(r, 50));
         expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.00');
 
-        act(() => transports[0].level(0.1));
-        await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.60'));
+        // Quiet speech, about -35 dBFS RMS, shows half the glow.
+        act(() => transports[0].level(0.0178));
+        await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.50'));
 
         act(() => transports[0].level(0.5));
         await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('1.00'));
     });
 
-    test('with reduced motion the level ring stays still', async () => {
+    test.each([
+        {name: 'no signal', rms: 0, want: 0},
+        {name: 'noise floor, -60 dBFS', rms: 0.001, want: 0},
+        {name: '-50 dBFS', rms: 0.00316, want: 0},
+        {name: 'soft speech, -40 dBFS', rms: 0.01, want: 0.33},
+        {name: 'quiet speech, -35 dBFS', rms: 0.0178, want: 0.5},
+        {name: 'normal speech, -30 dBFS', rms: 0.0316, want: 0.67},
+        {name: 'loud speech, -20 dBFS', rms: 0.1, want: 1},
+        {name: 'clipping', rms: 1, want: 1},
+    ])('displayLevel: $name', ({rms, want}) => {
+        expect(displayLevel(rms)).toBeCloseTo(want, 2);
+    });
+
+    test('with reduced motion the level still updates, for the glow\'s brightness', async () => {
         const matchMedia = window.matchMedia;
         window.matchMedia = jest.fn((query: string) => ({matches: query.includes('reduce')})) as unknown as typeof window.matchMedia;
         try {
             const {transports} = renderButton({message: '', channelId: 'c1'});
             await startListening(() => transports[0]);
             act(() => transports[0].level(0.2));
-            await new Promise((r) => setTimeout(r, 50));
-            expect(screen.getByTestId('dictation-indicator').style.getPropertyValue('--dictation-level')).toBe('');
+            await waitFor(() => expect(screen.getByTestId('dictation-indicator').style.getPropertyValue('--dictation-level')).toBe('1.00'));
         } finally {
             window.matchMedia = matchMedia;
         }

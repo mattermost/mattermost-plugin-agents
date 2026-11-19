@@ -303,7 +303,10 @@ describe('WebRTCTranscriber', () => {
 
     test('the browser level meter resumes its audio context inside the click, before any await', async () => {
         const calls: string[] = [];
+        const analyser = {fftSize: 0, getFloatTimeDomainData: jest.fn(), connect: jest.fn()};
+        const mute = {gain: {value: 1}, connect: jest.fn()};
         class FakeAudioContext {
+            destination = {name: 'destination'};
             state = 'suspended';
             resume = jest.fn(async () => {
                 calls.push('resume');
@@ -311,7 +314,10 @@ describe('WebRTCTranscriber', () => {
             });
             close = jest.fn(async () => { /* closed */ });
             createAnalyser() {
-                return {fftSize: 0, getFloatTimeDomainData: jest.fn()};
+                return analyser;
+            }
+            createGain() {
+                return mute;
             }
             createMediaStreamSource() {
                 return {connect: jest.fn()};
@@ -334,6 +340,11 @@ describe('WebRTCTranscriber', () => {
 
             resolveMic(stream);
             await expect(starting).resolves.toBeUndefined();
+
+            // WebKit leaves an analyser that doesn't reach the destination silent.
+            expect(analyser.connect).toHaveBeenCalledWith(mute);
+            expect(mute.connect).toHaveBeenCalledWith(new FakeAudioContext().destination);
+            expect(mute.gain.value).toBe(0);
         } finally {
             (window as any).AudioContext = original;
         }

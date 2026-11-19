@@ -50,6 +50,13 @@ export function createAnalyserLevelMeter(): LevelMeter {
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
     const samples = new Float32Array(analyser.fftSize);
+
+    // WebKit only processes nodes that reach the destination; a muted gain
+    // keeps the analyser live without playing the microphone back.
+    const mute = context.createGain();
+    mute.gain.value = 0;
+    analyser.connect(mute);
+    mute.connect(context.destination);
     return {
         attach: async (stream) => {
             context.createMediaStreamSource(stream).connect(analyser);

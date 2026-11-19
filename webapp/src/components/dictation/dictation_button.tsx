@@ -37,38 +37,49 @@ const ButtonAnchor = styled.span`
     display: inline-flex;
 `;
 
-// While listening, a glow around the button grows with the microphone level
-// so the user sees they are heard. --dictation-level (0 to 1) is set on the
-// anchor once per frame.
+// While listening, a glow around the button grows and brightens with the
+// microphone level so the user sees they are heard. --dictation-level (0 to
+// 1) is set on the anchor once per frame. With reduced motion the glow keeps
+// its size and only its brightness follows the level.
 const DictationIconButton = styled(IconButton)`
     &[data-status='listening'] {
-        box-shadow: 0 0 0 calc(2px + var(--dictation-level, 0) * 7px) rgba(var(--error-text-color-rgb), 0.45);
+        box-shadow: 0 0 0 calc(2px + var(--dictation-level, 0) * 8px) rgba(var(--error-text-color-rgb), calc(0.3 + var(--dictation-level, 0) * 0.45));
         transition: box-shadow 80ms linear;
 
         @media (prefers-reduced-motion: reduce) {
-            box-shadow: 0 0 0 2px rgba(var(--error-text-color-rgb), 0.4);
+            box-shadow: 0 0 0 3px rgba(var(--error-text-color-rgb), calc(0.2 + var(--dictation-level, 0) * 0.6));
             transition: none;
         }
     }
 `;
 
-// RMS speech levels are small; this maps normal speech to most of the range.
-const LEVEL_GAIN = 6;
+// Speech reaches a microphone at roughly -45 to -15 dBFS RMS depending on the
+// device, distance and gain control, so the glow follows the level in
+// decibels: SILENCE_DB and below shows nothing, FULL_DB and above shows the
+// full glow.
+const SILENCE_DB = -50;
+const FULL_DB = -20;
 
-const prefersReducedMotion = () => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export function displayLevel(rms: number): number {
+    if (rms <= 0) {
+        return 0;
+    }
+    const db = 20 * Math.log10(rms);
+    return Math.min(1, Math.max(0, (db - SILENCE_DB) / (FULL_DB - SILENCE_DB)));
+}
 
 // useLiveLevel copies the microphone level to --dictation-level on target,
 // throttled to animation frames, while active.
 function useLiveLevel(target: React.RefObject<HTMLElement | null>, levelRef: React.MutableRefObject<number>, active: boolean) {
     useEffect(() => {
         const element = target.current;
-        if (!active || !element || prefersReducedMotion()) {
+        if (!active || !element) {
             return undefined; // eslint-disable-line no-undefined
         }
         let frame = 0;
         let shown = -1;
         const draw = () => {
-            const level = Math.min(1, levelRef.current * LEVEL_GAIN);
+            const level = displayLevel(levelRef.current);
             if (Math.abs(level - shown) >= 0.02) {
                 element.style.setProperty('--dictation-level', level.toFixed(2));
                 shown = level;

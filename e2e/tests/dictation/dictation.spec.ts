@@ -248,6 +248,70 @@ test.describe('Dictation', () => {
         expect(mintBody.session.audio.input.transcription.model).toBe('gpt-live-transcribe');
     });
 
+    test('while listening, the glow follows the live microphone level', async ({ page, containers: { mattermost } }) => {
+        test.setTimeout(120000);
+
+        // Live WebRTC to OpenAI isn't available in CI, so a stub peer opens
+        // the data channel. The microphone is Chrome's fake device, whose
+        // periodic beep runs through the real AudioContext meter.
+        await page.addInitScript(() => {
+            class FakeChannel extends EventTarget {
+                readyState = 'connecting';
+                send() { /* commits go nowhere */ }
+                close() {
+                    this.readyState = 'closed';
+                }
+            }
+            class FakePeerConnection extends EventTarget {
+                connectionState = 'new';
+                channel = new FakeChannel();
+                addTrack() { /* no media */ }
+                createDataChannel() {
+                    return this.channel;
+                }
+                async createOffer() {
+                    return { type: 'offer', sdp: 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n' };
+                }
+                async setLocalDescription() { /* accepted */ }
+                async setRemoteDescription() {
+                    setTimeout(() => {
+                        this.channel.readyState = 'open';
+                        this.channel.dispatchEvent(new Event('open'));
+                    }, 0);
+                }
+                close() { /* closed */ }
+            }
+            (window as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = FakePeerConnection;
+        });
+        await page.route(REALTIME_MOCK_CALLS_URL, (route) => route.fulfill({ status: 201, body: 'v=0\r\n' }));
+
+        await loginAsUser(page, mattermost);
+        const center = centerComposer(page);
+        await dictationButton(center).click();
+        await expect(dictationButton(center)).toHaveAttribute('data-status', 'listening', { timeout: 30000 });
+
+        // Over 3 s the beep must drive the glow up and back down.
+        const samples = await page.evaluate(async () => {
+            const anchor = document.querySelector('[data-testid="channel_view"] [data-testid="dictation-indicator"]') as HTMLElement;
+            const button = document.querySelector('[data-testid="channel_view"] [data-testid="dictation-button"]') as HTMLElement;
+            const out: Array<{ level: number; spread: number }> = [];
+            for (let i = 0; i < 60; i++) {
+                const spread = Number((/(\d+(?:\.\d+)?)px\s*$/).exec(getComputedStyle(button).boxShadow)?.[1] ?? 0);
+                out.push({ level: Number(anchor.style.getPropertyValue('--dictation-level') || 0), spread });
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            return out;
+        });
+        const levels = samples.map((s) => s.level);
+        const spreads = samples.map((s) => s.spread);
+        expect(Math.max(...levels)).toBeGreaterThan(0.5);
+        expect(Math.min(...levels)).toBeLessThan(0.3);
+        expect(Math.max(...spreads)).toBeGreaterThan(6);
+
+        await dictationButton(center).click();
+        await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle', { timeout: 10000 });
+    });
+
     test('turning dictation off and on updates open message boxes without a reload', async ({ page, containers: { mattermost } }) => {
         test.setTimeout(120000);
         const api = await adminConfig(mattermost);
