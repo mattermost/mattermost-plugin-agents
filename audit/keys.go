@@ -49,6 +49,9 @@ const (
 	// saved MCP sign-ins did not complete.
 	KeyMCPSignInsClearFailed = "agents.mcp_server.signins_clear_failed"
 
+	// KeyDictationSessionID identifies a dictation session.
+	KeyDictationSessionID = "agents.dictation.session.id"
+
 	// MetaTraceID is the meta key carrying the OpenTelemetry trace ID of the
 	// request, letting an auditor pivot from an audit record to the full
 	// trace of what happened.

@@ -325,13 +325,23 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 	a.convService = svc
 }
 
+// clientContextKey holds the server's request context, which ends when the
+// client goes away, under the uncancelled context handlers run with.
+type clientContextKey struct{}
+
+// clientGone reports whether the client of c's request disconnected.
+func clientGone(c *gin.Context) bool {
+	ctx, ok := c.Request.Context().Value(clientContextKey{}).(context.Context)
+	return ok && ctx.Err() != nil
+}
+
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	// Servers with context-aware plugin HTTP cancel the request context when
 	// the request ends, but handlers hand LLM streams and tool loops that
 	// outlive the request to goroutines on this context.
 	serverCtx := r.Context()
-	r = r.WithContext(context.WithoutCancel(serverCtx))
+	r = r.WithContext(context.WithValue(context.WithoutCancel(serverCtx), clientContextKey{}, serverCtx))
 	if c != nil {
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
@@ -441,6 +451,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Dictation involves no agent, so a server with none can still dictate.
 	router.GET("/dictation/availability", a.handleGetDictationAvailability)
 	router.POST("/dictation/session", a.capabilityRequired(enterprise.CapDictation), a.handleCreateDictationSession)
+	// Not license-gated: a user can always end their own session.
+	router.DELETE("/dictation/session/:sessionid", a.handleEndDictationSession)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks. Semantic search is

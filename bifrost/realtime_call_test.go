@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,15 +89,17 @@ func TestCreateTranscriptionCallSession(t *testing.T) {
 func TestCreateTranscriptionCallFailsClosed(t *testing.T) {
 	const upstreamSentinel = "UPSTREAM-BODY-SENTINEL"
 	tests := []struct {
-		name  string
-		setup func(f *llmtest.FakeRealtime)
-		offer string
+		name       string
+		setup      func(f *llmtest.FakeRealtime)
+		offer      string
+		wantHangup bool
 	}{
 		{name: "provider error", setup: func(f *llmtest.FakeRealtime) {
 			f.CallStatus = http.StatusInternalServerError
 			f.CallErrorMessage = upstreamSentinel + " " + testRealtimeAPIKey
 		}, offer: "v=0\r\n"},
 		{name: "no call ID", setup: func(f *llmtest.FakeRealtime) { f.OmitLocation = true }, offer: "v=0\r\n"},
+		{name: "not an SDP answer", setup: func(f *llmtest.FakeRealtime) { f.AnswerBody = "<html>" + upstreamSentinel + "</html>" }, offer: "v=0\r\n", wantHangup: true},
 		{name: "empty offer", offer: ""},
 		{name: "oversized offer", offer: string(make([]byte, MaxSDPBytes+1))},
 	}
@@ -113,6 +117,11 @@ func TestCreateTranscriptionCallFailsClosed(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, call)
 			assert.NotContains(t, err.Error(), testRealtimeAPIKey)
+			if tt.wantHangup {
+				assert.Equal(t, []string{fake.LastCallID()}, fake.Hangups(), "a created call is hung up on any later failure")
+			} else {
+				assert.Empty(t, fake.Hangups())
+			}
 
 			for _, span := range exporter.GetSpans() {
 				if span.Name == "dictation.create_call" {
@@ -262,6 +271,112 @@ func TestAttachFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, sb)
 	assert.NotContains(t, err.Error(), testRealtimeAPIKey)
+}
+
+type fakeResolver map[string][]net.IP
+
+func (r fakeResolver) LookupIP(_ context.Context, _, host string) ([]net.IP, error) {
+	return r[host], nil
+}
+
+func TestGuardedDialContext(t *testing.T) {
+	resolver := fakeResolver{
+		"metadata.internal": {net.ParseIP("169.254.169.254")},
+		"mixed.example":     {net.ParseIP("203.0.113.7"), net.ParseIP("169.254.169.254")},
+		"mapped.example":    {net.ParseIP("::ffff:169.254.169.254")},
+		"zero.example":      {net.ParseIP("0.0.0.0")},
+		"v6zero.example":    {net.ParseIP("::")},
+		"linklocal6":        {net.ParseIP("fe80::1")},
+		"multicast.example": {net.ParseIP("224.0.0.1")},
+		"public.example":    {net.ParseIP("203.0.113.7")},
+		"private.example":   {net.ParseIP("10.1.2.3")},
+		"loopback.example":  {net.ParseIP("127.0.0.1")},
+	}
+	tests := []struct {
+		host        string
+		wantBlocked bool
+	}{
+		{"metadata.internal", true},
+		{"mixed.example", true},
+		{"mapped.example", true},
+		{"zero.example", true},
+		{"v6zero.example", true},
+		{"linklocal6", true},
+		{"multicast.example", true},
+		{"public.example", false},
+		{"private.example", false},
+		{"loopback.example", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			dialed := ""
+			dial := guardedDialContext(resolver, func(_ context.Context, _, addr string) (net.Conn, error) {
+				dialed = addr
+				return nil, errors.New("not dialing in tests")
+			})
+			_, err := dial(context.Background(), "tcp", net.JoinHostPort(tt.host, "443"))
+			require.Error(t, err)
+			if tt.wantBlocked {
+				assert.Empty(t, dialed, "a blocked address is never dialed")
+				return
+			}
+			// The checked IP is dialed, not the name, so a second lookup
+			// can't swap the address.
+			assert.Equal(t, net.JoinHostPort(resolver[tt.host][0].String(), "443"), dialed)
+		})
+	}
+}
+
+func TestCallClientsShareOneTransport(t *testing.T) {
+	a, err := NewRealtimeCallClient(llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, APIKey: "k"})
+	require.NoError(t, err)
+	b, err := NewRealtimeCallClient(llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, APIKey: "k2", APIURL: "https://proxy.example.com"})
+	require.NoError(t, err)
+	assert.Same(t, a.httpClient.Transport, b.httpClient.Transport, "per-call clients must not each hold idle connections")
+	assert.Same(t, a.dialer, b.dialer)
+}
+
+func TestSidebandOversizedEvent(t *testing.T) {
+	fake := llmtest.NewFakeRealtime()
+	defer fake.Close()
+	c := newTestCallClient(t, fake)
+	req := TranscriptionSessionRequest{Model: "gpt-live-transcribe"}
+	call, err := c.CreateTranscriptionCall(context.Background(), "v=0\r\n", req)
+	require.NoError(t, err)
+	sb, err := c.Attach(context.Background(), call.CallID, req)
+	require.NoError(t, err)
+	require.True(t, fake.WaitAttached(call.CallID, 5*time.Second))
+
+	go func() {
+		_ = fake.SendEvent(call.CallID, map[string]string{"type": "session.updated", "padding": strings.Repeat("x", realtimeEventMaxBytes+1)})
+	}()
+	assert.ErrorIs(t, sb.Run(context.Background()), ErrSessionChanged)
+}
+
+func TestHangupTreatsMissingCallAsEnded(t *testing.T) {
+	tests := []struct {
+		status        int
+		wantErr       bool
+		wantTransient bool
+	}{
+		{status: http.StatusOK},
+		{status: http.StatusNotFound},
+		{status: http.StatusServiceUnavailable, wantErr: true, wantTransient: true},
+		{status: http.StatusTooManyRequests, wantErr: true, wantTransient: true},
+		{status: http.StatusUnauthorized, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			fake := llmtest.NewFakeRealtime()
+			defer fake.Close()
+			fake.HangupStatus = tt.status
+			c := newTestCallClient(t, fake)
+
+			err := c.Hangup(context.Background(), "rtc_test_1")
+			assert.Equal(t, tt.wantErr, err != nil)
+			assert.Equal(t, tt.wantTransient, IsTransientRealtimeError(err))
+		})
+	}
 }
 
 func TestTurnDetectionForModel(t *testing.T) {

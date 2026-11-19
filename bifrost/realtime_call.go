@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	bifrostnet "github.com/maximhq/bifrost/core/network"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -136,8 +138,6 @@ func NewRealtimeCallClient(service llm.ServiceConfig) (*RealtimeCallClient, erro
 		return nil, err
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = http.ProxyFromEnvironment
 	return &RealtimeCallClient{
 		baseURL:     baseURL,
 		apiKey:      service.APIKey,
@@ -145,15 +145,79 @@ func NewRealtimeCallClient(service llm.ServiceConfig) (*RealtimeCallClient, erro
 		serviceType: service.Type,
 		httpClient: &http.Client{
 			Timeout:   realtimeRequestTimeout,
-			Transport: transport,
+			Transport: realtimeTransport,
 			// The key is sent to the configured origin only.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		dialer: &websocket.Dialer{
-			Proxy:            http.ProxyFromEnvironment,
-			HandshakeTimeout: realtimeRequestTimeout,
-		},
+		dialer: realtimeWSDialer,
 	}, nil
+}
+
+// realtimeTransport and realtimeWSDialer are shared by every call client, so
+// per-call clients don't each hold idle connections.
+var (
+	realtimeTransport = newRealtimeTransport()
+	realtimeWSDialer  = &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: realtimeRequestTimeout,
+		NetDialContext:   guardedDialContext(net.DefaultResolver, (&net.Dialer{Timeout: realtimeRequestTimeout}).DialContext),
+	}
+)
+
+func newRealtimeTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyFromEnvironment
+	transport.DialContext = guardedDialContext(net.DefaultResolver, (&net.Dialer{Timeout: realtimeRequestTimeout, KeepAlive: 30 * time.Second}).DialContext)
+	return transport
+}
+
+type ipResolver interface {
+	LookupIP(ctx context.Context, network, host string) ([]net.IP, error)
+}
+
+// guardedDialContext resolves the host and refuses link-local (including
+// cloud metadata endpoints), multicast and unspecified addresses, then dials
+// the checked IP itself so a second resolution can't swap it. Private and
+// loopback addresses stay allowed, as for chat requests: service URLs often
+// point at self-hosted gateways.
+func guardedDialContext(resolver ipResolver, dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, netw, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid dial address %q: %w", addr, err)
+		}
+		ips, err := resolver.LookupIP(ctx, "ip", host)
+		if err != nil {
+			return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+		}
+		if err = checkDialableIPs(host, ips); err != nil {
+			return nil, err
+		}
+		return dial(ctx, netw, net.JoinHostPort(ips[0].String(), port))
+	}
+}
+
+func checkDialableIPs(host string, ips []net.IP) error {
+	if len(ips) == 0 {
+		return fmt.Errorf("DNS lookup for %s returned no addresses", host)
+	}
+	for _, ip := range ips {
+		if ip.IsUnspecified() || ip.IsMulticast() || bifrostnet.IsLinkLocal(ip) {
+			return fmt.Errorf("blocked connection to %s (host %s)", ip, host)
+		}
+	}
+	return nil
+}
+
+// checkTarget applies the dial guard to the service host itself, for
+// requests that go through a proxy and so never dial it.
+func (c *RealtimeCallClient) checkTarget(ctx context.Context) error {
+	host := c.baseURL.Hostname()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+	}
+	return checkDialableIPs(host, ips)
 }
 
 // ParseRealtimeBaseURL accepts only an absolute http or https URL with a
@@ -313,6 +377,9 @@ func (c *RealtimeCallClient) CreateTranscriptionCall(ctx context.Context, offerS
 	if strings.TrimSpace(offerSDP) == "" || len(offerSDP) > MaxSDPBytes {
 		return nil, errors.New("the SDP offer is empty or too large")
 	}
+	if err = c.checkTarget(ctx); err != nil {
+		return nil, err
+	}
 	session, err := json.Marshal(buildTranscriptionSession(req))
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode the realtime session: %w", err)
@@ -350,12 +417,18 @@ func (c *RealtimeCallClient) CreateTranscriptionCall(ctx context.Context, offerS
 	if callID == "" {
 		return nil, errors.New("the realtime call response has no valid call ID")
 	}
+	// The call exists from here: any failure hangs it up.
 	answer, err := io.ReadAll(io.LimitReader(resp.Body, MaxSDPBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read the SDP answer: %w", err)
+	if err == nil && (len(answer) > MaxSDPBytes || !bytes.HasPrefix(answer, []byte("v="))) {
+		err = errors.New("the realtime call response is not an SDP answer")
 	}
-	if len(answer) > MaxSDPBytes || !bytes.HasPrefix(answer, []byte("v=")) {
-		return nil, errors.New("the realtime call response is not an SDP answer")
+	if err != nil {
+		hangupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), realtimeRequestTimeout)
+		defer cancel()
+		if hangupErr := c.Hangup(hangupCtx, callID); hangupErr != nil {
+			err = errors.Join(err, hangupErr)
+		}
+		return nil, fmt.Errorf("failed to read the SDP answer: %w", err)
 	}
 	return &RealtimeCall{CallID: callID, AnswerSDP: string(answer), TurnDetection: TurnDetectionForModel(req.Model)}, nil
 }
@@ -375,7 +448,8 @@ func callIDFromLocation(location string) string {
 	return id
 }
 
-// Hangup ends the call for every participant.
+// Hangup ends the call for every participant. A call that is already gone
+// (404) counts as ended.
 func (c *RealtimeCallClient) Hangup(ctx context.Context, callID string) (err error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "dictation.hangup_call")
 	defer span.End()
@@ -388,6 +462,9 @@ func (c *RealtimeCallClient) Hangup(ctx context.Context, callID string) (err err
 	if !callIDPattern.MatchString(callID) {
 		return errors.New("invalid call ID")
 	}
+	if err = c.checkTarget(ctx); err != nil {
+		return err
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(realtimeCallsPath+"/"+callID+"/hangup"), nil)
 	if err != nil {
 		return fmt.Errorf("failed to build the hangup request: %w", err)
@@ -398,10 +475,25 @@ func (c *RealtimeCallClient) Hangup(ctx context.Context, callID string) (err err
 		return fmt.Errorf("realtime hangup request failed: %w", llm.SanitizeProviderError(err, c.apiKey))
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already ended
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return c.readProviderError("realtime hangup", resp)
 	}
 	return nil
+}
+
+// IsTransientRealtimeError reports whether a failed realtime request may
+// succeed on retry: a transport error, a timeout, a 429 or a 5xx.
+func IsTransientRealtimeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if callErr, ok := errors.AsType[*providerCallError](err); ok {
+		return callErr.status == http.StatusTooManyRequests || callErr.status >= 500
+	}
+	return true
 }
 
 // Sideband is the server's own connection to a call. It sees every event
@@ -424,6 +516,9 @@ func (c *RealtimeCallClient) Attach(ctx context.Context, callID string, req Tran
 
 	if !callIDPattern.MatchString(callID) {
 		return nil, errors.New("invalid call ID")
+	}
+	if err = c.checkTarget(ctx); err != nil {
+		return nil, err
 	}
 	u := *c.baseURL
 	switch u.Scheme {
@@ -466,6 +561,11 @@ func (s *Sideband) Run(ctx context.Context) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			// An event too large to read can't be checked, so it fails
+			// closed like a policy change.
+			if errors.Is(err, websocket.ErrReadLimit) {
+				return ErrSessionChanged
 			}
 			return ErrSidebandClosed
 		}
