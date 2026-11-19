@@ -336,6 +336,42 @@ func TestServiceReadContentFailsClosed(t *testing.T) {
 	})
 }
 
+func TestServiceCheckReadableAppliesTheFilePolicy(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		allowed   bool
+		breakFile bool
+		wantErr   error
+	}{
+		{name: "allowed", sessionID: "sess", allowed: true},
+		{name: "download policy denies the session", sessionID: "sess", allowed: false, wantErr: channelartifacts.ErrNotFound},
+		{name: "no session fails closed", sessionID: "", allowed: false, wantErr: channelartifacts.ErrNotFound},
+		{name: "source file deleted", sessionID: "sess", allowed: true, breakFile: true, wantErr: channelartifacts.ErrUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newServiceEnv(t)
+			e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
+			entry, err := e.svc.Save(e.userID, e.mm, channelartifacts.SaveRequest{ChannelID: e.channelID, PostID: e.postID, FileID: e.fileID}, channelartifacts.Limits{MaxSize: 1 << 20})
+			require.NoError(t, err)
+			if tt.breakFile {
+				_, err := e.db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, e.fileID)
+				require.NoError(t, err)
+				entry.Available = false
+			}
+			e.mm.EXPECT().HasPermissionToFileAction(tt.sessionID, e.fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(tt.allowed).Maybe()
+
+			err = e.svc.CheckReadable(tt.sessionID, entry, 0)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestServiceRollbackRefusesAnUnavailableVersion(t *testing.T) {
 	e := newServiceEnv(t)
 	e.expectSource(e.botID, e.htmlInfo(), e.channelID, []string{e.fileID})
