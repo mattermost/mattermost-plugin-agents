@@ -7,7 +7,10 @@ import {FormattedMessage} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
 import {CogOutlineIcon} from '@mattermost/compass-icons/components';
+import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
+import {PopoverMenuDivider} from '@mattermost/compass-ui/components/popover-menu';
 
+import {menuIcon} from '@/components/menu/menu_parts';
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
 import {renderCustomPrompt} from '@/client';
@@ -21,49 +24,9 @@ function dismissMenu() {
     document.getElementById('backdropForMenuComponent')?.click();
 }
 
-const MenuContent = styled.div`
-    padding: var(--spacing-s) 0;
-`;
-
 const AgentSelectorWrapper = styled.div`
     padding: 0 4px;
     margin-bottom: 4px;
-`;
-
-const StyledMenuItem = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 20px;
-    border: none;
-    background: none;
-    text-align: left;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    color: var(--center-channel-color);
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-
-    &:disabled {
-        cursor: default;
-        color: rgba(var(--center-channel-color-rgb), 0.40);
-
-        &:hover {
-            background: none;
-        }
-    }
-`;
-
-const StyledMenuSeparator = styled.li`
-    height: 1px;
-    margin: 4px 0;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    list-style: none;
 `;
 
 interface Props {
@@ -120,7 +83,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     const showBotSelector = !isBotDMChannel && bots.length > 0;
 
     return (
-        <MenuContent>
+        <>
             {showBotSelector && (
                 <AgentSelectorWrapper>
                     <DropdownBotSelector
@@ -132,34 +95,30 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
             )}
             {prompts.length > 0 ? (
                 prompts.map((prompt) => (
-                    <StyledMenuItem
+                    <MenuItem
                         key={prompt.id}
-                        type='button'
                         role='menuitem'
+                        label={prompt.name}
+                        leadingElement={false}
                         onClick={() => handlePromptClick(prompt)}
-                    >
-                        <span>{prompt.name}</span>
-                    </StyledMenuItem>
+                    />
                 ))
             ) : (
-                <StyledMenuItem
-                    type='button'
+                <MenuItem
                     role='menuitem'
+                    label={<FormattedMessage defaultMessage='No skills yet'/>}
+                    leadingElement={false}
                     disabled={true}
-                >
-                    <span><FormattedMessage defaultMessage='No skills yet'/></span>
-                </StyledMenuItem>
+                />
             )}
-            <StyledMenuSeparator role='separator'/>
-            <StyledMenuItem
-                type='button'
+            <PopoverMenuDivider/>
+            <MenuItem
                 role='menuitem'
+                label={<FormattedMessage defaultMessage='Manage skills'/>}
+                leadingVisual={menuIcon(<CogOutlineIcon/>)}
                 onClick={handleCreateClick}
-            >
-                <CogOutlineIcon size={16}/>
-                <span><FormattedMessage defaultMessage='Manage skills'/></span>
-            </StyledMenuItem>
-        </MenuContent>
+            />
+        </>
     );
 };
 
