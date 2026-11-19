@@ -134,9 +134,11 @@ describe('DictationPanel', () => {
         expect(screen.queryByRole('combobox', {name: 'Transcription service'})).toBeNull();
     });
 
-    test('shows the validation error on the service field', () => {
+    test('shows the validation error on the service field, marked invalid and described by it', () => {
         renderPanel({...enabled, serviceID: anthropic.id}, [anthropic, openai]);
-        expect(screen.getByText(/not an OpenAI service/)).toBeTruthy();
+        const select = screen.getByRole('combobox', {name: 'Transcription service'});
+        expect(select.getAttribute('aria-invalid')).toBe('true');
+        expect(document.getElementById(select.getAttribute('aria-describedby') ?? '')?.textContent).toMatch(/not an OpenAI service/);
     });
 
     test('marks a missing model invalid and describes it with the error', () => {

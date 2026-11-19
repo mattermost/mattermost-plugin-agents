@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useId} from 'react';
+import React, {useId, useLayoutEffect, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
@@ -165,14 +165,28 @@ type SelectFieldProps = {
     maxWidth?: string;
     ariaLabel?: string;
     placeholder?: string;
+
+    // The id of the element describing the field, such as its error.
+    describedBy?: string;
 };
 
 export const SelectField = (props: SelectFieldProps) => {
     const settingsReadOnly = useSettingsReadOnly();
+
+    // Select doesn't pass aria-describedby through to its trigger button.
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    useLayoutEffect(() => {
+        if (props.describedBy) {
+            triggerRef.current?.setAttribute('aria-describedby', props.describedBy);
+        } else {
+            triggerRef.current?.removeAttribute('aria-describedby');
+        }
+    }, [props.describedBy]);
     const hasEmptyOption = props.options.some((option) => option.value === '');
     return (
         <SelectFieldWrapper $maxWidth={props.maxWidth}>
             <Select
+                ref={triggerRef}
                 id={props.id}
                 value={hasEmptyOption ? toSelectValue(props.value) : props.value}
                 options={props.options.map((option) => ({...option, value: toSelectValue(option.value)}))}
@@ -203,6 +217,7 @@ export type SelectionItemProps = {
 
 export const SelectionItem = (props: SelectionItemProps) => {
     const id = useId();
+    const errorId = `${id}-error`;
     return (
         <FormRow>
             <ItemLabel htmlFor={id}>{props.label}</ItemLabel>
@@ -216,10 +231,16 @@ export const SelectionItem = (props: SelectionItemProps) => {
                         disabled={props.disabled}
                         invalid={Boolean(props.error)}
                         placeholder={props.placeholder ?? props.label}
+                        describedBy={props.error ? errorId : ''}
                     />
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
-                {props.error && <ErrorMessage message={props.error}/>}
+                {props.error && (
+                    <ErrorMessage
+                        id={errorId}
+                        message={props.error}
+                    />
+                )}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }

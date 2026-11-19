@@ -41,6 +41,7 @@ export class Segmenter {
     private inSpeech = false;
     private segmentStartedAt = 0;
     private lastSpeechAt: number;
+    private heardAt: number | null = null;
     private idleReported = false;
 
     constructor(handlers: Handlers, now: number, options: Partial<SegmenterOptions> = {}) {
@@ -56,6 +57,7 @@ export class Segmenter {
                 this.segmentStartedAt = now;
             }
             this.lastSpeechAt = now;
+            this.heardAt = now;
             this.idleReported = false;
             if (now - this.segmentStartedAt >= this.options.maxSegmentMs) {
                 this.handlers.onCommit();
@@ -72,6 +74,11 @@ export class Segmenter {
             this.idleReported = true;
             this.handlers.onIdle();
         }
+    }
+
+    // lastSpeech is when speech was last heard, or null if never.
+    lastSpeech(): number | null {
+        return this.heardAt;
     }
 
     // flush reports whether speech since the last commit is still uncommitted,
