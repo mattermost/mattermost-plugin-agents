@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -86,11 +88,18 @@ func newArtifactToolEnv(t *testing.T) *artifactToolEnv {
 
 func (e *artifactToolEnv) call(t *testing.T, toolName string, args any) (string, error) {
 	t.Helper()
+	return e.callIn(auth.WithSessionID(t.Context(), artifactSession), t, toolName, args)
+}
+
+// callIn runs the tool with the given context, which decides whether the
+// requester's session is available to it.
+func (e *artifactToolEnv) callIn(ctx context.Context, t *testing.T, toolName string, args any) (string, error) {
+	t.Helper()
 	raw, err := json.Marshal(args)
 	require.NoError(t, err)
 	for _, tool := range e.tools.Tools(e.llmCtx) {
 		if tool.Name == toolName {
-			return tool.Resolver(t.Context(), e.llmCtx, func(v any) error { return json.Unmarshal(raw, v) })
+			return tool.Resolver(ctx, e.llmCtx, func(v any) error { return json.Unmarshal(raw, v) })
 		}
 	}
 	require.Failf(t, "tool not offered", "%s", toolName)
@@ -121,6 +130,64 @@ func TestAgentSavesAnArtifactAsABotPost(t *testing.T) {
 		"saveChannelArtifactByAgent:success:" + entry.ID,
 		"saveChannelArtifactByAgent:success:" + entry.ID,
 	}, e.audits)
+}
+
+func TestAgentSavePublishesTheMatchingEvent(t *testing.T) {
+	e := newArtifactToolEnv(t)
+	out, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Pricing", Content: "<html>v1</html>"})
+	require.NoError(t, err)
+	var result mmtools.ChannelArtifactResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	_, err = e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{ArtifactID: result.ArtifactID, Content: "<html>v2</html>"})
+	require.NoError(t, err)
+	_, err = e.call(t, mmtools.RemoveChannelArtifactToolName, mmtools.RemoveChannelArtifactArgs{ArtifactID: result.ArtifactID})
+	require.NoError(t, err)
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	assert.Equal(t, []string{channelartifacts.EventCreated, channelartifacts.EventUpdated, channelartifacts.EventDeleted}, e.events)
+}
+
+func TestAgentSaveReadsTheFileUnderTheRequestersFilePolicy(t *testing.T) {
+	t.Run("no session fails closed before anything is posted", func(t *testing.T) {
+		e := newArtifactToolEnv(t)
+		_, filePost := e.addSource(t, e.botID, "<html>mine</html>")
+		for name, args := range map[string]mmtools.SaveChannelArtifactArgs{
+			"content": {Title: "x", Content: "<html></html>"},
+			"file":    {Title: "x", FileID: filePost},
+		} {
+			out, err := e.callIn(t.Context(), t, mmtools.SaveChannelArtifactToolName, args)
+			require.Error(t, err, name)
+			assert.Contains(t, out, "session", name)
+		}
+		assert.Zero(t, e.uploads)
+		assert.Empty(t, e.postedBy)
+		list, err := e.svc.List(testUserID, e.channelID)
+		require.NoError(t, err)
+		assert.Empty(t, list.Entries)
+	})
+
+	t.Run("a file the requester may not download is not registered", func(t *testing.T) {
+		e := newArtifactToolEnv(t)
+		_, fileID := e.addSource(t, e.botID, "<html>restricted</html>")
+		e.setFilePolicy(false)
+		out, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Restricted", FileID: fileID})
+		require.Error(t, err)
+		assert.Contains(t, out, "not allowed to download")
+		list, listErr := e.svc.List(testUserID, e.channelID)
+		require.NoError(t, listErr)
+		assert.Empty(t, list.Entries)
+	})
+
+	t.Run("content the requester cannot download is not saved either", func(t *testing.T) {
+		e := newArtifactToolEnv(t)
+		e.setFilePolicy(false)
+		_, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Denied", Content: "<html>x</html>"})
+		require.Error(t, err)
+		list, listErr := e.svc.List(testUserID, e.channelID)
+		require.NoError(t, listErr)
+		assert.Empty(t, list.Entries)
+	})
 }
 
 func TestAgentRegistersAFileAlreadyOnItsPost(t *testing.T) {

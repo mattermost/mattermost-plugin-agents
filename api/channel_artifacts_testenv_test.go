@@ -98,6 +98,7 @@ type libraryFixture struct {
 	channelType model.ChannelType
 
 	mu      *sync.Mutex
+	events  []string
 	denied  map[*model.Permission]bool
 	policy  bool
 	content map[string]string
@@ -137,7 +138,11 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 			return f.policy && session != ""
 		}).Maybe()
 	f.mm.EXPECT().GetConfig().Return(&model.Config{}).Maybe()
-	f.mm.EXPECT().PublishWebSocketEvent(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	f.mm.EXPECT().PublishWebSocketEvent(mock.Anything, mock.Anything, mock.Anything).Run(func(event string, _ map[string]any, _ *model.WebsocketBroadcast) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.events = append(f.events, event)
+	}).Return().Maybe()
 	f.mm.EXPECT().GetFile(mock.Anything).RunAndReturn(func(id string) (io.ReadCloser, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()

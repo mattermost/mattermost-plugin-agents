@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	WebsocketEventChannelArtifactCreated = "channel_artifact_created"
-	WebsocketEventChannelArtifactUpdated = "channel_artifact_updated"
-	WebsocketEventChannelArtifactDeleted = "channel_artifact_deleted"
+	WebsocketEventChannelArtifactCreated = channelartifacts.EventCreated
+	WebsocketEventChannelArtifactUpdated = channelartifacts.EventUpdated
+	WebsocketEventChannelArtifactDeleted = channelartifacts.EventDeleted
 )
 
 // SetChannelArtifacts installs the channel artifact library service.
