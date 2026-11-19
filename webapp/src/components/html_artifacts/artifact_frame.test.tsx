@@ -10,7 +10,8 @@ import {getArtifactTokenFor} from '@/client';
 
 import {getConsentDecision, isConsentPromptPending, resetConsentStore} from './artifact_broker';
 import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS} from './artifact_consent_prompt';
-import ArtifactFrame, {HEARTBEAT_HIDE_MS, HEARTBEAT_STOP_MS} from './artifact_frame';
+import {REVOKE_DOWNLOAD_URL_MS} from './download';
+import ArtifactFrame, {ArtifactFrameHandle, HEARTBEAT_HIDE_MS, HEARTBEAT_STOP_MS} from './artifact_frame';
 import {NUDGE_MS} from './artifact_interact_overlay';
 import HTMLArtifactCard, {resetArtifactRunDecisions} from './html_artifact_card';
 import HTMLArtifactFullscreen from './html_artifact_fullscreen';
@@ -772,6 +773,174 @@ describe('ArtifactFrame focus guard', () => {
         expect(posted).not.toHaveBeenCalledWith(expect.objectContaining({result: expect.anything()}), '*');
     });
 
+    describe('download', () => {
+        const request = (id: string, params: Record<string, unknown>) => ({mmArtifact: 1, type: 'request', id, method: 'download', params});
+        let createObjectURL: jest.Mock;
+        let revokeObjectURL: jest.Mock;
+        let saved: HTMLAnchorElement[];
+        beforeEach(() => {
+            createObjectURL = jest.fn(() => 'blob:http://localhost/saved');
+            revokeObjectURL = jest.fn();
+            Object.assign(URL, {createObjectURL, revokeObjectURL});
+            saved = [];
+            jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function recordSave(this: HTMLAnchorElement) {
+                saved.push(this);
+            });
+        });
+        afterEach(() => {
+            jest.restoreAllMocks();
+            delete (URL as Partial<typeof URL>).createObjectURL;
+            delete (URL as Partial<typeof URL>).revokeObjectURL;
+        });
+
+        test('a slow decode does not count as the artifact going silent', async () => {
+            let t = 1000;
+            jest.spyOn(performance, 'now').mockImplementation(() => t);
+            const realAtob = window.atob;
+            jest.spyOn(window, 'atob').mockImplementation((text: string) => {
+                t += HEARTBEAT_HIDE_MS + 1000;
+                return realAtob(text);
+            });
+            const {frame, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            send({mmArtifact: 1, type: 'heartbeat'});
+            send(request('d1', {mimeType: 'text/plain', data: 'data:text/plain;base64,eA=='}));
+            advance(250);
+
+            expect(screen.queryByTestId('html-artifact-unresponsive')).toBeNull();
+            expect(screen.getByRole('alertdialog', {name: 'Download a file?'})).toBeTruthy();
+        });
+
+        test('a frame that stops before its prompt renders does not leave the page-wide prompt lock held', async () => {
+            const {inner, win} = await renderReadyFrame({startedByClick: true});
+
+            // One act() batches the request and the artifact's blocked
+            // self-navigation, so the load runs before React renders the prompt.
+            act(() => {
+                window.dispatchEvent(new MessageEvent('message', {
+                    data: {...request('d1', {mimeType: 'text/plain', data: 'hi'}), token: TOKEN},
+                    origin: 'null',
+                    source: win,
+                }));
+                fireEvent.load(inner);
+            });
+            await flushLoad();
+
+            expect(stopped()).not.toBeNull();
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(isConsentPromptPending()).toBe(false);
+        });
+
+        test('reloading while a download prompt is open removes it, and the next download gets a fresh, unarmed prompt', async () => {
+            const handle = React.createRef<ArtifactFrameHandle>();
+            const {send} = await renderReadyFrame({startedByClick: true, ref: handle} as Partial<React.ComponentProps<typeof ArtifactFrame>>);
+            send(request('d1', {mimeType: 'text/plain', data: 'x'}));
+            advance(CONSENT_ARM_DELAY_MS);
+            expect(screen.getByTestId('html-artifact-consent-allow').getAttribute('aria-disabled')).toBe('false');
+
+            act(() => handle.current!.reload(true));
+            await flushLoad();
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(isConsentPromptPending()).toBe(false);
+
+            const reloaded = innerIframe()!;
+            fireEvent.load(reloaded);
+            postFrom(reloaded.contentWindow, {mmArtifact: 1, type: 'ready', token: TOKEN});
+            postFrom(reloaded.contentWindow, {...request('d2', {mimeType: 'text/plain', data: 'y'}), token: TOKEN});
+            expect(screen.getByTestId('html-artifact-consent-allow').getAttribute('aria-disabled')).toBe('true');
+        });
+
+        test('a download the host rejects disengages the artifact, so it cannot retry until the viewer clicks it again', async () => {
+            const {frame, win, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            const posted = jest.spyOn(win, 'postMessage');
+            send(request('d1', {mimeType: 'text/html', data: '<b>x</b>'}));
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd1', error: expect.objectContaining({code: 'unsupported_type'})}), '*');
+            expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('false');
+            expect(stopped()).toBeNull();
+
+            send(request('d2', {mimeType: 'text/plain', data: 'x'}));
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd2', error: expect.objectContaining({code: 'busy'})}), '*');
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+        });
+
+        test('a rejected download does not unload the artifact when the browser keeps focus on the frame after blur()', async () => {
+            const {frame, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            jest.spyOn(HTMLElement.prototype, 'blur').mockImplementation(() => undefined); // eslint-disable-line no-undefined
+            send(request('d1', {mimeType: 'text/html', data: 'x'}));
+            advance(1000);
+
+            expect(stopped()).toBeNull();
+            expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('false');
+            expect(document.activeElement).not.toBe(frame);
+        });
+
+        test('the viewer sees the sanitized name, type and size, and the host page saves the file only once they confirm', async () => {
+            const {frame, win, send} = await renderReadyFrame({startedByClick: true});
+            focusArtifact(frame);
+            const posted = jest.spyOn(win, 'postMessage');
+            send(request('d1', {filename: 'chart.svg', mimeType: 'image/png', data: 'x'}));
+
+            const prompt = screen.getByRole('alertdialog', {name: 'Download a file?'});
+            expect(prompt.textContent).toContain('guard.html');
+            expect(screen.getByTestId('html-artifact-consent-file').textContent).toBe('File namechart.svg.pngTypeimage/pngSize1 byte');
+            expect(screen.getByTestId('html-artifact-consent-allow').textContent).toBe('Download');
+            expect(screen.getByTestId('html-artifact-consent-deny').textContent).toBe('Cancel');
+            expect(saved).toHaveLength(0);
+
+            answerPrompt();
+            await flushLoad();
+            expect(saved).toHaveLength(1);
+            expect(saved[0].download).toBe('chart.svg.png');
+            expect(saved[0].href).toBe('blob:http://localhost/saved');
+            expect(saved[0].isConnected).toBe(false);
+            expect(createObjectURL.mock.calls[0][0].type).toBe('image/png');
+            expect(posted).toHaveBeenCalledWith({mmArtifact: 1, type: 'response', id: 'd1', result: {filename: 'chart.svg.png'}}, '*');
+
+            // The artifact keeps the keyboard, and the object URL is revoked.
+            expect(screen.getByTestId('html-artifact-frame').getAttribute('data-engaged')).toBe('true');
+            advance(REVOKE_DOWNLOAD_URL_MS - 1);
+            expect(revokeObjectURL).not.toHaveBeenCalled();
+            advance(1);
+            expect(revokeObjectURL).toHaveBeenCalledWith('blob:http://localhost/saved');
+            expect(stopped()).toBeNull();
+        });
+
+        test('cancelling saves nothing and leaves the artifact disengaged, not stopped, until the viewer clicks it again', async () => {
+            const {frame, win, send} = await renderReadyFrame();
+            act(() => composer.focus());
+            trustedClick(interact()!);
+            expect(document.activeElement).toBe(frame);
+            const posted = jest.spyOn(win, 'postMessage');
+            send(request('d1', {mimeType: 'text/plain', data: 'x'}));
+            expect(screen.getByTestId('html-artifact-consent')).toBeTruthy();
+
+            act(() => {
+                jest.advanceTimersByTime(CONSENT_ARM_DELAY_MS);
+            });
+            fireEvent.click(screen.getByTestId('html-artifact-consent-deny'));
+            await flushLoad();
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd1', error: expect.objectContaining({code: 'permission_denied'})}), '*');
+            expect(saved).toHaveLength(0);
+
+            expect(interact()).not.toBeNull();
+            expect(document.activeElement).toBe(composer);
+            advance(1000);
+            expect(stopped()).toBeNull();
+
+            // Asking again right away gets no prompt.
+            send(request('d2', {mimeType: 'text/plain', data: 'x'}));
+            expect(screen.queryByTestId('html-artifact-consent')).toBeNull();
+            expect(posted).toHaveBeenCalledWith(expect.objectContaining({id: 'd2', error: expect.objectContaining({code: 'busy'})}), '*');
+
+            trustedClick(interact()!);
+            send(request('d3', {mimeType: 'text/plain', data: 'x'}));
+            expect(screen.getByTestId('html-artifact-consent')).toBeTruthy();
+        });
+    });
+
     test('an artifact that takes focus and opens a prompt at once gets no prompt and is stopped', async () => {
         const {frame, inner} = await renderReadyFrame();
         act(() => composer.focus());
@@ -960,6 +1129,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         const {unmount} = render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,
@@ -978,6 +1148,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         const {unmount} = render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,
@@ -994,6 +1165,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,
@@ -1006,6 +1178,7 @@ describe('ArtifactConsentPrompt focus handling', () => {
         render(withProviders(
             <ArtifactConsentPrompt
                 fileName='dash.html'
+                request={{kind: 'profile'}}
                 onAllow={jest.fn()}
                 onDeny={jest.fn()}
             />,

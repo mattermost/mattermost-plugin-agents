@@ -18,6 +18,7 @@ import {
     ArtifactBroker,
     ArtifactContext,
     ArtifactUser,
+    ConsentRequest,
     DisplayMode,
     colorSchemeFor,
     readThemeFromCSS,
@@ -27,7 +28,7 @@ import ArtifactConsentPrompt from './artifact_consent_prompt';
 import ArtifactInteractOverlay from './artifact_interact_overlay';
 import {newArtifactNonce} from './artifact_token';
 import {isolatedFrameRegistry} from './isolated_frames';
-import {downloadArtifact} from './download';
+import {downloadArtifact, saveBlob} from './download';
 
 export const MIN_INLINE_HEIGHT = 120;
 export const MAX_INLINE_HEIGHT = 600;
@@ -121,6 +122,7 @@ type Status = 'loading' | 'ready' | 'error';
 type StopReason = 'navigation' | 'focus' | 'unresponsive';
 
 interface PendingConsent {
+    request: ConsentRequest;
     resolve: (allowed: boolean) => void;
     reject: () => void;
 }
@@ -214,8 +216,20 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     userRef.current = user;
     const onEscapeRef = useRef(onEscape);
     onEscapeRef.current = onEscape;
+
+    // The ref is set together with the state, not on render: a frame that
+    // stops before the prompt renders must still reject it, or the page-wide
+    // prompt lock stays held.
     const pendingConsentRef = useRef<PendingConsent | null>(null);
-    pendingConsentRef.current = pendingConsent;
+    const showConsent = useCallback((pending: PendingConsent | null) => {
+        pendingConsentRef.current = pending;
+        setPendingConsent(pending);
+    }, []);
+    const releaseFocusRef = useRef<() => void>(() => {}); // eslint-disable-line no-empty-function
+    const dropConsent = useCallback(() => {
+        pendingConsentRef.current?.reject();
+        showConsent(null);
+    }, [showConsent]);
     const obscuredRef = useRef(obscured);
     obscuredRef.current = obscured;
     const stopReasonRef = useRef(stopReason);
@@ -269,11 +283,16 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         getTargetWindow: () => innerRef.current?.contentWindow,
         getContext: () => contextRef.current,
         getCurrentUser: () => userRef.current,
-        requestConsent: () => new Promise<boolean>((resolve, reject) => {
+        requestConsent: (request) => new Promise<boolean>((resolve, reject) => {
             consentReturnsToFrameRef.current = engagedRef.current && Boolean(iframeRef.current) && document.activeElement === iframeRef.current;
-            setPendingConsent({resolve, reject});
+            showConsent({request, resolve, reject});
         }),
-        dismissConsent: () => setPendingConsent(null),
+        dismissConsent: () => showConsent(null),
+        onDownloadRejected: () => {
+            setEngaged(false);
+            releaseFocusRef.current();
+        },
+        saveDownload: saveBlob,
         canPrompt: () => !obscuredRef.current && engagedRef.current,
         onReady: () => setStatus('ready'),
         onHeartbeat: () => {
@@ -283,9 +302,14 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
                 setUnresponsive(false);
             }
         },
+        onHostBusy: () => {
+            if (lastHeartbeatRef.current !== null) {
+                lastHeartbeatRef.current = performance.now();
+            }
+        },
         onResize: (h) => setHeight(clampInlineHeight(h)),
         onEscape: () => onEscapeRef.current?.(),
-    }) : null), [load, currentUserId]);
+    }) : null), [load, currentUserId, showConsent, setEngaged]);
     const brokerRef = useRef(broker);
     brokerRef.current = broker;
 
@@ -307,9 +331,9 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             broker.dispose();
 
             // Unanswered prompts are dropped without recording a decision.
-            pendingConsentRef.current?.reject();
+            dropConsent();
         };
-    }, [broker]);
+    }, [broker, dropConsent]);
 
     useEffect(() => {
         broker?.sendContext();
@@ -319,11 +343,10 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     // own network access: unload it rather than leave it hidden.
     const failLoad = useCallback(() => {
         brokerRef.current?.dispose();
-        pendingConsentRef.current?.reject();
-        setPendingConsent(null);
+        dropConsent();
         setLoadFailed(true);
         setStatus('error');
-    }, []);
+    }, [dropConsent]);
 
     // Each host load: reset state and arm the ready timeout.
     useEffect(() => {
@@ -346,10 +369,9 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     // dropped undecided.
     const stopFrame = useCallback((reason: StopReason) => {
         brokerRef.current?.dispose();
-        pendingConsentRef.current?.reject();
-        setPendingConsent(null);
+        dropConsent();
         setStopReason(reason);
-    }, []);
+    }, [dropConsent]);
 
     // Takes keyboard focus out of the iframe, back to where the viewer last
     // was on the page. Never onto the interact overlay: a viewer typing there
@@ -365,6 +387,11 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
         }
         if (document.activeElement === iframe) {
             iframe.blur();
+        }
+
+        // blur() can leave the frame focused; the frame's own area is safe.
+        if (document.activeElement === iframe) {
+            containerRef.current?.focus({preventScroll: true});
         }
     }, []);
 
@@ -427,8 +454,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
 
                 // The document now in the frame may not be the one that
                 // asked: drop its prompt undecided.
-                pendingConsentRef.current?.reject();
-                setPendingConsent(null);
+                dropConsent();
 
                 // Keystrokes must not go to a page the viewer can no longer see.
                 releaseFocus();
@@ -441,7 +467,9 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             window.clearInterval(timer);
             document.removeEventListener('visibilitychange', onVisibilityChange);
         };
-    }, [broker, stopReason, stopFrame, releaseFocus, setEngaged]);
+    }, [broker, stopReason, stopFrame, releaseFocus, setEngaged, dropConsent]);
+
+    releaseFocusRef.current = releaseFocus;
 
     // Focus guard. Sandboxed frames can still call focus() on themselves and
     // take keystrokes meant for the page (e.g. the message box), so an
@@ -659,28 +687,42 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
     }, [setEngaged, focusArtifact]);
 
     const refocusAfterConsentRef = useRef(false);
+    const releaseAfterConsentRef = useRef(false);
     const answerConsent = useCallback((allowed: boolean) => {
-        // The prompt is about to hand focus back to this artifact, which had
-        // it when the prompt opened; the viewer answering it is returning there.
-        if (consentReturnsToFrameRef.current && !unresponsiveRef.current) {
+        const pending = pendingConsentRef.current;
+        if (pending?.request.kind === 'download' && !allowed) {
+            // Downloads are never remembered, so an artifact could ask again
+            // the moment one is cancelled: it must be clicked first.
+            setEngaged(false);
+            releaseAfterConsentRef.current = true;
+        } else if (consentReturnsToFrameRef.current && !unresponsiveRef.current) {
+            // The prompt is about to hand focus back to this artifact, which had
+            // it when the prompt opened; the viewer answering it is returning there.
             setEngaged(true);
             refocusAfterConsentRef.current = true;
         }
-        pendingConsentRef.current?.resolve(allowed);
-        setPendingConsent(null);
-    }, [setEngaged]);
+        pending?.resolve(allowed);
+        showConsent(null);
+    }, [setEngaged, showConsent]);
 
     // The prompt gives focus back to the wrapper element as it unmounts,
-    // which leaves keystrokes in the wrapper document; pass them on to the artifact.
+    // which leaves keystrokes in the wrapper document; pass them on to the
+    // artifact, or, when it was disengaged, back to the page.
     useEffect(() => {
-        if (pendingConsent || !refocusAfterConsentRef.current) {
+        if (pendingConsent) {
             return;
         }
-        refocusAfterConsentRef.current = false;
-        if (document.activeElement === iframeRef.current) {
-            focusArtifact();
+        if (releaseAfterConsentRef.current) {
+            releaseAfterConsentRef.current = false;
+            releaseFocus();
         }
-    }, [pendingConsent, focusArtifact]);
+        if (refocusAfterConsentRef.current) {
+            refocusAfterConsentRef.current = false;
+            if (document.activeElement === iframeRef.current) {
+                focusArtifact();
+            }
+        }
+    }, [pendingConsent, focusArtifact, releaseFocus]);
 
     useEffect(() => {
         if (innerRef.current) {
@@ -830,6 +872,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({
             {pendingConsent && (
                 <ArtifactConsentPrompt
                     fileName={fileName}
+                    request={pendingConsent.request}
                     onAllow={() => answerConsent(true)}
                     onDeny={() => answerConsent(false)}
                 />
