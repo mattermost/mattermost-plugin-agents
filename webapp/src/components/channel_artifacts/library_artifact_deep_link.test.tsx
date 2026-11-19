@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {combineReducers, createStore, type Store} from 'redux';
@@ -22,6 +22,9 @@ jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     return {
         ...actual,
+        useIntl: () => ({
+            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => <>{defaultMessage}</>,
     };
 });
@@ -344,5 +347,28 @@ describe('LibraryArtifactDeepLink', () => {
         });
         expect(await screen.findByText('This channel artifact is unavailable.')).toBeTruthy();
         expect(window.location.search).not.toContain('mm_ai_library_artifact');
+    });
+
+    test('shows the unavailable notice in the standard dialog and closes it', async () => {
+        jest.mocked(getChannelArtifact).mockRejectedValue({status_code: 404});
+        const store = renderLink();
+        act(() => {
+            store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_ENABLED', channelArtifactsEnabled: true});
+            store.dispatch({
+                type: 'SET_CHANNEL',
+                id: channelId,
+                channel: {name: 'off-topic', team_id: 'team1'},
+                team: {id: 'team1', name: 'test'},
+            });
+        });
+
+        const dialog = await screen.findByRole('dialog');
+        expect(dialog.textContent).toContain('Artifact unavailable');
+        expect(dialog.textContent).toContain('This channel artifact is unavailable.');
+        expect(within(dialog).queryByRole('button', {name: 'Cancel'})).toBeNull();
+
+        const close = within(dialog).getAllByRole('button', {name: 'Close'});
+        fireEvent.click(close[close.length - 1]);
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     });
 });

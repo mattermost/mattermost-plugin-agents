@@ -62,3 +62,14 @@ export const getChannelArtifactsLoadFailed = (state: AppState): boolean =>
 
 export const getChannelLibrary = (state: AppState, channelId: string): ChannelLibraryState | undefined =>
     state[`plugins-${manifest.id}`]?.channelArtifactLibrary?.[channelId];
+
+// Libraries exist only in public and private channels, never in direct or
+// group messages. An unknown channel counts as unsupported.
+export const channelSupportsArtifacts = (state: GlobalState, channelId: string): boolean => {
+    const type = state.entities?.channels?.channels?.[channelId]?.type;
+    return type === 'O' || type === 'P';
+};
+
+/** True when the library is on and the open channel can hold one. */
+export const getChannelArtifactsAvailableHere = (state: AppState): boolean =>
+    getChannelArtifactsEnabled(state) && channelSupportsArtifacts(state, state.entities?.channels?.currentChannelId || '');

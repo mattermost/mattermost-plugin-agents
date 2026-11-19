@@ -282,6 +282,10 @@ type artifactRun struct {
 func runArtifactEval(e *evals.EvalT, suite *TestSuite, env *artifactEvalEnv, c artifactEvalCase) {
 	e.Helper()
 
+	// Libraries exist only in public and private channels, and the plugin never
+	// offers the artifact tools in a direct or group message. Run in the seeded
+	// channel, not the shared helper's default direct message.
+	require.True(e, channelartifacts.SupportsChannelType(env.channel.Type), "artifact evals must run in a public or private channel")
 	setup := setupAgenticEval(e, suite, env.requester, env.team)
 	var (
 		filesMu sync.Mutex

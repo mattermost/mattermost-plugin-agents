@@ -32,7 +32,7 @@ import ChannelArtifactsCountBadge from './components/channel_artifacts/channel_a
 import ArtifactBookmarkPicker, {openArtifactBookmarkPicker} from './components/channel_artifacts/artifact_bookmark_picker';
 import LibraryArtifactDeepLink from './components/channel_artifacts/library_artifact_deep_link';
 import {applyLibraryEvent} from './components/channel_artifacts/library';
-import {getChannelArtifactsEnabled} from './selectors';
+import {getChannelArtifactsAvailableHere} from './selectors';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
@@ -305,7 +305,7 @@ export default class Plugin {
                 () => {
                     store.dispatch(artifactsRhs.showRHSPlugin);
                 },
-                (state: GlobalState) => Boolean(getChannelArtifactsEnabled(state as any)),
+                (state: GlobalState) => Boolean(getChannelArtifactsAvailableHere(state as any)),
             );
         }
 
@@ -317,7 +317,7 @@ export default class Plugin {
                 () => {
                     store.dispatch(artifactsRhs.showRHSPlugin);
                 },
-                (state: GlobalState) => Boolean(getChannelArtifactsEnabled(state as any)),
+                (state: GlobalState) => Boolean(getChannelArtifactsAvailableHere(state as any)),
                 <ChannelArtifactsCountBadge/>,
                 true,
             );
@@ -331,7 +331,7 @@ export default class Plugin {
                 (channelId: string) => {
                     openArtifactBookmarkPicker(channelId);
                 },
-                (state: GlobalState) => Boolean(getChannelArtifactsEnabled(state as any)),
+                (state: GlobalState) => Boolean(getChannelArtifactsAvailableHere(state as any)),
             );
         }
 

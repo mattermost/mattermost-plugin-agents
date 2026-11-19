@@ -546,7 +546,7 @@ const Config = (props: Props) => {
                         onChange={(to) => {
                             updateConfig({enableChannelArtifacts: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled (and HTML artifacts are enabled), people who may add bookmarks in a channel, and agents on their behalf, can save HTML artifacts to the channel. Members open them from the Channel artifacts panel. The library keeps a link to each artifact\'s original message and file, not a copy: an artifact is available only while that message exists and follows its retention.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled (and HTML artifacts are enabled), people who may add bookmarks in a channel, and agents on their behalf, can save HTML artifacts to the channel. Members open them from the Channel artifacts panel. The library keeps a link to each artifact\'s original message and file, not a copy: an artifact is available only while that message exists and follows its retention. Channels only: direct and group messages have no library.'})}
                     />
                     {Boolean(value.enableChannelArtifacts) && (
                         <>

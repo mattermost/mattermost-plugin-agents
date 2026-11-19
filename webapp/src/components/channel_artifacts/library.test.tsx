@@ -39,13 +39,15 @@ function entry(id: string, title = id): ChannelArtifactEntry {
 
 const list = (entries: ChannelArtifactEntry[]): ChannelArtifactList => ({entries, can_add: true, can_edit: false, can_delete: false, max_per_channel: 50});
 
+const entities = (state = {channels: {channels: {[channelId]: {type: 'O'}}}}) => state;
+
 function Consumer({testId}: {testId: string}) {
     const library = useChannelLibrary(channelId);
     return <div data-testid={testId}>{`${library.status}:${library.entries.map((e) => e.title).join(',')}:${library.canAdd}`}</div>;
 }
 
 function setup(consumers = 1) {
-    const store: Store<unknown, UnknownAction> = createStore(combineReducers({[`plugins-${manifest.id}`]: pluginReducer} as never)) as never;
+    const store: Store<unknown, UnknownAction> = createStore(combineReducers({[`plugins-${manifest.id}`]: pluginReducer, entities} as never)) as never;
     store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_ENABLED', channelArtifactsEnabled: true});
     render(
         <Provider store={store}>

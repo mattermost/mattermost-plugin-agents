@@ -65,6 +65,14 @@ const ChannelArtifactsRHS = () => {
         );
     }
 
+    if (library.status === 'unsupported') {
+        return (
+            <Empty data-testid='channel-artifacts-unsupported'>
+                <FormattedMessage defaultMessage='Channel artifacts are available in channels, not in direct or group messages.'/>
+            </Empty>
+        );
+    }
+
     const entries = library.entries;
     const loading = library.status === 'loading';
     const error = library.status === 'error';
@@ -129,9 +137,6 @@ const ChannelArtifactsRHS = () => {
 
     return (
         <Container data-testid='channel-artifacts-rhs'>
-            <Intro>
-                <FormattedMessage defaultMessage="Interactive HTML apps saved to this channel. The channel keeps a link to each app's original message, not a copy, so an app is available only while that message exists. Open one to see earlier versions."/>
-            </Intro>
             <Toolbar>
                 <Count>
                     <FormattedMessage
@@ -165,7 +170,7 @@ const ChannelArtifactsRHS = () => {
             )}
             {!loading && !error && entries.length === 0 && (
                 <Empty data-testid='channel-artifacts-empty'>
-                    <FormattedMessage defaultMessage='No artifacts yet. When an agent builds something useful, select the pin on its artifact card to save it here.'/>
+                    <FormattedMessage defaultMessage='No artifacts saved in this channel.'/>
                 </Empty>
             )}
             <List>
@@ -285,11 +290,6 @@ const ChannelArtifactsRHS = () => {
                     onClose={() => setOpenId(null)}
                 />
             )}
-            {library.canAdd && (
-                <Hint>
-                    <FormattedMessage defaultMessage='Tip: select the pin on an agent HTML artifact to save it here. Saving a revised file adds a new version. Ask an agent to save or update one for you.'/>
-                </Hint>
-            )}
         </Container>
     );
 };
@@ -302,13 +302,6 @@ const Container = styled.div`
     height: 100%;
     padding: var(--spacing-sm, 12px) var(--spacing-md, 16px);
     gap: var(--spacing-xs, 8px);
-`;
-
-const Intro = styled.p`
-    margin: 0;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    font-size: 13px;
-    line-height: 18px;
 `;
 
 const Toolbar = styled.div`
@@ -395,14 +388,6 @@ const Warning = styled.div`
     color: var(--error-text);
     font-size: 13px;
     line-height: 18px;
-`;
-
-const Hint = styled.div`
-    margin-top: auto;
-    padding-top: var(--spacing-xs, 8px);
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 12px;
-    line-height: 16px;
 `;
 
 const Unavailable = styled.span`

@@ -4,14 +4,13 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
-import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
-import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
 import {ChannelArtifactEntry, getChannelArtifact} from '@/client';
 import {getChannelArtifactsEnabled, getChannelArtifactsLoadFailed, getChannelArtifactsLoaded} from '@/selectors';
 
+import ConfirmationDialog from '../confirmation_dialog';
 import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
 import {historyPathWithoutBasename, libraryUrlAwaitingChannelSwitch, parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
@@ -187,18 +186,29 @@ const LibraryArtifactDeepLink = () => {
     return (
         <>
             {notice && (
-                <NoticeBanner data-testid='library-artifact-deep-link-notice'>
-                    <SectionNotice
-                        type='danger'
-                        title={notice === 'disabled' ? (
-                            <FormattedMessage defaultMessage='Channel artifacts are disabled on this server.'/>
-                        ) : (
-                            <FormattedMessage defaultMessage='This channel artifact is unavailable.'/>
-                        )}
-                        primaryButtonLabel={<FormattedMessage defaultMessage='Dismiss'/>}
-                        onPrimaryAction={() => setNotice(null)}
-                    />
-                </NoticeBanner>
+                <ConfirmationDialog
+                    titleId='library-artifact-deep-link-notice-title'
+                    title={notice === 'disabled' ? (
+                        <FormattedMessage defaultMessage='Channel artifacts disabled'/>
+                    ) : (
+                        <FormattedMessage defaultMessage='Artifact unavailable'/>
+                    )}
+                    message={(
+                        <span data-testid='library-artifact-deep-link-notice'>
+                            {notice === 'disabled' ? (
+                                <FormattedMessage defaultMessage='Channel artifacts are disabled on this server.'/>
+                            ) : (
+                                <FormattedMessage defaultMessage='This channel artifact is unavailable.'/>
+                            )}
+                        </span>
+                    )}
+                    confirmButtonText={<FormattedMessage defaultMessage='Close'/>}
+                    hideCancel={true}
+                    onConfirm={() => setNotice(null)}
+                    onCancel={() => setNotice(null)}
+                    managedAccessibility={true}
+                    zIndex={11000}
+                />
             )}
             {entry && (
                 <HTMLArtifactFullscreen
@@ -225,12 +235,3 @@ const LibraryArtifactDeepLink = () => {
 };
 
 export default LibraryArtifactDeepLink;
-
-const NoticeBanner = styled.div`
-    position: fixed;
-    top: var(--spacing-md, 16px);
-    left: 50%;
-    z-index: 11000;
-    width: min(480px, calc(100% - var(--spacing-xl, 24px)));
-    transform: translateX(-50%);
-`;

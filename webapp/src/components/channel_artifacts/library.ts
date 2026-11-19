@@ -7,7 +7,7 @@ import {useDispatch, useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
-import {getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
+import {channelSupportsArtifacts, getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
 type LibraryDispatch = (action: Record<string, unknown>) => unknown;
 
@@ -39,7 +39,9 @@ export function loadChannelLibrary(dispatch: LibraryDispatch, channelId: string)
 }
 
 export type ChannelLibrary = {
-    status: 'loading' | 'ready' | 'error';
+
+    // 'unsupported' is a direct or group message, which never has a library.
+    status: 'loading' | 'ready' | 'error' | 'unsupported';
     entries: ChannelArtifactEntry[];
     canAdd: boolean;
     canEdit: boolean;
@@ -55,7 +57,9 @@ export type ChannelLibrary = {
  */
 export function useChannelLibrary(channelId: string): ChannelLibrary {
     const dispatch = useDispatch();
-    const enabled = useSelector(getChannelArtifactsEnabled);
+    const featureEnabled = useSelector(getChannelArtifactsEnabled);
+    const supported = useSelector((state: GlobalState) => channelSupportsArtifacts(state, channelId));
+    const enabled = featureEnabled && supported;
     const cached = useSelector((state: GlobalState) => getChannelLibrary(state as never, channelId));
     const status = cached?.status;
 
@@ -80,18 +84,18 @@ export function useChannelLibrary(channelId: string): ChannelLibrary {
     }, [enabled, channelId, status, dispatch]);
 
     const reload = useCallback(() => {
-        if (!channelId) {
+        if (!channelId || !supported) {
             return Promise.resolve();
         }
         return loadChannelLibrary(dispatch as LibraryDispatch, channelId);
-    }, [dispatch, channelId]);
+    }, [dispatch, channelId, supported]);
 
     return {
-        status: cached?.status ?? 'loading',
-        entries: cached?.entries ?? NO_ENTRIES,
-        canAdd: Boolean(cached?.canAdd),
-        canEdit: Boolean(cached?.canEdit),
-        canDelete: Boolean(cached?.canDelete),
+        status: featureEnabled && !supported ? 'unsupported' : (cached?.status ?? 'loading'),
+        entries: supported ? (cached?.entries ?? NO_ENTRIES) : NO_ENTRIES,
+        canAdd: supported && Boolean(cached?.canAdd),
+        canEdit: supported && Boolean(cached?.canEdit),
+        canDelete: supported && Boolean(cached?.canDelete),
         maxPerChannel: cached?.maxPerChannel ?? 0,
         reload,
     };

@@ -73,13 +73,13 @@ function libraryList(entries: ChannelArtifactEntry[], permissions: Partial<Chann
 
 function renderRHS(): Store {
     const entities = (state = {
-        channels: {currentChannelId: channelID},
+        channels: {currentChannelId: channelID, channels: {[channelID]: {type: 'O'}, [otherChannelID]: {type: 'O'}, dmchannel01234567890123456: {type: 'D'}} as Record<string, {type: string}>},
         general: {config: {}, license: {}},
         users: {currentUserId: 'user', profiles: {}},
         teams: {currentTeamId: '', teams: {}},
     }, action: {type: string; id?: string}) => {
         if (action.type === 'SET_CHANNEL') {
-            return {...state, channels: {currentChannelId: action.id || ''}};
+            return {...state, channels: {...state.channels, currentChannelId: action.id || ''}};
         }
         return state;
     };
@@ -229,6 +229,29 @@ describe('ChannelArtifactsRHS', () => {
         expect(await screen.findByText('Could not remove the artifact.')).toBeTruthy();
         expect(unpinLibraryArtifactBookmark).not.toHaveBeenCalled();
         expect(screen.getByTestId(`channel-artifact-${artifactID}`)).toBeTruthy();
+    });
+
+    test('shows no library controls in a direct message, and never asks the server for one', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(libraryList([libraryEntry()]));
+        const store = renderRHS();
+        await screen.findByTestId(`channel-artifact-${artifactID}`);
+        jest.mocked(listChannelArtifacts).mockClear();
+
+        act(() => {
+            store.dispatch({type: 'SET_CHANNEL', id: 'dmchannel01234567890123456'});
+        });
+
+        expect(await screen.findByTestId('channel-artifacts-unsupported')).toBeTruthy();
+        expect(screen.queryByTestId(`channel-artifact-${artifactID}`)).toBeNull();
+        expect(listChannelArtifacts).not.toHaveBeenCalled();
+    });
+
+    test('has no explanatory text above the list', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(libraryList([libraryEntry()]));
+        renderRHS();
+        await screen.findByTestId(`channel-artifact-${artifactID}`);
+        expect(screen.queryByText(/keeps a link/)).toBeNull();
+        expect(screen.queryByText(/Tip:/)).toBeNull();
     });
 
     test('offers a retry after the list fails to load', async () => {

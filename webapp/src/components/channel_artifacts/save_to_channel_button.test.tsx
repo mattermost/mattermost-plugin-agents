@@ -67,12 +67,14 @@ function entry(overrides: Partial<ChannelArtifactEntry> = {}): ChannelArtifactEn
     };
 }
 
+const entities = (state = {channels: {channels: {[channelId]: {type: 'O'}}}}) => state;
+
 function permissions(overrides: Partial<ChannelArtifactList> = {}): ChannelArtifactList {
     return {entries: [], can_add: true, can_edit: true, can_delete: true, max_per_channel: 50, ...overrides};
 }
 
-function renderButton() {
-    const store: Store = createStore(combineReducers({[`plugins-${manifest.id}`]: pluginReducer} as never));
+function renderButton(channelType = 'O') {
+    const store: Store = createStore(combineReducers({[`plugins-${manifest.id}`]: pluginReducer, entities: () => ({channels: {channels: {[channelId]: {type: channelType}}}})} as never));
     store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_ENABLED', channelArtifactsEnabled: true});
     render(
         <Provider store={store}>
@@ -121,6 +123,16 @@ describe('SaveToChannelButton', () => {
         expect(screen.queryByTestId('html-artifact-save-to-channel')).toBeNull();
     });
 
+    test.each(['D', 'G'])('is hidden in a %s channel and never asks the server for a library', async (channelType) => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(permissions());
+        renderButton(channelType);
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        expect(screen.queryByTestId('html-artifact-save-to-channel')).toBeNull();
+        expect(listChannelArtifacts).not.toHaveBeenCalled();
+    });
+
     test('still offers the control after the list fails, and a click retries the load', async () => {
         jest.mocked(listChannelArtifacts).mockRejectedValueOnce(new Error('down')).mockResolvedValue(permissions());
         renderButton();
@@ -134,7 +146,7 @@ describe('SaveToChannelButton', () => {
 
     test('lists the library once however many cards are on screen', async () => {
         jest.mocked(listChannelArtifacts).mockResolvedValue(permissions());
-        const store: Store = createStore(combineReducers({[`plugins-${manifest.id}`]: pluginReducer} as never));
+        const store: Store = createStore(combineReducers({[`plugins-${manifest.id}`]: pluginReducer, entities} as never));
         store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_ENABLED', channelArtifactsEnabled: true});
         render(
             <Provider store={store}>
