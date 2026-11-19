@@ -499,6 +499,33 @@ func (s *Service) ReadContent(sessionID string, entry *Entry, version int, maxSi
 	return body, nil
 }
 
+// CheckReadable reports whether the session could read the version's content
+// now, without reading it: the same file download policy and availability
+// checks as ReadContent. version 0 means the current version.
+func (s *Service) CheckReadable(sessionID string, entry *Entry, version int) error {
+	rec, err := s.sourceOf(entry, version)
+	if err != nil {
+		return err
+	}
+	if !rec.Available {
+		return ErrUnavailable
+	}
+	info, err := mmapi.WithFilePolicy(s.mm, sessionID).GetFileInfo(rec.SourceFileID)
+	switch {
+	case err == nil:
+	case errors.Is(err, mmapi.ErrFileActionForbidden):
+		return ErrNotFound
+	case mmapi.IsNotFound(err):
+		return ErrUnavailable
+	default:
+		return err
+	}
+	if info == nil || info.DeleteAt != 0 {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 // SweepDeletedChannels removes the rows of artifacts in permanently deleted
 // channels. Content is never deleted by the library.
 func (s *Service) SweepDeletedChannels() (int64, error) {

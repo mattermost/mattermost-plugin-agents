@@ -191,6 +191,10 @@ func TestChannelArtifactContentRoutes(t *testing.T) {
 			name: "token after the source file was deleted", method: http.MethodGet, path: "/token?n=" + testArtifactNonce, wantStatus: http.StatusGone,
 			setup: func(f *libraryFixture, e *channelartifacts.Entry) { f.breakSource(t, e.SourceFileID) },
 		},
+		{
+			name: "token denied by the file policy", method: http.MethodGet, path: "/token?n=" + testArtifactNonce, wantStatus: http.StatusNotFound,
+			setup: func(f *libraryFixture, _ *channelartifacts.Entry) { f.setFilePolicy(false) },
+		},
 		{name: "token for the current version", method: http.MethodGet, path: "/token?n=" + testArtifactNonce + "&version=1", wantStatus: http.StatusOK},
 		{name: "token rejects unknown keys", method: http.MethodGet, path: "/token?n=" + testArtifactNonce + "&x=1", wantStatus: http.StatusBadRequest},
 		{name: "download of a version that does not exist", method: http.MethodGet, path: "/download?version=9", wantStatus: http.StatusNotFound},
@@ -210,6 +214,25 @@ func TestChannelArtifactContentRoutes(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("expected client errors are not logged as server errors", func(t *testing.T) {
+		f := newLibraryFixture(t)
+		f.e.api.artifactSecretCache = []byte(strings.Repeat("k", artifactSecretSize))
+		entry := f.save(t, "Notes", "<html>v1</html>")
+		f.setFilePolicy(false)
+		for _, path := range []string{"/download", "/token?n=" + testArtifactNonce, "?n=" + testArtifactNonce + "&version=9"} {
+			rec := f.do(http.MethodGet, "/channel-artifacts/"+entry.ID+path, "", "Sec-Fetch-Dest", "iframe", "Sec-Fetch-Site", "same-origin")
+			require.Equal(t, http.StatusNotFound, rec.Code, path)
+		}
+		f.setFilePolicy(true)
+		f.breakSource(t, entry.SourceFileID)
+		rec := f.do(http.MethodGet, "/channel-artifacts/"+entry.ID+"/download", "")
+		require.Equal(t, http.StatusGone, rec.Code)
+
+		for _, call := range f.e.mockAPI.Calls {
+			assert.NotEqual(t, "LogError", call.Method, "%v", call.Arguments)
+		}
+	})
 
 	t.Run("token matches the bridge token", func(t *testing.T) {
 		f := newLibraryFixture(t)
