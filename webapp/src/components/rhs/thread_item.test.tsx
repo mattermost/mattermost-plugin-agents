@@ -49,6 +49,18 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
 };
 
 describe('ThreadItem', () => {
+    const formatText = jest.fn<string, [string]>();
+
+    beforeEach(() => {
+        formatText.mockReset();
+        formatText.mockImplementation((source) => `<p>${source}</p>`);
+        (window as any).PostUtils = {formatText};
+    });
+
+    afterEach(() => {
+        delete (window as any).PostUtils;
+    });
+
     test('shows the agent\'s avatar, the chat title and first message, and a meta line with the agent, time and replies', () => {
         renderItem();
 
@@ -89,20 +101,18 @@ describe('ThreadItem', () => {
         texts.forEach((text) => expect(screen.getAllByText(text)).toHaveLength(1));
     });
 
-    test('the list preview drops markdown syntax and the title stays as stored', () => {
-        renderItem({
-            title: '**Keep title**',
-            preview: '**Bold** idea. See [the docs](https://example.com/docs).\n\n```ts\nconst n = 1;\n```',
-        });
+    test('the list preview is the host-formatted text and the title stays as stored', () => {
+        formatText.mockReturnValue('<p><strong>Bold</strong> idea. See <a href="https://example.com/docs">the docs</a>.</p>');
+        renderItem({title: '**Keep title**', preview: '**Bold** idea. See [the docs](https://example.com/docs).'});
 
         expect(screen.getByText('**Keep title**')).toBeTruthy();
-        expect(screen.getByText('Bold idea. See the docs. const n = 1;')).toBeTruthy();
+        expect(screen.getByText('Bold idea. See the docs.')).toBeTruthy();
         expect(screen.queryByText(/https:\/\/example\.com/)).toBeNull();
-        expect(screen.queryByText(/```/)).toBeNull();
     });
 
-    test('an untitled chat is headed by the preview once, without markdown', () => {
-        renderItem({title: '  ', preview: '## **Status**\n\nAll [clear](https://example.com)'});
+    test('an untitled chat is headed by the formatted preview once', () => {
+        formatText.mockReturnValue('<h2><strong>Status</strong></h2><p>All clear</p>');
+        renderItem({title: '  ', preview: '## **Status**\n\nAll clear'});
 
         expect(screen.getAllByText('Status All clear')).toHaveLength(1);
         expect(screen.getByRole('button', {name: 'Status All clear, Matty'})).toBeTruthy();

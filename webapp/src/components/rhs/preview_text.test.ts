@@ -1,216 +1,85 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {stripMarkdownPreview} from './preview_text';
+import {previewText} from './preview_text';
 
-describe('stripMarkdownPreview', () => {
+// The `html` of each case mirrors what the host's markdown renderer emits for `source`.
+describe('previewText', () => {
+    const formatText = jest.fn<string, [string, {singleline: boolean}]>();
+
+    beforeEach(() => {
+        formatText.mockReset();
+        (window as any).PostUtils = {formatText};
+    });
+
+    afterEach(() => {
+        delete (window as any).PostUtils;
+    });
+
     test.each([
         {
             name: 'plain text',
-            source: 'Key selling points: self-hosted and air-gapped deployment',
-            expected: 'Key selling points: self-hosted and air-gapped deployment',
+            source: 'Key selling points',
+            html: '<p class="markdown__paragraph-inline">Key selling points</p>',
+            expected: 'Key selling points',
         },
         {
-            name: 'emphasis',
-            source: '**bold** *italic* _em_ ~~gone~~ ***both***',
-            expected: 'bold italic em gone both',
+            name: 'emphasis and a link keep their text, not the url',
+            source: '**Bold** idea, see [the docs](https://example.com/docs)',
+            html: '<p><strong>Bold</strong> idea, see <a class="theme markdown__link" href="https://example.com/docs">the docs</a></p>',
+            expected: 'Bold idea, see the docs',
         },
         {
-            name: 'emphasis wrapped across a line',
-            source: '**bold\ntext**',
-            expected: 'bold text',
+            name: 'paragraphs and headings do not run together',
+            source: '## Status\n\nAll good\n\nNext',
+            html: '<h2 class="markdown__heading">Status</h2><p>All good</p><p>Next</p>',
+            expected: 'Status All good Next',
         },
         {
-            name: 'nested emphasis',
-            source: '**bold *nested* text**',
-            expected: 'bold nested text',
+            name: 'list items do not run together',
+            source: '- one\n- two',
+            html: '<ul class="markdown__list"><li>one</li><li>two</li></ul>',
+            expected: 'one two',
         },
         {
-            name: 'asterisks attached to a word',
-            source: 'hello**there**',
-            expected: 'hellothere',
-        },
-        {
-            name: 'one-line fence',
-            source: 'See ```const n = 1``` please',
-            expected: 'See const n = 1 please',
-        },
-        {
-            name: 'heading',
-            source: '## Status\n\nAll good',
-            expected: 'Status All good',
-        },
-        {
-            name: 'heading with closing hashes',
-            source: '## Status ##',
-            expected: 'Status',
-        },
-        {
-            name: 'a heading that ends in a hash keeps it',
-            source: '## C#',
-            expected: 'C#',
-        },
-        {
-            name: 'a hash without a space is not a heading',
-            source: 'See #release',
-            expected: 'See #release',
-        },
-        {
-            name: 'setext heading and a rule',
-            source: 'Title\n=====\n\nHello\n\n---\n\nworld',
-            expected: 'Title Hello world',
-        },
-        {
-            name: 'link keeps its label',
-            source: 'See [the docs](https://example.com/docs) today',
-            expected: 'See the docs today',
-        },
-        {
-            name: 'link with parentheses in the url',
-            source: '[wiki](https://en.wikipedia.org/wiki/Mattermost_(software))',
-            expected: 'wiki',
-        },
-        {
-            name: 'image keeps its alt text',
-            source: 'Chart: ![latency](https://example.com/a.png)',
-            expected: 'Chart: latency',
-        },
-        {
-            name: 'image with no alt text',
-            source: 'Before ![](https://example.com/a.png) after',
-            expected: 'Before after',
-        },
-        {
-            name: 'autolink keeps the url',
-            source: 'Go to <https://example.com>',
-            expected: 'Go to https://example.com',
-        },
-        {
-            name: 'reference link drops the definition',
-            source: 'See [docs][1]\n\n[1]: https://example.com',
-            expected: 'See docs',
-        },
-        {
-            name: 'fenced code',
-            source: 'Run\n\n```ts\nconst n = 1;\n```\nnow',
-            expected: 'Run const n = 1; now',
-        },
-        {
-            name: 'fenced code keeps a dollar sign',
-            source: '```\nprice $2\n```',
-            expected: 'price $2',
-        },
-        {
-            name: 'inline code',
-            source: 'Set `config` now',
-            expected: 'Set config now',
-        },
-        {
-            name: 'quote, lists, and a task',
-            source: '> note\n- one\n* two\n1. three\n- [x] four',
-            expected: 'note one two three four',
-        },
-        {
-            name: 'table',
-            source: '| A | B |\n| --- | --- |\n| 1 | 2 |',
+            name: 'table cells do not run together',
+            source: '| A | B |\n| - | - |\n| 1 | 2 |',
+            html: '<div class="table-responsive"><table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></div>',
             expected: 'A B 1 2',
         },
         {
-            name: 'a single pipe in a sentence stays',
-            source: 'use a | b here',
-            expected: 'use a | b here',
+            name: 'a line break is a space',
+            source: 'one  \ntwo',
+            html: '<p>one<br>two</p>',
+            expected: 'one two',
         },
         {
-            name: 'identifiers and multiplication stay',
-            source: 'set user_id on obj.__init__ and 2*3*4',
-            expected: 'set user_id on obj.__init__ and 2*3*4',
+            name: 'fenced code keeps its text',
+            source: 'Run\n\n```ts\nconst n = 1;\n```\nnow',
+            html: '<p>Run</p><div data-codeblock-code="const n = 1;" data-codeblock-language="ts" data-codeblock-searchedcontent=""></div><p>now</p>',
+            expected: 'Run const n = 1; now',
         },
         {
-            name: 'escaped asterisk stays literal',
-            source: 'use \\*pointer',
-            expected: 'use *pointer',
-        },
-        {
-            name: 'escaped emphasis stays literal',
-            source: '\\*literal\\*',
-            expected: '*literal*',
-        },
-        {
-            name: 'ordinary pipes stay',
-            source: 'Choose a || b',
-            expected: 'Choose a || b',
-        },
-        {
-            name: 'fenced code keeps a type argument',
-            source: '```ts\nArray<string>\n```',
-            expected: 'Array<string>',
-        },
-        {
-            name: 'inline code keeps a type argument',
+            name: 'inline code keeps its text',
             source: 'Use `Array<string>` here',
+            html: '<p>Use <span class="codespan__pre-wrap"><code>Array&lt;string&gt;</code></span> here</p>',
             expected: 'Use Array<string> here',
         },
         {
-            name: 'a generic in prose stays',
-            source: 'Array<string> values',
-            expected: 'Array<string> values',
+            name: 'entities decode to characters',
+            source: 'a & b',
+            html: '<p>a &amp; b</p>',
+            expected: 'a & b',
         },
-        {
-            name: 'an email autolink stays',
-            source: 'Mail <dev@example.com> today',
-            expected: 'Mail <dev@example.com> today',
-        },
-        {
-            name: 'prose up to a later angle bracket stays',
-            source: 'see <b the note> then > next',
-            expected: 'see <b the note> then > next',
-        },
-        {
-            name: 'html tags',
-            source: 'Hello<br>there <strong>friend</strong>',
-            expected: 'Hello there friend',
-        },
-        {
-            name: 'blank',
-            source: '   ',
-            expected: '',
-        },
-        {
-            name: 'only a fence',
-            source: '```\n```',
-            expected: '',
-        },
-        {
-            name: 'a longer closing fence still keeps the code',
-            source: '```html\n<b>value</b>\n````',
-            expected: '<b>value</b>',
-        },
-        {
-            name: 'an unclosed fence keeps its code',
-            source: '```html\n<b>value</b>',
-            expected: '<b>value</b>',
-        },
-        {
-            name: 'an unclosed fence with no body is empty',
-            source: '```',
-            expected: '',
-        },
-        {
-            name: 'a blank line keeps a pipe out of a table',
-            source: 'a | b\n\n---|---',
-            expected: 'a | b ---|---',
-        },
-        {
-            name: 'escaped backticks stay around the word',
-            source: '\\`**bold**\\`',
-            expected: '`bold`',
-        },
-        {
-            name: 'a backslash inside code stays',
-            source: '`a\\*b`',
-            expected: 'a\\*b',
-        },
-    ])('$name', ({source, expected}) => {
-        expect(stripMarkdownPreview(source)).toBe(expected);
+    ])('$name', ({source, html, expected}) => {
+        formatText.mockReturnValue(html);
+
+        expect(previewText(source)).toBe(expected);
+        expect(formatText).toHaveBeenCalledWith(source, {singleline: true});
+    });
+
+    test('a blank message is empty without calling the formatter', () => {
+        expect(previewText('  \n ')).toBe('');
+        expect(formatText).not.toHaveBeenCalled();
     });
 });
