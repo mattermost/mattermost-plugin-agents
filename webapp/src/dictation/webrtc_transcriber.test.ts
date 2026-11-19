@@ -468,6 +468,58 @@ describe('WebRTCTranscriber', () => {
         expect(meterClose).toHaveBeenCalled();
     });
 
+    test.each([
+        {name: 'a track that reports ended when stopped', before: (track: FakeTrack) => track.stop.mockImplementation(() => track.dispatch('ended'))},
+        {name: 'a track that ends on its own while stopping', after: (track: FakeTrack) => track.dispatch('ended')},
+    ])('$name still keeps a late final transcript', async ({before, after}) => {
+        const {deps, pc, track} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        const onError = jest.fn();
+        transcriber.onTranscript(onTranscript);
+        transcriber.onError(onError);
+        await transcriber.start();
+        before?.(track);
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'last'});
+
+        const stopped = transcriber.stop();
+        after?.(track);
+        await new Promise((r) => setTimeout(r, 100));
+        expect(pc.channel.close).not.toHaveBeenCalled();
+
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'last words'});
+        await stopped;
+
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'last words'});
+        expect(onError).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'the data channel closes', lose: (pc: FakePeerConnection) => pc.channel.dispatch('close')},
+        {
+            name: 'the peer connection fails',
+            lose: (pc: FakePeerConnection) => {
+                pc.connectionState = 'failed';
+                pc.dispatch('connectionstatechange');
+            },
+        },
+    ])('when $name while stopping, stop ends at once without an error', async ({lose}) => {
+        const {deps, pc} = setup();
+        const transcriber = new WebRTCTranscriber(deps);
+        const onError = jest.fn();
+        transcriber.onError(onError);
+        await transcriber.start();
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.delta', item_id: 'a', delta: 'last'});
+
+        const stopped = transcriber.stop();
+        lose(pc);
+        await stopped;
+        await new Promise((r) => setTimeout(r, 1200));
+
+        expect(pc.close).toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
+    });
+
     test('a provider error while stopping still delivers the last segment', async () => {
         const {deps, pc} = setup();
         const transcriber = new WebRTCTranscriber(deps);

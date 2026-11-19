@@ -111,14 +111,34 @@ async function dictationRoute(mattermost: MattermostContainer, method: 'GET' | '
 
 const STUB_OFFER_SDP = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
 
+// The delay before the stub channel transcribes a commit, long enough that a
+// commit sent on stop is transcribed after the microphone was turned off.
+const STUB_TRANSCRIBE_MS = 800;
+
 // stubPeerConnection replaces the browser's RTCPeerConnection with one that
 // produces a fixed offer and opens its data channel once the answer is
-// applied, so a session reaches listening without WebRTC media.
+// applied, so a session reaches listening without WebRTC media. Each commit
+// the transcriber sends is answered, STUB_TRANSCRIBE_MS later, with the
+// transcript "Phrase <n>." and counted in window.stubCommits.
 async function stubPeerConnection(page: Page) {
-    await page.addInitScript((offerSDP) => {
+    await page.addInitScript(({ offerSDP, transcribeMs }) => {
+        const w = window as unknown as { stubCommits: number };
+        w.stubCommits = 0;
         class FakeChannel extends EventTarget {
             readyState = 'connecting';
-            send() { /* commits go nowhere */ }
+            send(data: string) {
+                if (JSON.parse(data).type !== 'input_audio_buffer.commit') {
+                    return;
+                }
+                const n = ++w.stubCommits;
+                const itemId = `item_${n}`;
+                const receive = (event: object) => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) }));
+                receive({ type: 'input_audio_buffer.committed', item_id: itemId, previous_item_id: n > 1 ? `item_${n - 1}` : null });
+                setTimeout(() => {
+                    receive({ type: 'conversation.item.input_audio_transcription.delta', item_id: itemId, delta: `Phrase ${n}` });
+                    receive({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: `Phrase ${n}.` });
+                }, transcribeMs);
+            }
             close() {
                 this.readyState = 'closed';
             }
@@ -143,7 +163,7 @@ async function stubPeerConnection(page: Page) {
             close() { /* closed */ }
         }
         (window as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = FakePeerConnection;
-    }, STUB_OFFER_SDP);
+    }, { offerSDP: STUB_OFFER_SDP, transcribeMs: STUB_TRANSCRIBE_MS });
 }
 
 async function loginAsUser(page: Page, mattermost: MattermostContainer) {
@@ -352,6 +372,29 @@ test.describe('Dictation', () => {
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'error', { timeout: 30000 });
         await expect(dictationStatus(center)).toHaveText('Dictation stopped because its session settings were changed. Start it again.');
         await expect.poll(async () => (await realtime.state()).hangups).toContain(callId);
+    });
+
+    test('a transcript that arrives after stop turned the microphone off is kept', async ({ page, containers: { mattermost } }) => {
+        test.setTimeout(120000);
+        await stubPeerConnection(page);
+        const mmPage = await loginAsUser(page, mattermost);
+        const center = centerComposer(page);
+
+        // Earlier stubbed sessions leave their phrases in the saved draft.
+        await mmPage.postTextbox.fill('');
+        await dictationButton(center).click();
+        await expect(dictationButton(center)).toHaveAttribute('data-status', 'listening', { timeout: 30000 });
+
+        // Chrome's fake microphone beeps, so the stop commits the speech in progress.
+        await page.waitForTimeout(1000);
+        expect(await page.evaluate(() => (window as unknown as { stubCommits: number }).stubCommits)).toBe(0);
+        await dictationButton(center).click();
+        await expect(dictationButton(center)).toHaveAttribute('data-status', 'stopping');
+
+        await expect(dictationButton(center)).toHaveAttribute('data-status', 'idle', { timeout: 10000 });
+        expect(await page.evaluate(() => (window as unknown as { stubCommits: number }).stubCommits)).toBe(1);
+        await expect(mmPage.postTextbox).toHaveValue('Phrase 1.');
+        await expect(dictationStatus(center)).toHaveText('');
     });
 
     test('while listening, the glow follows the live microphone level', async ({ page, containers: { mattermost } }) => {

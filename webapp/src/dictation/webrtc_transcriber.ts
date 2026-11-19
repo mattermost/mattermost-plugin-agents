@@ -141,6 +141,7 @@ export class WebRTCTranscriber implements DictationTransport {
     private started = false;
     private stopped = false;
     private stopping: Promise<void> | null = null;
+    private stopRequested = false;
     private finalWaiter: (() => void) | null = null;
 
     // Commits sent and not yet acknowledged. Their segments aren't in the
@@ -211,7 +212,12 @@ export class WebRTCTranscriber implements DictationTransport {
         this.pc = pc;
         for (const track of this.stream.getAudioTracks()) {
             pc.addTrack(track, this.stream);
-            track.addEventListener('ended', () => this.fail(new DictationError('connection_lost')));
+            track.addEventListener('ended', () => {
+                // The mic is turned off on stop, while the final transcript is still awaited.
+                if (!this.stopRequested) {
+                    this.fail(new DictationError('connection_lost'));
+                }
+            });
         }
         const channel = pc.createDataChannel('oai-events');
         this.channel = channel;
@@ -289,6 +295,12 @@ export class WebRTCTranscriber implements DictationTransport {
     // the server ended the session and its reason is on the way.
     private connectionLost() {
         if (this.stopped || this.lostTimer !== null) {
+            return;
+        }
+
+        // A stop under way has nothing left to wait for, and isn't an error.
+        if (this.stopRequested) {
+            this.finalWaiter?.();
             return;
         }
         if (!this.started) {
@@ -429,6 +441,11 @@ export class WebRTCTranscriber implements DictationTransport {
 
     stop({waitForFinal = true}: {waitForFinal?: boolean} = {}): Promise<void> {
         if (!this.stopping) {
+            this.stopRequested = true;
+            if (this.lostTimer !== null) {
+                clearTimeout(this.lostTimer);
+                this.lostTimer = null;
+            }
             this.stopping = this.finish(waitForFinal);
         }
         return this.stopping;
