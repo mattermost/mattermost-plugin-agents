@@ -89,12 +89,12 @@ const runQueuedFrames = () => {
     frames.forEach((frame) => frame(0));
 };
 
-// Runs queued frames in the layout phase after a channel switch, the way a
+// Runs queued frames in the layout phase after a draft change, the way a
 // browser frame can land between React's layout and passive effects.
-const FrameBetweenEffects = ({channelId}: {channelId: string}) => {
+const FrameBetweenEffects = ({draft}: {draft: EditorDraft}) => {
     useLayoutEffect(() => {
         runQueuedFrames();
-    }, [channelId]);
+    }, [draft]);
     return null;
 };
 
@@ -135,7 +135,7 @@ function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionM
                     }}
                     maxSessionMs={maxSessionMs}
                 />
-                {frameBetweenEffects && <FrameBetweenEffects channelId={draft.channelId}/>}
+                {frameBetweenEffects && <FrameBetweenEffects draft={draft}/>}
                 <div data-testid='draft'>{draft.message}</div>
             </div>
         );
@@ -284,7 +284,10 @@ describe('DictationButton', () => {
         await waitFor(() => expect(draft()).toBe('Hello big brave world'));
     });
 
-    test('a frame queued before a channel switch never writes into the new editor', async () => {
+    test.each([
+        {name: 'a channel switch never writes into the new editor', change: {message: 'new channel draft', channelId: 'c2'}},
+        {name: 'a user edit never overwrites the edit', change: {message: 'user typed', channelId: 'c1'}},
+    ])('a frame queued before $name', async ({change}) => {
         const raf = jest.spyOn(window, 'requestAnimationFrame').mockImplementation((frame) => {
             queuedFrames.push(frame);
             return queuedFrames.length;
@@ -295,12 +298,12 @@ describe('DictationButton', () => {
 
             act(() => {
                 transports[0].transcript({text: 'spoken'});
-                controls.setDraft(() => ({message: 'new channel draft', channelId: 'c2'}));
+                controls.setDraft(() => change);
             });
 
             await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
             expect(updateText).not.toHaveBeenCalled();
-            expect(draft()).toBe('new channel draft');
+            expect(draft()).toBe(change.message);
         } finally {
             raf.mockRestore();
             queuedFrames = [];

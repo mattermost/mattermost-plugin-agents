@@ -356,19 +356,13 @@ describe('WebRTCTranscriber', () => {
         expect(meterAttach).toHaveBeenCalledWith(stream);
     });
 
-    test.each([
-        {turnDetection: 'none' as const, fails: true},
-        {turnDetection: 'server_vad' as const, fails: false},
-    ])('a suspended audio context with turn detection $turnDetection fails start: $fails', async ({turnDetection, fails}) => {
+    test.each(['none', 'server_vad'] as const)('a suspended audio context fails start with turn detection %s and ends the session', async (turnDetection) => {
         const {deps, meterAttach, track} = setup({createSession: jest.fn(async () => session({turnDetection}))});
         meterAttach.mockResolvedValue(false);
-        const starting = new WebRTCTranscriber(deps).start();
-        if (fails) {
-            await expect(starting).rejects.toMatchObject({reason: 'audio_blocked'});
-            expect(track.stop).toHaveBeenCalled();
-        } else {
-            await expect(starting).resolves.toBeUndefined();
-        }
+
+        await expect(new WebRTCTranscriber(deps).start()).rejects.toMatchObject({reason: 'audio_blocked'});
+        expect(track.stop).toHaveBeenCalled();
+        expect(deps.endSession).toHaveBeenCalledWith('session-1');
     });
 
     test('the browser level meter resumes its audio context inside the click, before any await', async () => {

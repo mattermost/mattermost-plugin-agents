@@ -248,9 +248,9 @@ export class WebRTCTranscriber implements DictationTransport {
         }
         this.throwIfStopped();
 
-        // Without levels no segment would ever be committed, so the user
-        // would see nothing and no error.
-        if (!await meterRunning && this.clientCommits) {
+        // Without levels no segment would ever be committed, and the idle
+        // stop would end dictation while the user speaks, whatever the model.
+        if (!await meterRunning) {
             throw new DictationError('audio_blocked');
         }
         this.throwIfStopped();

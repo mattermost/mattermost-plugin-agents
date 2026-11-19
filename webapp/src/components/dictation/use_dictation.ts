@@ -61,7 +61,7 @@ const isRecording = (session: Session) => session.phase === 'starting' || sessio
 
 // scheduleWrite coalesces transcript updates into one draft write per frame.
 // canWrite is checked when the frame runs: a frame can land after the editor
-// switched but before the switch stops the session.
+// switched or the user edited the draft, but before that stops the session.
 const scheduleWrite = (session: Session, text: string, canWrite: () => boolean, write: (message: string) => void) => {
     session.pendingText = text;
     if (session.frame !== null) {
@@ -164,7 +164,7 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
                 scheduleWrite(
                     session,
                     update.text,
-                    () => isRecording(session) && isSameEditor(session, draftRef.current),
+                    () => isRecording(session) && isSameEditor(session, draftRef.current) && session.writer.isOwnWrite(draftRef.current.message ?? ''),
                     (message) => updateTextRef.current(message),
                 );
             }

@@ -247,6 +247,7 @@ export type ComboboxItemProps = {
 export const ComboboxItem = (props: ComboboxItemProps) => {
     const intl = useIntl();
     const id = useId();
+    const errorId = `${id}-error`;
     const settingsReadOnly = useSettingsReadOnly();
 
     return (
@@ -256,6 +257,8 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                 <FieldControlRow>
                     <Combobox
                         id={id}
+                        invalid={Boolean(props.error)}
+                        {...(props.error ? {'aria-describedby': errorId} : {})}
                         value={props.value || null}
                         options={props.options.map((opt) => ({value: opt.id, label: opt.displayName}))}
                         onChange={(value) => props.onChange(typeof value === 'string' ? value : '')}
@@ -274,7 +277,12 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                         zIndex={PORTALED_MENU_Z_INDEX}
                     />
                 </FieldControlRow>
-                {props.error && <ErrorMessage message={props.error}/>}
+                {props.error && (
+                    <ErrorMessage
+                        id={errorId}
+                        message={props.error}
+                    />
+                )}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }

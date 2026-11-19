@@ -96,7 +96,7 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 | No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user isn't a guest and has access to the service, and the formatting bar is shown. |
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
 | "The speech service could not be reached" | The server log has the reason when OpenAI refused to create the session or the control connection couldn't be opened. Otherwise the browser can't reach OpenAI over WebRTC. See [Network requirements](#network-requirements). |
-| "Dictation can't start right now" | The user already has 2 sessions, for example in another window, or started 10 in the last 60 seconds. Ending a session or waiting a minute clears it. |
+| "Dictation can't start right now" | The user already has 2 active sessions, for example in other windows, or started 10 sessions in the last 60 seconds. Stopping dictation in another window frees an active session at once. The start limit clears once fewer than 10 starts fall in the last 60 seconds. A session the plugin couldn't hang up keeps its slot for up to 11 minutes. See [Cost and limits](#cost-and-limits). |
 | "You don't have access to dictation" | The license is below Enterprise, or the user can't dictate. See [Who can dictate](#who-can-dictate). |
 | "Dictation is not available right now" | Dictation was turned off, or its transcription service is missing or misconfigured. |
 | "Your browser's connection request was too large" | The browser's WebRTC offer was over 64 KiB. Reloading the page usually fixes it. |

@@ -499,6 +499,8 @@ describe('AgentsSettingsPage dictation', () => {
 
         await waitFor(() => expect(language.disabled).toBe(true));
         expect(radioFor(ENABLE_DICTATION, 'false').disabled).toBe(true);
+        expect((screen.getByRole('combobox', {name: 'Transcription service'}) as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByRole('combobox', {name: 'Transcription model'}) as HTMLInputElement).disabled).toBe(true);
     });
 
     it('has its own section', async () => {

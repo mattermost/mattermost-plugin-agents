@@ -139,6 +139,13 @@ describe('DictationPanel', () => {
         expect(screen.getByText(/not an OpenAI service/)).toBeTruthy();
     });
 
+    test('marks a missing model invalid and describes it with the error', () => {
+        renderPanel({...enabled, model: ''}, [openai]);
+        const model = screen.getByRole('combobox', {name: 'Transcription model'});
+        expect(model.getAttribute('aria-invalid')).toBe('true');
+        expect(document.getElementById(model.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Enter the transcription model.');
+    });
+
     test('marks the enable toggle as experimental', () => {
         renderPanel(defaultDictationConfig, [openai]);
         const group = screen.getByRole('radiogroup', {name: /^Enable dictation/});

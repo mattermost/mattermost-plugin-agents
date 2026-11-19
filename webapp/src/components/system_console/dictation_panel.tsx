@@ -136,7 +136,7 @@ const DictationPanel = ({value, services, errors, saveError, onChange}: Props) =
                     disableTrue={!licensed}
                     extra={!licensed && <LicenseChip capability='dictation'/>}
                     onChange={(enabled) => update({enabled})}
-                    helpText={intl.formatMessage({defaultMessage: 'Browsers send microphone audio directly to the selected service, not through Mattermost. Users\' browsers must be able to reach the service over HTTPS and WebRTC. Audio and transcripts are processed under your organization\'s agreement with the provider, and Mattermost stores only the messages users send. The provider bills each dictation session to the service\'s API key.'})}
+                    helpText={intl.formatMessage({defaultMessage: 'Browsers send microphone audio directly to the selected service, not through Mattermost. Users\' browsers must be able to reach the service over HTTPS and WebRTC. Audio and transcripts are processed under your organization\'s agreement with the provider. Mattermost doesn\'t store audio; dictated text is saved like typed text, including in drafts. The provider bills each dictation session to the service\'s API key.'})}
                 />
                 {eligible.length === 0 ? (
                     <SectionNotice

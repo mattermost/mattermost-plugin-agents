@@ -68,7 +68,7 @@ If your System Admin turned on dictation, a microphone button appears in the for
 
 Dictation also stops when you type in the message box, send the message, switch to another channel or thread, after 30 seconds without speech, and after 10 minutes. If you type while dictating, what you typed is kept.
 
-- Your audio goes from your device to the speech service your organization uses, not through Mattermost. Mattermost keeps only the messages you send.
+- Your audio goes from your device to the speech service your organization uses, not through Mattermost, and Mattermost doesn't keep it. Dictated text is like typed text: until you send or delete it, it can be saved as a draft, on the server too if your drafts sync across devices.
 - If you hid the formatting bar, show it again to see the microphone.
 - Mobile apps don't have dictation.
 - If the button shows an error, point to it to read why. A blocked microphone is fixed in your browser's site settings. For other errors, ask your System Admin.
