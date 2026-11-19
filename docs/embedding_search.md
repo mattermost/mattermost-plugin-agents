@@ -20,7 +20,7 @@ Mattermost splits post text into chunks, sends each chunk to an embedding provid
 
 ## Settings
 
-Go to **System Console > Plugins > Agents > Embedding Search**.
+Go to **Agents > Settings > Embedding search**.
 
 | Setting | Notes |
 |---|---|
