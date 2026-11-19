@@ -149,11 +149,12 @@ func TestAgentPolicyDelete(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 }
 
-func TestAgentPolicyWriteRequiresAdminWhenServiceAccountOn(t *testing.T) {
+func TestAgentPolicyWriteRequiresSettingsWriteAccessWhenServiceAccountOn(t *testing.T) {
 	const plantedCEL = `user.attributes.department == "planted-sa-policy-secret"`
 
 	managerID := model.NewId()
 	sysadminID := model.NewId()
+	writeDelegateID := model.NewId()
 	agentID := model.NewId()
 
 	policyBody := map[string]any{
@@ -199,6 +200,16 @@ func TestAgentPolicyWriteRequiresAdminWhenServiceAccountOn(t *testing.T) {
 			wantStatus: http.StatusOK, wantEvent: AuditEventDeleteAgentPolicy, expectDelete: true,
 		},
 		{
+			name:   "SA on read/write settings delegate PUT succeeds",
+			userID: writeDelegateID, saOn: true, method: http.MethodPut, body: policyBody,
+			wantStatus: http.StatusOK, wantEvent: AuditEventPutAgentPolicy, expectSave: true,
+		},
+		{
+			name:   "SA on read/write settings delegate DELETE succeeds",
+			userID: writeDelegateID, saOn: true, method: http.MethodDelete,
+			wantStatus: http.StatusOK, wantEvent: AuditEventDeleteAgentPolicy, expectDelete: true,
+		},
+		{
 			name:   "SA off manager PUT still allowed",
 			userID: managerID, method: http.MethodPut, body: policyBody,
 			wantStatus: http.StatusOK, wantEvent: AuditEventPutAgentPolicy, expectSave: true,
@@ -217,8 +228,11 @@ func TestAgentPolicyWriteRequiresAdminWhenServiceAccountOn(t *testing.T) {
 
 			e.agentStore.agents[agentID] = &llm.BotConfig{
 				ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
-				ServiceID: "svc-1", CreatorID: managerID, AdminUserIDs: []string{sysadminID},
+				ServiceID: "svc-1", CreatorID: managerID, AdminUserIDs: []string{sysadminID, writeDelegateID},
 				UseServiceAccountAuth: tt.saOn,
+			}
+			e.config.settingsAccess = config.SettingsAccess{
+				ReadWriteUserIDs: []string{writeDelegateID},
 			}
 
 			e.mockAPI.On("HasPermissionTo", sysadminID, model.PermissionManageSystem).Return(true).Maybe()

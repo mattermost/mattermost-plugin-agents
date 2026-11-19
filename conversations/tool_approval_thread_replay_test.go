@@ -353,6 +353,7 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 	}
 
 	channel := &model.Channel{Id: channelID, TeamId: "team-id", Type: model.ChannelTypeOpen}
+	approvals := 0
 	approveAndShare := func(post *model.Post, toolIDs ...string) {
 		anchor, anchorErr := s.GetTurnByPostID(post.Id)
 		require.NoError(t, anchorErr)
@@ -362,6 +363,13 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 			current, lookupErr := s.GetTurnByPostID(post.Id)
 			return lookupErr == nil && current != nil && current.ID != anchor.ID
 		}, 10*time.Second, 20*time.Millisecond, "follow-up stream for %s must finalize", post.Id)
+
+		// The follow-up turn exists before its request reaches the server, so
+		// wait for the request too or the next approval's request can overtake it.
+		approvals++
+		require.Eventually(t, func() bool {
+			return len(anthropic.requests()) >= approvals
+		}, 10*time.Second, 20*time.Millisecond, "follow-up request for %s must reach Anthropic", post.Id)
 	}
 
 	conv := userMessage(rootID, "@matty what is the status of MM-1?")

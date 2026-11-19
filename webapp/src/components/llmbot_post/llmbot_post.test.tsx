@@ -276,6 +276,34 @@ describe('LLMBotPost streaming fallback rendering', () => {
         expect(screen.queryByText('Working...')).toBeNull();
     });
 
+    test('shows the answer once when the persisted turn lands before the end event', () => {
+        const answer = 'Posting the release notes now.';
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'turn_1', post_id: 'post_1', sequence: 2, status: 'complete', content: [{type: 'text', text: answer}]}),
+            ]),
+            loading: false,
+            error: null,
+        });
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: answer}));
+        });
+
+        // The end empties the conversation cache until the refetch lands.
+        mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
+        });
+
+        expect(screen.getAllByText(answer)).toHaveLength(1);
+    });
+
     test('renders updated post message when the streaming text websocket was missed', async () => {
         const errorText = 'Sorry! An error occurred while accessing the LLM.';
         const {rerender} = renderPost(makePost());
@@ -2186,10 +2214,13 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
         mockUseConversation.mockReturnValue(withStatus('streaming'));
         const {rerender} = render(ui());
 
+        // The mount refetch comes first; a missed end must not wait on the stale timer.
+        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+
         act(() => {
             jest.advanceTimersByTime(60000);
         });
-        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(invalidateConversation).toHaveBeenCalledTimes(2);
         expect(screen.queryByText(STALE_TEXT)).toBeNull();
 
         // The refetch empties the cache, then lands with the server's status.
@@ -2202,7 +2233,7 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
             jest.advanceTimersByTime(60000);
         });
         expect(Boolean(screen.queryByText(STALE_TEXT))).toBe(expectStale);
-        expect(invalidateConversation).toHaveBeenCalledTimes(1);
+        expect(invalidateConversation).toHaveBeenCalledTimes(2);
     });
 
     test('a heartbeat post flush does not rewind live streamed text', () => {
@@ -2478,6 +2509,11 @@ describe('LLMBotPost interrupted and stale generation notices', () => {
                 </IntlProvider>
             );
             const {rerender} = render(ui());
+
+            // A remount refetches its cached streaming turn once; heartbeats
+            // after that must not trigger another.
+            expect(invalidateConversation).toHaveBeenCalledTimes(1);
+            (invalidateConversation as jest.Mock).mockClear();
 
             const heartbeatAfter = (ms: number) => act(() => {
                 jest.advanceTimersByTime(ms);
