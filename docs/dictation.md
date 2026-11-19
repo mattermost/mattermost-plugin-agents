@@ -15,8 +15,8 @@ The Mattermost Server never receives audio or transcript text. It sees one reque
 
 ## Set it up
 
-1. Add an OpenAI service under **System Console > Plugins > Agents > AI Services** and save, if you don't have one. The service doesn't need an agent. See [Configure LLM services](llm_services.md).
-2. In the **Dictation** panel, set **Enable dictation** to **True**.
+1. Open **Agents** from the product switcher and select **Settings**. On **AI services**, add an OpenAI service with an API key and save, if you don't have one. The service doesn't need an agent. See [Configure LLM services](llm_services.md).
+2. On **Dictation**, set **Enable dictation** to **True**.
 3. Select the **Transcription service**. Only saved OpenAI services are listed.
 4. Check the **Transcription model** and optionally set a **Language**, then save.
 

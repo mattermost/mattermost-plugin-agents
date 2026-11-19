@@ -140,7 +140,7 @@ test.describe('Dictation', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'dictation');
 
         const enableGroup = page.getByRole('radiogroup', { name: 'Enable dictation' });
         await enableGroup.scrollIntoViewIfNeeded();

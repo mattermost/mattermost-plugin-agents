@@ -45,7 +45,7 @@ const (
 
 // clientTurnDetectionModels need turn_detection: null, matched by prefix so
 // dated snapshots of the same model behave the same.
-var clientTurnDetectionModels = []string{"gpt-live-transcribe"}
+var clientTurnDetectionModels = []string{"gpt-live-transcribe", "gpt-realtime-whisper"}
 
 // TurnDetectionForModel returns the turn detection mode a transcription
 // session uses for model.
@@ -181,8 +181,29 @@ type realtimeAudioInput struct {
 }
 
 type realtimeTranscription struct {
-	Model    string `json:"model"`
-	Language string `json:"language,omitempty"`
+	Model     string   `json:"model"`
+	Language  string   `json:"language,omitempty"`
+	Languages []string `json:"languages,omitempty"`
+}
+
+// languageListModels take the language hint as a languages list instead of
+// language; OpenAI says not to send both. Matched by prefix, like
+// clientTurnDetectionModels.
+var languageListModels = []string{"gpt-live-transcribe", "gpt-transcribe"}
+
+func transcriptionSettings(req TranscriptionSessionRequest) realtimeTranscription {
+	t := realtimeTranscription{Model: req.Model}
+	if req.Language == "" {
+		return t
+	}
+	for _, prefix := range languageListModels {
+		if strings.HasPrefix(req.Model, prefix) {
+			t.Languages = []string{req.Language}
+			return t
+		}
+	}
+	t.Language = req.Language
+	return t
 }
 
 type realtimeNoiseReduction struct {
@@ -201,7 +222,7 @@ type realtimeClientSecretResponse struct {
 func buildTranscriptionSessionBody(req TranscriptionSessionRequest) ([]byte, string, error) {
 	turnDetection := TurnDetectionForModel(req.Model)
 	input := realtimeAudioInput{
-		Transcription:  realtimeTranscription(req),
+		Transcription:  transcriptionSettings(req),
 		NoiseReduction: realtimeNoiseReduction{Type: "near_field"},
 	}
 	if turnDetection == TurnDetectionServerVAD {
