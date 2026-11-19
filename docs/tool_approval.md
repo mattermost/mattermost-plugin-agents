@@ -41,7 +41,7 @@ Some tools have no policy:
 - `search_tools` and `load_tool`, the dynamic loading helpers, always run without approval.
 - The built-in `CreateFile` tool always runs without approval, because it only attaches a file to the agent's own reply. `wait_for_async_work`, which schedules the agent's own follow-up, does too.
 - `AskUserQuestion` always waits for the user's answer.
-- The built-in web search tool (Brave, Google, or SearXNG) always asks. Native provider web search runs inside the provider, so it has no approval card.
+- The built-in web search tool (Brave or SearXNG) always asks. Native provider web search runs inside the provider, so it has no approval card.
 
 ### Choose a policy
 
