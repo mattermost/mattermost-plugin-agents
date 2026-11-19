@@ -198,7 +198,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}
                         value={value.allowedUpstreamHostnames}
                         onChange={(e) => updateConfig({allowedUpstreamHostnames: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Comma-separated hostnames LLMs can contact via tools (e.g., mattermost.atlassian.net, *.mydomain.com).'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Comma-separated hostnames LLMs can contact via tools (e.g., *.mydomain.com).'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Render AI-generated links'/>}
@@ -206,7 +206,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({allowUnsafeLinks: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'Makes links in AI replies clickable. May expose users to malicious links or data exfiltration.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Makes links in AI responses clickable. Enable only if you trust LLM output or have mitigations against malicious links and exfiltration.'})}
                     />
                     {value.allowUnsafeLinks && (
                         <TextItem

@@ -260,7 +260,7 @@ const MCPServers = ({mcpConfig, savedServers = [], onChange, onPersistServer, on
                                         idleTimeoutMinutes,
                                     });
                                 }}
-                                helptext={intl.formatMessage({defaultMessage: 'Closes inactive user connections after this duration. Lower saves resources; higher improves speed. Default: 30.'})}
+                                helptext={intl.formatMessage({defaultMessage: 'Closes inactive user connections after this duration. Lower saves resources; higher improves speed. Default: 30 minutes.'})}
                             />
                             {(remoteMcpLicensed || normalizedServers.length > 0) && (
                                 <CopyableTextItem

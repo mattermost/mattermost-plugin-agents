@@ -143,7 +143,7 @@ const SettingsAccessConfig = (props: Props) => {
                             placeholder={intl.formatMessage({defaultMessage: 'Search for people to give read and write access'})}
                         />
                         <HelpText>
-                            <FormattedMessage defaultMessage='Can edit all Agents settings, API keys, and services that receive conversations (including private messages). Grant only to trusted admins.'/>
+                            <FormattedMessage defaultMessage='Can edit all Agents settings, API keys, and services that receive conversations (including private messages). Grant this only to trusted users.'/>
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
@@ -158,7 +158,7 @@ const SettingsAccessConfig = (props: Props) => {
                             placeholder={intl.formatMessage({defaultMessage: 'Search for people to make agent managers'})}
                         />
                         <HelpText>
-                            <FormattedMessage defaultMessage='Can edit and delete any agent (same as manage_others_agent). Does not grant settings access.'/>
+                            <FormattedMessage defaultMessage='Can edit and delete any agent. Does not grant access to Agents system settings.'/>
                         </HelpText>
                     </TextFieldContainer>
                 </FormRow>
@@ -171,7 +171,7 @@ const SettingsAccessConfig = (props: Props) => {
             <SectionNotice
                 type='info'
                 title={<FormattedMessage defaultMessage='Agents settings have moved'/>}
-                description={<FormattedMessage defaultMessage='Configure Agents from the Settings page in the Agents product. System admins always have access; grant access to others below.'/>}
+                description={<FormattedMessage defaultMessage='Models, MCP servers, and other Agents settings are now on the Settings page in the Agents product. System admins always have access; grant it to others below.'/>}
                 primaryButtonLabel={<FormattedMessage defaultMessage='Open Agents settings'/>}
                 onPrimaryAction={openSettings}
             />
