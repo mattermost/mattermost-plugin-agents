@@ -73,11 +73,13 @@ type ChannelArtifactTools struct {
 
 func (t *ChannelArtifactTools) available(llmCtx *llm.Context) bool {
 	return t != nil && t.Service != nil && t.Enabled != nil && t.Enabled() &&
-		llmCtx != nil && llmCtx.Channel != nil && llmCtx.RequestingUser != nil && model.IsValidId(llmCtx.BotUserID)
+		llmCtx != nil && llmCtx.Channel != nil && channelartifacts.SupportsChannelType(llmCtx.Channel.Type) &&
+		llmCtx.RequestingUser != nil && model.IsValidId(llmCtx.BotUserID)
 }
 
 // Tools returns the library tools for the request, or none while the library is
-// off or the request has no channel, requesting user or agent.
+// off, the request is not in a public or private channel, or it has no
+// requesting user or agent.
 func (t *ChannelArtifactTools) Tools(llmCtx *llm.Context) []llm.Tool {
 	if !t.available(llmCtx) {
 		return nil

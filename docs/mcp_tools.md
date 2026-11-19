@@ -115,7 +115,7 @@ The 123 tools of the built-in Mattermost MCP server, each marked read-only or st
 
 ## Channel artifacts
 
-Both tools are hidden while channel artifacts are off. See [Channel artifacts](channel_artifacts.md) for what the library stores and how reads are checked.
+Both tools are hidden while channel artifacts are off, and agents inside Mattermost aren't offered them in direct or group messages. See [Channel artifacts](channel_artifacts.md) for what the library stores and how reads are checked.
 
 | Tool | Type | What it does |
 |---|---|---|

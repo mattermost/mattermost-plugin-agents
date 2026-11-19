@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -386,6 +387,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		}
 		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolCatalog.DisabledMCPServerOrigins)
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
+		mcpTools = dropChannelArtifactTools(mcpTools, c)
 
 		if mcpErrors != nil {
 			authErrors := mcpErrors.ToolAuthErrors
@@ -596,6 +598,23 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 
 	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
 		return disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)]
+	})
+}
+
+// dropChannelArtifactTools removes the built-in server's channel artifact read
+// tools unless the request is in a public or private channel. Libraries exist
+// only there, so a direct or group message, or a request with no channel, is
+// not offered the tools, and dynamic tool loading cannot discover them either.
+func dropChannelArtifactTools(tools []llm.Tool, c *llm.Context) []llm.Tool {
+	if c != nil && c.Channel != nil && channelartifacts.SupportsChannelType(c.Channel.Type) {
+		return tools
+	}
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		if tool.ServerOrigin != mcp.EmbeddedClientKey {
+			return false
+		}
+		name := llm.BareMCPToolName(tool.Name)
+		return name == channelartifacts.ListToolName || name == channelartifacts.GetToolName
 	})
 }
 

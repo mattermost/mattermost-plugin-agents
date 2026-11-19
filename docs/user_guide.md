@@ -78,7 +78,7 @@ Ask the agent to put long output in a file, for example "the meeting notes as a 
 
 ## Save an HTML app to the channel
 
-When your admin turns on channel artifacts, you can keep an interactive HTML app an agent built so the whole channel can reopen it.
+When your admin turns on channel artifacts, you can keep an interactive HTML app an agent built so the whole channel can reopen it. This works in public and private channels only, not in direct or group messages, so an agent in a direct message can't save to or read a channel's library.
 
 - Select the pin icon on the artifact to save it. Saving the same file again, or a new file with a new name, offers to add a new version.
 - Open **Channel artifacts** from the channel header menu or the channel info panel to see the channel's saved apps, open one, rename it, restore an earlier version, or remove it. Everyone who can read the channel can open them. If a control is missing, ask your admin about your permissions in the channel.
