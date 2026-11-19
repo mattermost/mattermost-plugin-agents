@@ -137,6 +137,47 @@ func TestCreateTranscriptionSession(t *testing.T) {
 	}
 }
 
+func TestCreateTranscriptionSessionLanguageField(t *testing.T) {
+	tests := []struct {
+		model         string
+		language      string
+		wantLanguage  any // nil means the field must be absent
+		wantLanguages any
+	}{
+		{model: "gpt-live-transcribe", language: "en", wantLanguages: []any{"en"}},
+		{model: "gpt-live-transcribe-2026-07-28", language: "fr", wantLanguages: []any{"fr"}},
+		{model: "gpt-transcribe", language: "de", wantLanguages: []any{"de"}},
+		{model: "gpt-4o-transcribe", language: "en", wantLanguage: "en"},
+		{model: "gpt-4o-mini-transcribe", language: "es", wantLanguage: "es"},
+		{model: "whisper-1", language: "en", wantLanguage: "en"},
+		{model: "gpt-live-transcribe"},
+		{model: "gpt-4o-transcribe"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model+"/"+tt.language, func(t *testing.T) {
+			server, captured := fakeRealtimeProvider(t, http.StatusOK, `{"value":"ek_secret"}`)
+			minter, err := NewRealtimeSessionMinter(llm.ServiceConfig{ID: "svc", Type: llm.ServiceTypeOpenAI, APIKey: testRealtimeAPIKey, APIURL: server.URL})
+			require.NoError(t, err)
+			defer minter.Shutdown()
+
+			_, err = minter.CreateTranscriptionSession(context.Background(), TranscriptionSessionRequest{Model: tt.model, Language: tt.language})
+			require.NoError(t, err)
+
+			transcription, ok := inputAudio(t, captured.body)["transcription"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tt.model, transcription["model"])
+			for field, want := range map[string]any{"language": tt.wantLanguage, "languages": tt.wantLanguages} {
+				if want == nil {
+					assert.NotContains(t, transcription, field)
+					continue
+				}
+				assert.Equal(t, want, transcription[field], field)
+			}
+		})
+	}
+}
+
 func TestCreateTranscriptionSessionExpiry(t *testing.T) {
 	tests := []struct {
 		name      string
