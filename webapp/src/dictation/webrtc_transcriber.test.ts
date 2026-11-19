@@ -301,9 +301,50 @@ describe('WebRTCTranscriber', () => {
     });
 
     test.each([
+        {
+            name: 'a commit for an earlier phrase arrived after the latest speech',
+            beforeStop: (pc: FakePeerConnection, advance: (level: number, ms: number) => void) => {
+                advance(0.3, 1000);
+                pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
+                pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'first.'});
+                advance(0, 2100);
+            },
+            afterStop: () => { /* nothing more before the late commit */ },
+        },
+        {
+            name: 'an earlier segment completes while the later commit is on the way',
+            beforeStop: (pc: FakePeerConnection, advance: (level: number, ms: number) => void) => {
+                advance(0.3, 1000);
+                pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
+                advance(0, 2100);
+            },
+            afterStop: (pc: FakePeerConnection) => {
+                pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'first.'});
+            },
+        },
+    ])('with server VAD, stop keeps the latest phrase when $name', async ({beforeStop, afterStop}) => {
+        const {deps, pc, advance} = setup({createSession: jest.fn(async () => session({model: 'gpt-4o-transcribe', turnDetection: 'server_vad'}))});
+        const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        transcriber.onTranscript(onTranscript);
+        await transcriber.start();
+        beforeStop(pc, advance);
+
+        const stopped = transcriber.stop();
+        afterStop(pc);
+        await new Promise((r) => setTimeout(r, 100));
+        expect(pc.close).not.toHaveBeenCalled();
+        pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'b', previous_item_id: 'a'});
+        pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'b', transcript: 'second.'});
+        await stopped;
+
+        expect(onTranscript).toHaveBeenLastCalledWith({text: 'first. second.'});
+    });
+
+    test.each([
         {name: 'nothing arrives within the wait', advanceTo: [[0.3, 1000], [0, 2100]], waitForFinal: true, minMs: 1400},
         {name: 'the final text is discarded', advanceTo: [[0.3, 1000], [0, 2100]], waitForFinal: false, maxMs: 100},
-        {name: 'the provider already committed the speech', advanceTo: [[0.3, 1000], [0, 2100]], committed: true, waitForFinal: true, maxMs: 100},
+        {name: 'only an earlier commit arrived before stop', advanceTo: [[0.3, 1000], [0, 2100]], committed: true, waitForFinal: true, minMs: 1400},
         {name: 'the speech ended long ago', advanceTo: [[0.3, 1000], [0, 3100]], waitForFinal: true, maxMs: 100},
     ])('with server VAD, stop after a pause when $name', async ({advanceTo, waitForFinal, committed, minMs, maxMs}) => {
         const {deps, pc, advance} = setup({createSession: jest.fn(async () => session({model: 'gpt-4o-transcribe', turnDetection: 'server_vad'}))});

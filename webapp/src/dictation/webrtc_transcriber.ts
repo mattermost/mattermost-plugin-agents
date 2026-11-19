@@ -151,7 +151,10 @@ export class WebRTCTranscriber implements DictationTransport {
     // Commits sent and not yet acknowledged. Their segments aren't in the
     // transcript yet, so stop waits for them too.
     private outstandingCommits = 0;
-    private lastProviderCommitAt = -Infinity;
+
+    // Set on a stop that expects the provider's own commit of recent speech;
+    // cleared by the next commit, which can only cover audio sent before stop.
+    private awaitingProviderCommit = false;
 
     private unsubscribeSessionEnded: (() => void) | null = null;
     private lostTimer: ReturnType<typeof setTimeout> | null = null;
@@ -372,7 +375,7 @@ export class WebRTCTranscriber implements DictationTransport {
         const text = (value: unknown) => (typeof value === 'string' ? value : '');
         switch (event.type) {
         case 'input_audio_buffer.committed':
-            this.lastProviderCommitAt = this.deps.now();
+            this.awaitingProviderCommit = false;
             if (itemId) {
                 this.transcript.committed(itemId, typeof event.previous_item_id === 'string' ? event.previous_item_id : null);
             }
@@ -428,7 +431,7 @@ export class WebRTCTranscriber implements DictationTransport {
     }
 
     private settleIfDone() {
-        if (this.finalWaiter && !this.hasOutstandingWork()) {
+        if (this.finalWaiter && !this.hasOutstandingWork() && !this.awaitingProviderCommit) {
             this.finalWaiter();
         }
     }
@@ -472,19 +475,19 @@ export class WebRTCTranscriber implements DictationTransport {
         }
 
         // Server VAD commits only after it hears the speech end, so speech
-        // still in the buffer is committed here for every model. Speech it
-        // already heard end may have a commit on the way.
+        // still in the buffer is committed here for every model. Recent
+        // speech it already heard end may have a commit on the way.
         const heard = this.segmenter?.lastSpeech() ?? null;
-        const providerMayCommit = !this.clientCommits && heard !== null && heard > this.lastProviderCommitAt &&
-            this.deps.now() - heard < PROVIDER_COMMIT_WINDOW_MS;
         if (waitForFinal && this.segmenter?.flush()) {
             this.commit();
+        } else if (waitForFinal && !this.clientCommits && heard !== null && this.deps.now() - heard < PROVIDER_COMMIT_WINDOW_MS) {
+            this.awaitingProviderCommit = true;
         }
 
         // No audio is sent after stop: the mic goes off now, and only the
         // transcript of audio already sent is awaited.
         this.stream?.getTracks().forEach((track) => track.stop());
-        if (waitForFinal && (this.hasOutstandingWork() || providerMayCommit)) {
+        if (waitForFinal && (this.hasOutstandingWork() || this.awaitingProviderCommit)) {
             await new Promise<void>((resolve) => {
                 const timer = setTimeout(resolve, FINAL_TRANSCRIPT_WAIT_MS);
                 this.finalWaiter = () => {
