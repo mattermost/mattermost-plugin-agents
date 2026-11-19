@@ -49,10 +49,9 @@ type GetUsersInGroupChannelsArgs struct {
 
 // CreateGroupArgs represents arguments for the create_group tool.
 type CreateGroupArgs struct {
-	DisplayName    string `json:"display_name" jsonschema:"The group's display name,minLength=1,maxLength=128"`
-	Name           string `json:"name,omitempty" jsonschema:"Mention handle (lowercase letters, numbers, periods, dashes, underscores). Required when allow_reference is true,maxLength=64"`
-	Description    string `json:"description,omitempty" jsonschema:"Optional group description,maxLength=1024"`
-	AllowReference bool   `json:"allow_reference,omitempty" jsonschema:"Allow the group to be mentioned with @name. Requires name"`
+	DisplayName string `json:"display_name" jsonschema:"The group's display name,minLength=1,maxLength=128"`
+	Name        string `json:"name" jsonschema:"Mention handle (lowercase letters, numbers, periods, dashes, underscores),minLength=1,maxLength=64"`
+	Description string `json:"description,omitempty" jsonschema:"Optional group description,maxLength=1024"`
 }
 
 // UpdateGroupArgs represents arguments for the update_group tool.
@@ -61,7 +60,7 @@ type UpdateGroupArgs struct {
 	DisplayName    *string `json:"display_name,omitempty" jsonschema:"New display name"`
 	Name           *string `json:"name,omitempty" jsonschema:"New mention handle (lowercase letters, numbers, periods, dashes, underscores),maxLength=64"`
 	Description    *string `json:"description,omitempty" jsonschema:"New description. Pass an empty string to clear it,maxLength=1024"`
-	AllowReference *bool   `json:"allow_reference,omitempty" jsonschema:"Whether the group can be mentioned with @name. Turning this on requires the group to have a name"`
+	AllowReference *bool   `json:"allow_reference,omitempty" jsonschema:"Whether the group can be mentioned with @name. Custom groups must stay mentionable. Enabling mentions keeps the group's existing handle"`
 }
 
 const (
@@ -71,8 +70,8 @@ const (
 	getChannelGroupsDescription        = "Get the groups synced to a channel. Parameters: channel_id (required), page, per_page."
 	getTeamGroupsDescription           = "Get the groups synced to a team. Parameters: team_id (required), page, per_page."
 	getUsersInGroupChannelsDescription = "Get the members of given group-message (GM) channels. Parameters: channel_ids (required list)."
-	createGroupDescription             = "Create a custom user group. Parameters: display_name (required), name (mention handle; required when allow_reference is true), description (optional), allow_reference (optional). LDAP and plugin-synced groups cannot be created this way."
-	updateGroupDescription             = "Update a user group's display name, mention handle, description, or whether it can be @mentioned. Parameters: group_id (required), plus any of display_name, name, description, allow_reference. Does not add or remove members."
+	createGroupDescription             = "Create a custom user group. Parameters: display_name (required), name (required mention handle), description (optional). Custom groups are mentionable. LDAP and plugin-synced groups cannot be created this way."
+	updateGroupDescription             = "Update a user group's display name, mention handle, description, or whether it can be @mentioned. Parameters: group_id (required), plus any of display_name, name, description, allow_reference. Custom groups must stay mentionable. Enabling mentions keeps the group's existing handle. Does not add or remove members."
 )
 
 // getGroupTools returns the group tools.
@@ -217,22 +216,20 @@ func (p *MattermostToolProvider) toolCreateGroup(mcpContext *MCPToolContext, arg
 	if err := validateGroupDescription(args.Description); err != nil {
 		return "", err
 	}
-	if args.Name != "" {
-		if err := validateGroupName(args.Name); err != nil {
-			return "", err
-		}
-	} else if args.AllowReference {
-		return "", fmt.Errorf("name is required when allow_reference is true")
+	if args.Name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if err := validateGroupName(args.Name); err != nil {
+		return "", err
 	}
 
+	// Custom groups must be mentionable. The server rejects allow_reference false.
 	group := &model.Group{
 		DisplayName:    args.DisplayName,
 		Description:    args.Description,
 		Source:         model.GroupSourceCustom,
-		AllowReference: args.AllowReference,
-	}
-	if args.Name != "" {
-		group.Name = &args.Name
+		AllowReference: true,
+		Name:           &args.Name,
 	}
 
 	created, _, err := mcpContext.Client.CreateGroup(mcpContext.Ctx, group)
@@ -272,11 +269,62 @@ func (p *MattermostToolProvider) toolUpdateGroup(mcpContext *MCPToolContext, arg
 		Description:    args.Description,
 		AllowReference: args.AllowReference,
 	}
+	// Setting allow_reference true with no name makes Mattermost replace the
+	// stored handle with one derived from the display name, skipping the
+	// reserved-name checks. Keep the stored handle instead.
+	if msg, err := keepStoredMentionHandle(mcpContext, args, patch); err != nil {
+		return "", err
+	} else if msg != "" {
+		return msg, nil
+	}
+
 	updated, _, err := mcpContext.Client.PatchGroup(mcpContext.Ctx, args.GroupID, patch)
 	if err != nil {
 		return "", fmt.Errorf("error updating group: %w", err)
 	}
 	return fmt.Sprintf("Successfully updated group '%s' (ID: %s)", updated.DisplayName, updated.Id), nil
+}
+
+// keepStoredMentionHandle adjusts a patch that changes mentionability.
+// An empty string means the caller should apply the patch. A non-empty string
+// is a completed no-op result.
+func keepStoredMentionHandle(mcpContext *MCPToolContext, args UpdateGroupArgs, patch *model.GroupPatch) (string, error) {
+	if args.AllowReference == nil {
+		return "", nil
+	}
+
+	group, _, err := mcpContext.Client.GetGroup(mcpContext.Ctx, args.GroupID, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching group: %w", err)
+	}
+
+	if !*args.AllowReference {
+		if group.Source == model.GroupSourceCustom {
+			return "", fmt.Errorf("custom groups must remain mentionable")
+		}
+		return "", nil
+	}
+	if args.Name != nil {
+		return "", nil
+	}
+	if group.GetName() == "" {
+		return "", fmt.Errorf("name is required to allow mentions when the group has no mention handle")
+	}
+	if err := validateGroupName(group.GetName()); err != nil {
+		return "", err
+	}
+
+	if group.AllowReference {
+		patch.AllowReference = nil
+		if patch.DisplayName == nil && patch.Description == nil {
+			return fmt.Sprintf("Group '%s' (ID: %s) is already mentionable; the mention handle was left unchanged", group.DisplayName, group.Id), nil
+		}
+		return "", nil
+	}
+
+	name := group.GetName()
+	patch.Name = &name
+	return "", nil
 }
 
 func validateGroupDisplayName(displayName string) error {
