@@ -3,7 +3,9 @@
 
 export type DictationProvider = 'openai' | 'azure';
 
-export type DictationUnavailableReason = 'disabled' | 'license' | 'misconfigured' | 'access_denied';
+// "unavailable" covers a misconfigured service and a user who may not use it
+// (including guests, bots and deactivated accounts), without saying which.
+export type DictationUnavailableReason = 'disabled' | 'license' | 'unavailable';
 
 // GET /dictation/availability
 export type DictationAvailability = {

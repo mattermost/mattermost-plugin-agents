@@ -20,7 +20,7 @@ The Mattermost Server never receives audio or transcript text. It sees one reque
 3. Select the **Transcription service**. Only saved OpenAI services are listed.
 4. Check the **Transcription model** and optionally set a **Language**, then save.
 
-An access policy on the transcription service applies to dictation too: users it denies don't see the button. See [Policies for each resource](access_control.md#policies-for-each-resource).
+Guest accounts and bot accounts can't dictate. An access policy on the transcription service applies to dictation too: users it denies don't see the button. Service access policies need Enterprise Advanced; without one, every other signed-in user can dictate. See [Policies for each resource](access_control.md#policies-for-each-resource).
 
 | Setting | Config key | Default | Details |
 |---|---|---|---|
@@ -81,7 +81,7 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 
 | Symptom | Check |
 |---|---|
-| No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user has access to the service, and the formatting bar is shown. |
+| No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user isn't a guest and has access to the service, and the formatting bar is shown. |
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
 | "The speech service could not be reached" | The browser can't reach OpenAI over HTTPS or WebRTC, or a `Content-Security-Policy` blocks it. See [Network requirements](#network-requirements). The server log has the reason when OpenAI refused to create the session. |
 | "Dictation was started too often" | The user requested 10 keys in the last 60 seconds or already holds 2 unexpired keys. Waiting a minute clears it. |

@@ -36,7 +36,8 @@ describe('useDictationAvailable', () => {
 
     test.each([
         {name: 'available', response: () => Promise.resolve({enabled: true, available: true, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc'}), want: 'true'},
-        {name: 'unlicensed', response: () => Promise.resolve({enabled: true, available: false, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc', reason: 'license'}), want: 'false'},
+        {name: 'unlicensed', response: () => Promise.resolve({enabled: true, available: false, provider: '', model: '', transport: 'webrtc', reason: 'license'}), want: 'false'},
+        {name: 'unavailable to this user', response: () => Promise.resolve({enabled: true, available: false, provider: '', model: '', transport: 'webrtc', reason: 'unavailable'}), want: 'false'},
         {name: 'request fails', response: () => Promise.reject(Object.assign(new Error('401'), {status_code: 401})), want: 'false'},
     ])('loads availability on first use: $name', async ({response, want}) => {
         mockGetDictationAvailability.mockImplementation(response);
