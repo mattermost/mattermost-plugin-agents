@@ -17,24 +17,30 @@ const (
 	sessionStartWindow     = time.Minute
 )
 
+// sessionEndsPerWindow bounds end requests per user and node, so repeated
+// ends of a call whose hangup keeps failing can't flood the provider.
+const sessionEndsPerWindow = 30
+
 type rateLimiter struct {
-	mu    sync.Mutex
-	now   func() time.Time
-	users map[string][]time.Time
+	mu     sync.Mutex
+	now    func() time.Time
+	limit  int
+	window time.Duration
+	users  map[string][]time.Time
 }
 
-func newRateLimiter() *rateLimiter {
-	return &rateLimiter{now: time.Now, users: make(map[string][]time.Time)}
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	return &rateLimiter{now: time.Now, limit: limit, window: window, users: make(map[string][]time.Time)}
 }
 
-// allow records a session start for userID and reports whether it is
-// within the limit.
+// allow records an attempt by userID and reports whether it is within the
+// limit.
 func (l *rateLimiter) allow(userID string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := l.now()
-	windowStart := now.Add(-sessionStartWindow)
+	windowStart := now.Add(-l.window)
 	for id, starts := range l.users {
 		starts = slices.DeleteFunc(starts, func(t time.Time) bool { return !t.After(windowStart) })
 		if len(starts) == 0 {
@@ -43,7 +49,7 @@ func (l *rateLimiter) allow(userID string) bool {
 			l.users[id] = starts
 		}
 	}
-	if len(l.users[userID]) >= sessionStartsPerWindow {
+	if len(l.users[userID]) >= l.limit {
 		return false
 	}
 	l.users[userID] = append(l.users[userID], now)

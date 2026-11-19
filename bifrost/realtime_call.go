@@ -110,6 +110,16 @@ var ErrSessionChanged = errors.New("the realtime session was changed away from i
 // call or the connection drops.
 var ErrSidebandClosed = errors.New("the realtime sideband connection closed")
 
+// CreatedCallError is returned when the provider created a call but the
+// response was unusable. The call is still running: hang up CallID.
+type CreatedCallError struct {
+	CallID string
+	Err    error
+}
+
+func (e *CreatedCallError) Error() string { return e.Err.Error() }
+func (e *CreatedCallError) Unwrap() error { return e.Err }
+
 var callIDPattern = regexp.MustCompile(`^rtc_[A-Za-z0-9_-]{1,128}$`)
 
 // RealtimeCallClient creates, watches and hangs up realtime calls for one
@@ -177,8 +187,8 @@ func newRealtimeTransport() *http.Transport {
 	return transport
 }
 
-// newGuardedDialer returns a dialer that refuses link-local (including cloud
-// metadata endpoints), multicast and unspecified addresses. The check runs
+// newGuardedDialer returns a dialer that refuses link-local, cloud metadata,
+// multicast and unspecified addresses. The check runs
 // on each address the dialer actually connects to, after resolution, so
 // fallback across a host's addresses still works, every address tried is
 // checked, and a second resolution can't swap one in. Private and loopback
@@ -204,9 +214,15 @@ func guardConnect(_, address string, _ syscall.RawConn) error {
 	return checkDialableIP(ip)
 }
 
+// checkDialableIP applies Bifrost's private-network policy (unspecified,
+// link-local and cloud metadata endpoints, including IPv4 embedded in IPv6)
+// and refuses multicast.
 func checkDialableIP(ip net.IP) error {
-	if ip.IsUnspecified() || ip.IsMulticast() || bifrostnet.IsLinkLocal(ip) {
+	if ip.IsMulticast() {
 		return fmt.Errorf("blocked connection to %s", ip)
+	}
+	if err := bifrostnet.CheckPrivateNetworkLiteral(ip.String()); err != nil {
+		return fmt.Errorf("blocked connection to %s: %w", ip, err)
 	}
 	return nil
 }
@@ -435,18 +451,13 @@ func (c *RealtimeCallClient) CreateTranscriptionCall(ctx context.Context, offerS
 	if callID == "" {
 		return nil, errors.New("the realtime call response has no valid call ID")
 	}
-	// The call exists from here: any failure hangs it up.
+	// The call exists from here: the caller must hang it up on failure.
 	answer, err := io.ReadAll(io.LimitReader(resp.Body, MaxSDPBytes+1))
 	if err == nil && (len(answer) > MaxSDPBytes || !bytes.HasPrefix(answer, []byte("v="))) {
 		err = errors.New("the realtime call response is not an SDP answer")
 	}
 	if err != nil {
-		hangupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), realtimeRequestTimeout)
-		defer cancel()
-		if hangupErr := c.Hangup(hangupCtx, callID); hangupErr != nil {
-			err = errors.Join(err, hangupErr)
-		}
-		return nil, fmt.Errorf("failed to read the SDP answer: %w", err)
+		return nil, &CreatedCallError{CallID: callID, Err: fmt.Errorf("failed to read the SDP answer: %w", err)}
 	}
 	return &RealtimeCall{CallID: callID, AnswerSDP: string(answer), TurnDetection: TurnDetectionForModel(req.Model)}, nil
 }
@@ -520,6 +531,9 @@ type Sideband struct {
 	conn         *websocket.Conn
 	expected     TranscriptionSessionRequest
 	pingInterval time.Duration
+	// pongGrace is how long past two ping intervals Run waits for a pong
+	// or event before treating the connection as dead.
+	pongGrace time.Duration
 }
 
 // Attach opens the sideband connection to callID, which must have been
@@ -564,7 +578,7 @@ func (c *RealtimeCallClient) Attach(ctx context.Context, callID string, req Tran
 		return nil, fmt.Errorf("sideband attach failed (status=%d): %w", status, llm.SanitizeProviderError(err, c.apiKey))
 	}
 	conn.SetReadLimit(realtimeEventMaxBytes)
-	return &Sideband{conn: conn, expected: req, pingInterval: sidebandPingInterval}, nil
+	return &Sideband{conn: conn, expected: req, pingInterval: sidebandPingInterval, pongGrace: realtimeRequestTimeout}, nil
 }
 
 // Run reads the call's events until ctx ends, the call ends
@@ -574,6 +588,13 @@ func (s *Sideband) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, func() { _ = s.conn.Close() })
 	defer stop()
 	defer s.conn.Close()
+
+	// A connection that drops without a close (a half-open TCP connection)
+	// stops answering pings; the read deadline then ends Run.
+	readTimeout := 2*s.pingInterval + s.pongGrace
+	extend := func() { _ = s.conn.SetReadDeadline(time.Now().Add(readTimeout)) }
+	extend()
+	s.conn.SetPongHandler(func(string) error { extend(); return nil })
 
 	pingCtx, stopPings := context.WithCancel(ctx)
 	defer stopPings()
@@ -592,14 +613,16 @@ func (s *Sideband) Run(ctx context.Context) error {
 			}
 			return ErrSidebandClosed
 		}
+		extend()
 		if !sessionEventMatches(data, s.expected) {
 			return ErrSessionChanged
 		}
 	}
 }
 
-// ping sends a WebSocket ping every pingInterval until ctx ends or a ping
-// fails. WriteControl is safe alongside the reader.
+// ping sends a WebSocket ping every pingInterval until ctx ends. A failed
+// ping closes the connection, which ends Run. WriteControl is safe alongside
+// the reader.
 func (s *Sideband) ping(ctx context.Context) {
 	ticker := time.NewTicker(s.pingInterval)
 	defer ticker.Stop()
@@ -609,6 +632,7 @@ func (s *Sideband) ping(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := s.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(realtimeRequestTimeout)); err != nil {
+				_ = s.conn.Close()
 				return
 			}
 		}
@@ -650,8 +674,11 @@ func sessionEventMatches(data []byte, expected TranscriptionSessionRequest) bool
 	if err := json.Unmarshal(data, &ev); err != nil {
 		return false
 	}
-	switch ev.Type {
-	case "session.created", "session.updated", "transcription_session.created", "transcription_session.updated":
+	switch {
+	case strings.HasPrefix(ev.Type, "response."):
+		// A transcription session never generates responses.
+		return false
+	case ev.Type == "session.created", ev.Type == "session.updated", ev.Type == "transcription_session.created", ev.Type == "transcription_session.updated":
 	default:
 		return true
 	}
