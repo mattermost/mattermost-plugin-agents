@@ -141,8 +141,8 @@ func (p projectPlatform) LogError(msg string, keyValuePairs ...any) {
 // projectAutoReply turns on ambient replies through the auto-reply service.
 type projectAutoReply struct{ service *autoreply.Service }
 
-func (a projectAutoReply) EnableAmbient(_ context.Context, channelID, botUserID, actorID string) error {
-	_, err := a.service.Set(autoreply.Setting{ChannelID: channelID, BotID: botUserID, Mode: autoreply.ModeAmbient, UpdatedBy: actorID})
+func (a projectAutoReply) EnableAmbient(_ context.Context, channelID, botUserID, actorID, instructions string) error {
+	_, err := a.service.Set(autoreply.Setting{ChannelID: channelID, BotID: botUserID, Mode: autoreply.ModeAmbient, UpdatedBy: actorID, Instructions: instructions})
 	return err
 }
 

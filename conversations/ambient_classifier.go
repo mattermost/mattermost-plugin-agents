@@ -81,6 +81,18 @@ func threadHasReplyFrom(thread []*model.Post, userID string) bool {
 // stay attached and rely on tool_choice "none". Structured-output capability
 // detection, dedupe, cluster-wide rate limits, token cost caps, and
 // deleted-post recheck are deferred.
+// ProjectAmbientInstructions tell the ambient classifier when a project
+// agent should answer an unmentioned post in its project channel. They apply
+// whenever the channel's auto-reply setting has no instructions of its own.
+const ProjectAmbientInstructions = `This channel is a project channel and the agent leads the project. Reply when the latest message reports progress, a blocker, a decision, a finished or new piece of work, or a milestone or date change, or otherwise says something that should update the project's board, checklist or status note. Reply when someone asks the project a question or asks for help with project work. Do not reply to casual chatter, greetings, thanks, jokes, or talk unrelated to the project.`
+
+func ambientInstructions(bot *bots.Bot, setting *autoreply.Setting) string {
+	if setting.Instructions == "" && bot.IsProjectAgent() {
+		return ProjectAmbientInstructions
+	}
+	return setting.Instructions
+}
+
 func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot, setting *autoreply.Setting, trigger *model.Post, postingUser *model.User, channel *model.Channel, thread []*model.Post) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "ambient classifier", trace.WithAttributes(
 		telemetry.AgentID.String(bot.GetMMBot().UserId),
@@ -117,7 +129,7 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 	// to services that user may use; thread content must not reach others.
 	llmCtx := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel,
 		c.contextBuilder.WithLLMContextParameters(map[string]any{
-			"Instructions": setting.Instructions,
+			"Instructions": ambientInstructions(bot, setting),
 			"ThreadScoped": setting.Mode == autoreply.ModeAmbientThreads,
 		}),
 	)

@@ -80,7 +80,7 @@ func (s *Service) ToolsForRequest(bot *bots.Bot, llmCtx *llm.Context) []llm.Tool
 		return nil
 	}
 	tools := []llm.Tool{s.statusNoteTool(project), s.linkCharterTool(project), s.proposeEndTool(project)}
-	if llmCtx.ToolCatalog.InteractiveUserPresent && llmCtx.RequestingUser != nil {
+	if llmCtx.ToolCatalog.InteractiveUserPresent && llmCtx.RequestingUser != nil && !s.inRunThread(project.ChannelID, llmCtx) {
 		tools = append(tools, s.startCursorThreadTool(bot, project))
 	}
 	return tools

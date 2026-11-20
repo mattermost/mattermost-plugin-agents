@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -48,7 +49,7 @@ func (liveCatalog) GetToolsWithSelection(_ context.Context, req mcp.CatalogReque
 			Name: name, ServerOrigin: origin, ReadOnly: readOnly,
 			Schema: map[string]any{"type": "object", "properties": map[string]any{"board_id": map[string]any{"type": "string"}, "run_id": map[string]any{"type": "string"}}},
 			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
-				return "ran as " + identity, nil
+				return `{"agent_id":"bc-run-` + identity + `","ran_as":"` + identity + `"}`, nil
 			},
 		}
 	}
@@ -143,8 +144,10 @@ func TestProjectTurnCatalog(t *testing.T) {
 			requester := &model.User{Id: leadID, Username: "alice"}
 			channel := &model.Channel{Id: channelID, TeamId: model.NewId(), Type: model.ChannelTypeOpen}
 
+			runRoot := model.NewId()
+			require.NoError(t, f.store.AddProjectThread(&store.ProjectThread{RootPostID: runRoot, ChannelID: channelID, Kind: store.ProjectThreadKindCursor, StartedBy: leadID}))
 			llmCtx := builder.BuildLLMContextUserRequest(bot, requester, channel,
-				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ThreadRootID: model.NewId(), ConversationID: model.NewId()}),
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ThreadRootID: runRoot, ConversationID: model.NewId()}),
 				func(c *llm.Context) { c.ToolCatalog.InteractiveUserPresent = true },
 				builder.WithLLMContextTools(context.Background(), bot),
 			)
@@ -170,11 +173,15 @@ func TestProjectTurnCatalog(t *testing.T) {
 			assert.True(t, cursor.AlwaysAsk)
 			result, err := llmCtx.Tools.ResolveTool(context.Background(), cursor.Name, func(any) error { return nil }, llmCtx)
 			require.NoError(t, err)
-			assert.Equal(t, "ran as "+leadID, result, "Cursor runs are credited to the requester")
+			assert.Contains(t, result, `"ran_as":"`+leadID+`"`, "Cursor runs are credited to the requester")
+			thread, err := f.store.GetProjectThread(channelID, runRoot)
+			require.NoError(t, err)
+			assert.Equal(t, "bc-run-"+leadID, thread.ExternalID, "the run thread records the Cursor agent")
+			assert.NotContains(t, byName, ToolStartCursorThread, "a run thread doesn't offer another run thread")
 
 			result, err = llmCtx.Tools.ResolveTool(context.Background(), "boards__com_mattermost_boardsv2__create_card", func(any) error { return nil }, llmCtx)
 			require.NoError(t, err)
-			assert.Equal(t, "ran as "+botUserID, result, "board tools run as the project bot")
+			assert.Contains(t, result, `"ran_as":"`+botUserID+`"`, "board tools run as the project bot")
 		})
 	}
 }

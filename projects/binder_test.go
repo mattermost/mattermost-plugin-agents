@@ -248,7 +248,7 @@ func TestBinderMatchesNamespacedCatalogNames(t *testing.T) {
 		// Prefixes as plugins name their tools, under the server namespace.
 		{origin: BoardsOrigin, prefix: "boards__com_mattermost_boardsv2", tool: "list_cards", wantArgs: map[string]any{"board_id": "B"}},
 		{origin: PlaybooksOrigin, prefix: "playbooks__playbooks", tool: "check_item", wantArgs: map[string]any{"run_id": "R"}},
-		{origin: CursorOrigin, prefix: "cursor_cloud_agents__com_mattermost_plugin-cursor", tool: "create_agent", wantArgs: map[string]any{}, wantAlwaysAsk: true},
+		{origin: CursorOrigin, prefix: "cursor_cloud_agents__com_mattermost_plugin-cursor", tool: "list_environments", wantArgs: map[string]any{}},
 		{origin: BoardsOrigin, prefix: "boards", tool: "list_cards", wantArgs: map[string]any{"board_id": "B"}},
 	}
 	for _, tc := range tests {
@@ -329,4 +329,101 @@ func TestOnceOnlyCreateRetriesTheLinkWithoutCreatingAgain(t *testing.T) {
 	_, err = callTool(t, bound[0], map[string]any{})
 	require.ErrorIs(t, err, ErrToolOutsideProject)
 	assert.Equal(t, 1, creates)
+}
+
+func TestCursorCreateRecordsTheAgentOnItsRunThread(t *testing.T) {
+	const createName = "cursor_cloud_agents__com_mattermost_plugin-cursor__create_agent"
+	tests := []struct {
+		name       string
+		threads    []*store.ProjectThread
+		rootID     string
+		result     string
+		wantErr    error
+		wantCalled bool
+		wantID     string
+	}{
+		{name: "JSON result", threads: []*store.ProjectThread{{RootPostID: "run", ChannelID: "P", Kind: store.ProjectThreadKindCursor}}, rootID: "run",
+			result: `{"agent_id":"bc-1234","status":"CREATING"}`, wantCalled: true, wantID: "bc-1234"},
+		{name: "text result", threads: []*store.ProjectThread{{RootPostID: "run", ChannelID: "P", Kind: store.ProjectThreadKindCursor}}, rootID: "run",
+			result: "Started Cursor agent bc-stub-7cffb05a. Poll it with get_agent.", wantCalled: true, wantID: "bc-stub-7cffb05a"},
+		{name: "outside a run thread", rootID: "elsewhere", result: `{"agent_id":"bc-1"}`, wantErr: ErrNotInRunThread},
+		{name: "a thread that already has an agent", threads: []*store.ProjectThread{{RootPostID: "run", ChannelID: "P", Kind: store.ProjectThreadKindCursor, ExternalID: "bc-old"}}, rootID: "run",
+			result: `{"agent_id":"bc-new"}`, wantID: "bc-old"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := activeProject()
+			f := newFixture(t, true, project)
+			f.store.threads = tt.threads
+			called := false
+			tool := llm.Tool{
+				Name: createName, ServerOrigin: CursorOrigin,
+				Schema: map[string]any{"type": "object", "properties": map[string]any{"prompt": map[string]any{"type": "string"}}},
+				Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+					called = true
+					return tt.result, nil
+				},
+			}
+			bound := NewBinder(project, true, f.svc.binderCallbacks(f.bot)).Bind([]llm.Tool{tool})
+			require.Len(t, bound, 1)
+			assert.True(t, bound[0].AlwaysAsk)
+
+			llmCtx := &llm.Context{ToolCatalog: llm.ToolCatalogContext{ScopedTurn: &llm.ScopedTurn{ThreadRootID: tt.rootID}}}
+			_, err := bound[0].Resolver(context.Background(), llmCtx, func(any) error { return nil })
+			assert.Equal(t, tt.wantCalled, called)
+			switch {
+			case tt.wantErr != nil:
+				require.ErrorIs(t, err, tt.wantErr)
+			case !tt.wantCalled:
+				require.Error(t, err)
+			default:
+				require.NoError(t, err)
+			}
+			if tt.wantID != "" {
+				thread, err := f.store.GetProjectThread("P", tt.rootID)
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantID, thread.ExternalID)
+			}
+		})
+	}
+}
+
+func TestCursorAgentToolsTakeOnlyTheProjectsAgents(t *testing.T) {
+	tests := []struct {
+		name    string
+		tool    string
+		agentID string
+		wantErr bool
+	}{
+		{name: "follow-up to a recorded agent", tool: "add_followup", agentID: "bc-mine"},
+		{name: "reading a recorded agent", tool: "get_agent", agentID: "bc-mine"},
+		{name: "follow-up to another agent", tool: "add_followup", agentID: "bc-other", wantErr: true},
+		{name: "reading another agent", tool: "get_agent_conversation", agentID: "bc-other", wantErr: true},
+		{name: "no agent", tool: "get_agent", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := activeProject()
+			f := newFixture(t, true, project)
+			f.store.threads = []*store.ProjectThread{{RootPostID: "run", ChannelID: "P", Kind: store.ProjectThreadKindCursor, ExternalID: "bc-mine"}}
+			called := false
+			tool := llm.Tool{
+				Name: "cursor_cloud_agents__com_mattermost_plugin-cursor__" + tt.tool, ServerOrigin: CursorOrigin,
+				Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+					called = true
+					return "ok", nil
+				},
+			}
+			bound := NewBinder(project, true, f.svc.binderCallbacks(f.bot)).Bind([]llm.Tool{tool})
+			require.Len(t, bound, 1)
+			_, err := callTool(t, bound[0], map[string]any{"agent_id": tt.agentID})
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrToolOutsideProject)
+				assert.False(t, called)
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, called)
+		})
+	}
 }

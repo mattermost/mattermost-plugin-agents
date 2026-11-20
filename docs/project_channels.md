@@ -16,7 +16,7 @@ Project agents run with service account authentication in scoped channel mode, s
 
 ## What a project agent can do
 
-When someone creates a project, Agents creates the channel (or uses the channel they just created), creates a hidden agent for it, adds the agent to the channel as a channel admin and turns on ambient replies there. The agent then opens a setup thread to write a charter, create the board and checklist once, and set the status note. In that thread the lead, anyone who can manage the channel's roles, and System Admins can also have the agent update its name and instructions; nobody else can change them, and the agent never changes them on a turn nobody is present for.
+When someone creates a project, Agents creates the channel (or uses the channel they just created), creates a hidden agent for it, adds the agent to the channel as a channel admin and turns on ambient replies there. The agent answers unmentioned posts that report progress, a blocker, a decision or a date change, or that should update the board, checklist or status note, and stays out of casual conversation. Channel auto-reply instructions, when set, replace this rule. The agent then opens a setup thread to write a charter, create the board and checklist once, and set the status note. In that thread the lead, anyone who can manage the channel's roles, and System Admins can also have the agent update its name and instructions; nobody else can change them, and the agent never changes them on a turn nobody is present for.
 
 The agent is limited to its project:
 
@@ -27,6 +27,7 @@ The agent is limited to its project:
 - Members of the project channel are added to the board channel when the board is created, and as they join, so they can open the board. People who leave the project channel are removed from the board channel.
 - After saving the charter to the channel's artifacts, it links the charter to the project so the project panel shows it.
 - Opening a Cursor run thread, starting a Cursor run and adding a follow-up always ask the person who requested them. Cursor tools run as that person once approved, and are never offered when nobody is present to approve them. Until someone replies in a new run thread, the agent can only read there.
+- Each Cursor run gets one Cursor agent, started from inside its run thread, which records the agent. Reading or following up on a Cursor agent works only for agents the project's run threads started.
 - In a project channel, changing the agent's own instructions, name or tools, or completing setup, always asks the person who requested it.
 - It treats the status note as information from the channel, not as instructions, and doesn't see the note in the setup thread, where it can change its own instructions.
 - Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list. Their bot accounts are regular Mattermost bot accounts, so the Mattermost MCP server's `list_bots` and `get_bot` tools still return them. They can't be changed or deleted from the agent settings while the project is running; end the project instead. If a project agent remains after its project ended, it can be deleted from the agent settings.

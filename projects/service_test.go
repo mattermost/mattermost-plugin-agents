@@ -36,6 +36,7 @@ type memStore struct {
 	grants   map[string]store.ProjectGrant
 	deleted  []string
 	agents   []llm.BotConfig
+	threads  []*store.ProjectThread
 }
 
 func newMemStore(projects ...*store.Project) *memStore {
@@ -174,7 +175,50 @@ func (m *memStore) ClaimCheckin(channelID string, expected, nextAt, now int64) (
 func (m *memStore) SetProjectLastCheckinPost(channelID, postID string) error {
 	return m.update(channelID, func(*store.Project) bool { return true }, func(p *store.Project) { p.LastCheckinPostID = postID })
 }
-func (m *memStore) AddProjectThread(*store.ProjectThread) error { return nil }
+func (m *memStore) AddProjectThread(t *store.ProjectThread) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *t
+	m.threads = append(m.threads, &cp)
+	return nil
+}
+func (m *memStore) GetProjectThread(channelID, rootPostID string) (*store.ProjectThread, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.threads {
+		if t.ChannelID == channelID && t.RootPostID == rootPostID {
+			cp := *t
+			return &cp, nil
+		}
+	}
+	return nil, store.ErrProjectThreadNotFound
+}
+func (m *memStore) SetProjectThreadExternalID(channelID, rootPostID, externalID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.threads {
+		if t.ChannelID == channelID && t.RootPostID == rootPostID {
+			if t.ExternalID != "" && t.ExternalID != externalID {
+				return store.ErrProjectLinkSet
+			}
+			t.ExternalID = externalID
+			return nil
+		}
+	}
+	return store.ErrProjectThreadNotFound
+}
+func (m *memStore) ListProjectThreads(channelID string) ([]*store.ProjectThread, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*store.ProjectThread
+	for _, t := range m.threads {
+		if t.ChannelID == channelID {
+			cp := *t
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
 func (m *memStore) RecordProjectGrant(g store.ProjectGrant) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -436,9 +480,14 @@ func (f fakeConfig) EnableProjectChannels() bool   { return f.enabled }
 func (fakeConfig) ProjectDefaultServiceID() string { return "svc" }
 func (fakeConfig) ProjectDefaultModel() string     { return "" }
 
-type fakeAutoReply struct{}
+type fakeAutoReply struct{ instructions *string }
 
-func (fakeAutoReply) EnableAmbient(context.Context, string, string, string) error { return nil }
+func (a fakeAutoReply) EnableAmbient(_ context.Context, _, _, _, instructions string) error {
+	if a.instructions != nil {
+		*a.instructions = instructions
+	}
+	return nil
+}
 
 type fakeWrapUps struct {
 	mu    sync.Mutex
@@ -459,6 +508,9 @@ type fixture struct {
 	threads  *fakeThreads
 	wrapUps  *fakeWrapUps
 	bot      *bots.Bot
+	// ambientInstructions are the classifier instructions the project
+	// turned ambient replies on with.
+	ambientInstructions string
 }
 
 func newFixture(t *testing.T, enabled bool, project *store.Project) *fixture {
@@ -481,7 +533,7 @@ func newFixture(t *testing.T, enabled bool, project *store.Project) *fixture {
 	}
 	f.svc = New(Deps{
 		Store: f.store, Platform: f.platform, Bots: fakeBots{bot: bot}, Threads: f.threads,
-		Config: fakeConfig{enabled: enabled}, AutoReply: fakeAutoReply{}, WrapUps: f.wrapUps,
+		Config: fakeConfig{enabled: enabled}, AutoReply: fakeAutoReply{instructions: &f.ambientInstructions}, WrapUps: f.wrapUps,
 	})
 	return f
 }
@@ -1209,4 +1261,47 @@ func TestBackfillLeavesAConcurrentEditAlone(t *testing.T) {
 	assert.Zero(t, updated)
 	assert.True(t, f.store.agents[0].DisableTools, "the edit made after the read survives")
 	assert.Empty(t, f.store.agents[0].EnabledMCPTools)
+}
+
+func TestRunThreadsDontOfferAnotherRunThread(t *testing.T) {
+	tests := []struct {
+		name     string
+		rootID   string
+		wantTool bool
+	}{
+		{name: "project channel", rootID: "post", wantTool: true},
+		{name: "another thread in the channel", rootID: "chat", wantTool: true},
+		{name: "a Cursor run thread", rootID: "run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, true, activeProject())
+			f.store.threads = []*store.ProjectThread{{RootPostID: "run", ChannelID: "P", Kind: store.ProjectThreadKindCursor}}
+			llmCtx := &llm.Context{RequestingUser: &model.User{Id: "lead"}, Channel: &model.Channel{Id: "P", Type: model.ChannelTypeOpen}}
+			llmCtx.ToolCatalog.InteractiveUserPresent = true
+			llmCtx.ToolCatalog.ScopedTurn = &llm.ScopedTurn{ThreadRootID: tt.rootID}
+
+			var names []string
+			for _, tool := range f.svc.ToolsForRequest(f.bot, llmCtx) {
+				names = append(names, tool.Name)
+			}
+			assert.Equal(t, tt.wantTool, slices.Contains(names, ToolStartCursorThread))
+			assert.Contains(t, names, ToolUpdateStatusNote)
+		})
+	}
+
+	t.Run("the run thread's prompt says to start the agent there", func(t *testing.T) {
+		f := newFixture(t, true, activeProject())
+		run := f.svc.SystemPromptSuffix(context.Background(), f.bot, llm.OperationProjectRun)
+		assert.Contains(t, run, "create_agent")
+		assert.Contains(t, run, "Don't open another run thread")
+		assert.NotContains(t, f.svc.SystemPromptSuffix(context.Background(), f.bot, llm.OperationProjectSetup), "Don't open another run thread")
+	})
+}
+
+func TestNewProjectsTurnOnAmbientRepliesForProjectWork(t *testing.T) {
+	f := newFixture(t, true, nil)
+	_, err := f.svc.CreateProject(context.Background(), "lead", CreateRequest{TeamID: "T", Name: "launch", DisplayName: "Launch"})
+	require.NoError(t, err)
+	assert.Equal(t, conversations.ProjectAmbientInstructions, f.ambientInstructions)
 }

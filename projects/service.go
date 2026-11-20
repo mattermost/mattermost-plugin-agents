@@ -72,6 +72,9 @@ type Store interface {
 	ClaimCheckin(channelID string, expectedNextAt, nextAt, now int64) (bool, error)
 	SetProjectLastCheckinPost(channelID, postID string) error
 	AddProjectThread(t *store.ProjectThread) error
+	GetProjectThread(channelID, rootPostID string) (*store.ProjectThread, error)
+	SetProjectThreadExternalID(channelID, rootPostID, externalID string) error
+	ListProjectThreads(channelID string) ([]*store.ProjectThread, error)
 	RecordProjectGrant(g store.ProjectGrant) error
 	ListProjectGrants(channelID string) ([]store.ProjectGrant, error)
 	RevokeProjectGrant(channelID, targetType, targetID string) error
@@ -123,7 +126,7 @@ type Config interface {
 
 // AutoReply turns on ambient replies for an agent in a channel.
 type AutoReply interface {
-	EnableAmbient(ctx context.Context, channelID, botUserID, actorID string) error
+	EnableAmbient(ctx context.Context, channelID, botUserID, actorID, instructions string) error
 }
 
 // WrapUps runs a project agent's unattended, non-streaming turn and returns
@@ -274,7 +277,7 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 	if err = s.deps.Store.TransitionProject(channel.Id, store.ProjectStateSetup, store.ProjectStateActive); err != nil {
 		return nil, err
 	}
-	if err = s.deps.AutoReply.EnableAmbient(ctx, channel.Id, agent.BotUserID, actor.Id); err != nil {
+	if err = s.deps.AutoReply.EnableAmbient(ctx, channel.Id, agent.BotUserID, actor.Id, conversations.ProjectAmbientInstructions); err != nil {
 		return nil, fmt.Errorf("failed to turn on replies in the project channel: %w", err)
 	}
 
@@ -982,7 +985,11 @@ func (s *Service) SystemPromptSuffix(_ context.Context, bot *bots.Bot, operation
 	if err != nil || !project.Live() {
 		return ""
 	}
-	return FormatStatusSuffix(project, operation != llm.OperationAgentSetup)
+	suffix := FormatStatusSuffix(project, operation != llm.OperationAgentSetup)
+	if operation == llm.OperationProjectRun {
+		suffix += "\n\n" + runThreadInstructions
+	}
+	return suffix
 }
 
 // Scope implements llmcontext.ProjectRuntime.
@@ -1032,6 +1039,11 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 			s.broadcast(project.ChannelID)
 			return nil
 		},
+		RunThread: s.deps.Store.GetProjectThread,
+		CursorAgentCreated: func(_ context.Context, project *store.Project, rootPostID, agentID string) error {
+			return s.deps.Store.SetProjectThreadExternalID(project.ChannelID, rootPostID, agentID)
+		},
+		CursorAgents: s.cursorAgentIDs,
 		RunCreated: func(_ context.Context, project *store.Project, runID string) error {
 			if err := s.linkOnce(project.ChannelID, runID, s.deps.Store.SetProjectRun, func(p *store.Project) string { return p.PlaybookRunID }); err != nil {
 				return err
@@ -1040,6 +1052,33 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 			return nil
 		},
 	}
+}
+
+// cursorAgentIDs returns the Cursor agents the project's run threads
+// started.
+func (s *Service) cursorAgentIDs(channelID string) ([]string, error) {
+	threads, err := s.deps.Store.ListProjectThreads(channelID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, thread := range threads {
+		if thread.Kind == store.ProjectThreadKindCursor && thread.ExternalID != "" {
+			ids = append(ids, thread.ExternalID)
+		}
+	}
+	return ids, nil
+}
+
+// inRunThread reports whether llmCtx's turn is in one of the project's run
+// threads. A failed lookup counts as one, so the caller offers less.
+func (s *Service) inRunThread(channelID string, llmCtx *llm.Context) bool {
+	rootID := turnThreadRoot(llmCtx)
+	if rootID == "" {
+		return false
+	}
+	_, err := s.deps.Store.GetProjectThread(channelID, rootID)
+	return !errors.Is(err, store.ErrProjectThreadNotFound)
 }
 
 // addBoardMembers adds the members of the project channel to the board

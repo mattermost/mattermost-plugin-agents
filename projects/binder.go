@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -62,11 +64,23 @@ var playbookRunTools = map[string]bool{
 	"resolve_channel_context": true,
 }
 
-// cursorTools start or continue external Cursor work.
+// cursorTools start or continue external Cursor work; they always ask.
 var cursorTools = map[string]bool{
 	"create_agent": true,
 	"add_followup": true,
 }
+
+// cursorAgentTools act on one Cursor agent, named by agent_id, which must be
+// one the project's run threads started.
+var cursorAgentTools = map[string]bool{
+	"add_followup":           true,
+	"get_agent":              true,
+	"get_agent_conversation": true,
+}
+
+// ErrNotInRunThread is returned when create_agent is called outside a run
+// thread that has no Cursor agent yet.
+var ErrNotInRunThread = errors.New("start the Cursor agent in its run thread: open one with start_cursor_thread first")
 
 // BinderCallbacks record links the project agent creates.
 type BinderCallbacks struct {
@@ -78,6 +92,14 @@ type BinderCallbacks struct {
 	// Current returns the project's current state, so once-only creates
 	// re-check it at call time.
 	Current func(channelID string) (*store.Project, error)
+	// RunThread returns the run thread rooted at a post, or
+	// store.ErrProjectThreadNotFound.
+	RunThread func(channelID, rootPostID string) (*store.ProjectThread, error)
+	// CursorAgentCreated records the Cursor agent a run thread started.
+	CursorAgentCreated func(ctx context.Context, project *store.Project, rootPostID, agentID string) error
+	// CursorAgents returns the Cursor agents the project's run threads
+	// started.
+	CursorAgents func(channelID string) ([]string, error)
 }
 
 // Binder wraps plugin MCP tools so every call is bound to one project. Tools
@@ -234,12 +256,110 @@ func (b *Binder) bindPlaybooks(tool llm.Tool, name string) (llm.Tool, bool) {
 }
 
 func (b *Binder) bindCursor(tool llm.Tool, name string) (llm.Tool, bool) {
-	if !cursorTools[name] || !b.interactiveUserPresent {
+	if !b.interactiveUserPresent {
 		return llm.Tool{}, false
 	}
-	tool.AlwaysAsk = true
-	tool.AutoExecute = false
+	switch {
+	case name == "create_agent":
+		tool = b.cursorCreate(tool)
+	case cursorAgentTools[name]:
+		tool = b.cursorAgentBound(tool)
+	case name == "list_environments":
+	default:
+		return llm.Tool{}, false
+	}
+	if cursorTools[name] {
+		tool.AlwaysAsk = true
+		tool.AutoExecute = false
+	}
 	return tool, true
+}
+
+// cursorCreate lets create_agent run only in a run thread that has no
+// Cursor agent yet, and records the agent it starts on that thread.
+func (b *Binder) cursorCreate(tool llm.Tool) llm.Tool {
+	inner := tool.Resolver
+	tool.Resolver = func(ctx context.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+		if inner == nil || b.callbacks.RunThread == nil || b.callbacks.CursorAgentCreated == nil {
+			return "", ErrToolOutsideProject
+		}
+		rootID := turnThreadRoot(llmCtx)
+		if rootID == "" {
+			return "", ErrNotInRunThread
+		}
+		thread, err := b.callbacks.RunThread(b.project.ChannelID, rootID)
+		if errors.Is(err, store.ErrProjectThreadNotFound) {
+			return "", ErrNotInRunThread
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to check the run thread: %w", err)
+		}
+		if thread.Kind != store.ProjectThreadKindCursor {
+			return "", ErrNotInRunThread
+		}
+		if thread.ExternalID != "" {
+			return "", errors.New("this run thread already has a Cursor agent; use add_followup to continue it")
+		}
+		result, err := inner(ctx, llmCtx, args)
+		if err != nil {
+			return result, err
+		}
+		agentID := cursorAgentID(result)
+		if agentID == "" {
+			return result, errors.New("the Cursor agent was started, but its ID was not in the result")
+		}
+		if err := b.callbacks.CursorAgentCreated(ctx, b.project, rootID, agentID); err != nil {
+			return result, fmt.Errorf("the Cursor agent was started, but recording it on the run thread failed: %w", err)
+		}
+		return result, nil
+	}
+	return tool
+}
+
+// cursorAgentBound refuses calls whose agent_id isn't a Cursor agent the
+// project's run threads started.
+func (b *Binder) cursorAgentBound(tool llm.Tool) llm.Tool {
+	inner := tool.Resolver
+	tool.Resolver = func(ctx context.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+		if inner == nil || b.callbacks.CursorAgents == nil {
+			return "", ErrToolOutsideProject
+		}
+		var call struct {
+			AgentID string `json:"agent_id"`
+		}
+		if err := args(&call); err != nil {
+			return "", fmt.Errorf("invalid arguments: %w", err)
+		}
+		agents, err := b.callbacks.CursorAgents(b.project.ChannelID)
+		if err != nil {
+			return "", fmt.Errorf("failed to check the project's Cursor agents: %w", err)
+		}
+		if call.AgentID == "" || !slices.Contains(agents, call.AgentID) {
+			return "", ErrToolOutsideProject
+		}
+		return inner(ctx, llmCtx, args)
+	}
+	return tool
+}
+
+// cursorAgentIDPattern matches a Cursor cloud agent ID in a text result.
+var cursorAgentIDPattern = regexp.MustCompile(`\bbc-[A-Za-z0-9][A-Za-z0-9-]*`)
+
+// cursorAgentID returns the agent ID in a create_agent result: the JSON
+// agent_id (or id), else the first Cursor agent ID in the text.
+func cursorAgentID(result string) string {
+	if id := resultID(result, "agent_id", "id"); id != "" {
+		return id
+	}
+	return cursorAgentIDPattern.FindString(result)
+}
+
+// turnThreadRoot is the root post of the thread llmCtx's turn runs in.
+func turnThreadRoot(llmCtx *llm.Context) string {
+	if llmCtx == nil || llmCtx.ToolCatalog.ScopedTurn == nil {
+		return ""
+	}
+	return llmCtx.ToolCatalog.ScopedTurn.ThreadRootID
 }
 
 // onceOnly lets a create tool succeed at most once per project: once per

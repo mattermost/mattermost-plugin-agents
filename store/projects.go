@@ -56,6 +56,9 @@ var (
 	ErrProjectStateChanged = errors.New("the project changed concurrently")
 	// ErrProjectLinkSet is returned when a write-once link is already set.
 	ErrProjectLinkSet = errors.New("the project already has this link")
+	// ErrProjectThreadNotFound is returned when a post is not the root of
+	// one of the project's run threads.
+	ErrProjectThreadNotFound = errors.New("project thread not found")
 )
 
 // Project is one project channel.
@@ -330,6 +333,43 @@ func (s *Store) AddProjectThread(t *ProjectThread) error {
 // SetProjectThreadCard records the board card that tracks a run thread.
 func (s *Store) SetProjectThreadCard(channelID, rootPostID, cardID string) error {
 	return s.updateProject(`UPDATE Agents_ProjectThreads SET CardID = $1 WHERE RootPostID = $2 AND ChannelID = $3`, cardID, rootPostID, channelID)
+}
+
+// GetProjectThread returns the run thread rooted at rootPostID in the project
+// of channelID, or ErrProjectThreadNotFound.
+func (s *Store) GetProjectThread(channelID, rootPostID string) (*ProjectThread, error) {
+	var t ProjectThread
+	err := s.db.Get(&t, `SELECT RootPostID, ChannelID, Kind, ExternalID, CardID, StartedBy, CreateAt
+		FROM Agents_ProjectThreads WHERE ChannelID = $1 AND RootPostID = $2`, channelID, rootPostID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrProjectThreadNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get project thread: %w", err)
+	}
+	return &t, nil
+}
+
+// SetProjectThreadExternalID records the external run, such as a Cursor
+// agent, a run thread started. It is write-once: recording the same ID again
+// succeeds, and a different one fails with ErrProjectLinkSet.
+func (s *Store) SetProjectThreadExternalID(channelID, rootPostID, externalID string) error {
+	res, err := s.db.Exec(`UPDATE Agents_ProjectThreads SET ExternalID = $1
+		WHERE ChannelID = $2 AND RootPostID = $3 AND ExternalID = ''`, externalID, channelID, rootPostID)
+	if err != nil {
+		return fmt.Errorf("failed to record the project thread's run: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	current, err := s.GetProjectThread(channelID, rootPostID)
+	if err != nil {
+		return err
+	}
+	if current.ExternalID != externalID {
+		return ErrProjectLinkSet
+	}
+	return nil
 }
 
 // ListProjectThreads returns the run threads of a project, oldest first.
