@@ -107,6 +107,12 @@ func yamlScalar(s string) string {
 	if s[0] == '-' || s[0] == '.' {
 		return strconv.Quote(s)
 	}
+	if _, err := strconv.ParseInt(s, 0, 64); err == nil {
+		return strconv.Quote(s)
+	}
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return strconv.Quote(s)
+	}
 	return s
 }
 

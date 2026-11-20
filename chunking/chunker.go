@@ -106,15 +106,7 @@ func splitTextRecursive(text string, separators []string, chunkSize, chunkOverla
 		}
 	}
 
-	var splits []string
-	if sep == "" {
-		splits = make([]string, 0, utf8.RuneCountInString(text))
-		for _, r := range text {
-			splits = append(splits, string(r))
-		}
-	} else {
-		splits = strings.Split(text, sep)
-	}
+	splits := strings.Split(text, sep)
 
 	var finalChunks []string
 	var goodSplits []string

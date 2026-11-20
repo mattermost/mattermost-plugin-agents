@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -74,7 +75,7 @@ Flags:
 	fs.BoolVar(&cfg.showVersion, "version", false, "Print version and exit")
 	fs.BoolVar(&cfg.showVersion, "v", false, "Shorthand for --version")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(expandShortFlags(fs, args)); err != nil {
 		return cliConfig{}, err
 	}
 
@@ -86,6 +87,59 @@ Flags:
 	})
 
 	return cfg, nil
+}
+
+// expandShortFlags preserves pflag/POSIX short-flag forms such as -sURL and -dl /path
+// while leaving long flags and registered single-dash flag names untouched.
+func expandShortFlags(fs *flag.FlagSet, args []string) []string {
+	out := make([]string, 0, len(args))
+	for i, arg := range args {
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if len(arg) <= 2 || arg[0] != '-' || arg[1] == '-' {
+			out = append(out, arg)
+			continue
+		}
+
+		name, _, _ := strings.Cut(arg[1:], "=")
+		if fs.Lookup(name) != nil {
+			out = append(out, arg)
+			continue
+		}
+
+		var expanded []string
+		valid := true
+		for j := 1; j < len(arg); j++ {
+			switch arg[j] {
+			case 'd', 'v':
+				expanded = append(expanded, "-"+arg[j:j+1])
+			case 's', 't', 'l':
+				expanded = append(expanded, "-"+arg[j:j+1])
+				if j+1 < len(arg) {
+					val := arg[j+1:]
+					if val[0] == '=' {
+						val = val[1:]
+					}
+					expanded = append(expanded, val)
+				}
+				j = len(arg)
+			default:
+				valid = false
+			}
+			if !valid {
+				break
+			}
+		}
+
+		if valid && len(expanded) > 0 {
+			out = append(out, expanded...)
+		} else {
+			out = append(out, arg)
+		}
+	}
+	return out
 }
 
 func main() {

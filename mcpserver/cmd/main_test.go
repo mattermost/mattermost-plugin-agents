@@ -43,6 +43,19 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "attached and clustered short flags",
+			args: []string{"-shttps://mm.example.com", "-tpat-123", "-dl", "/tmp/mcp.log"},
+			want: cliConfig{
+				mmServerURL:  "https://mm.example.com",
+				token:        "pat-123",
+				debug:        true,
+				logFile:      "/tmp/mcp.log",
+				transport:    "stdio",
+				httpPort:     8080,
+				httpBindAddr: "127.0.0.1",
+			},
+		},
+		{
 			name: "http long flags with explicit false track-ai-generated",
 			args: []string{
 				"--server-url", "https://mm.example.com",

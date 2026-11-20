@@ -230,6 +230,30 @@ embedding_search_enabled: false
 telemetry_enabled: false
 `,
 		},
+		{
+			name: "numeric-looking strings are quoted as YAML strings",
+			packet: SupportPacket{
+				Version:         "123",
+				LLMServiceTypes: []string{"1e3", "1.0"},
+			},
+			want: `version: "123"
+total_llm_services: 0
+llm_service_types:
+    - "1e3"
+    - "1.0"
+mcp_enabled: false
+total_mcp_servers: 0
+enabled_mcp_servers: 0
+enable_call_summary: false
+enable_token_usage_logging: false
+enable_channel_mention_tool_calling: false
+enable_ambient_auto_reply: false
+allow_native_web_search_in_channels: false
+web_search_enabled: false
+embedding_search_enabled: false
+telemetry_enabled: false
+`,
+		},
 	}
 
 	for _, tc := range tests {
