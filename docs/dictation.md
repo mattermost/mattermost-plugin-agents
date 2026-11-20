@@ -84,7 +84,7 @@ The plugin talks to OpenAI to create and end sessions, and each user's browser o
 ## Privacy
 
 - Audio goes from the user's device directly to OpenAI and is processed under your organization's agreement with OpenAI, under the API key of the transcription service. Audio doesn't pass through the Mattermost Server.
-- With channel context on, the channel's display name and the names of its recent posters and members go to OpenAI with each session. See [Channel context](#channel-context).
+- With channel context on, the channel's display name and the names of its recent posters and members go to OpenAI with each session. See [Channel context](#channel-context). When OpenAI refuses a session, the server log records OpenAI's error message, which can quote the session's settings, including those names.
 - The plugin's control connection receives the session's events, including the transcript, so it can enforce the session settings. The plugin doesn't log, store or audit that content.
 - Mattermost and the plugin don't store audio. Dictated text goes into the message box like typed text, so until the user sends or deletes it, it can be saved as a draft, on the server too when server-synced drafts are on (`ServiceSettings.AllowSyncedDrafts`, the default).
 - Starting a dictation session is recorded in the server audit log (`createDictationSession`) with the transcription service ID, the session ID and the channel ID. Names and prompts aren't recorded. See [Audit logging](observability.md#audit-logging).

@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen} from '@testing-library/react';
+import {fireEvent, render, screen, within} from '@testing-library/react';
 import {IntlProvider, IntlShape} from 'react-intl';
 
 import {chooseOption, getSelect, optionLabels} from '../../../tests/compass_select';
@@ -183,7 +183,8 @@ describe('DictationPanel', () => {
     ])('channel context $name shows on=$wantOn', ({config, wantOn}) => {
         renderPanel({...enabled, ...config}, [openai]);
         const group = screen.getByRole('radiogroup', {name: 'Use channel context to improve accuracy'});
-        const [trueRadio, falseRadio] = Array.from(group.querySelectorAll('input')) as HTMLInputElement[];
+        const trueRadio = within(group).getByRole('radio', {name: 'True'}) as HTMLInputElement;
+        const falseRadio = within(group).getByRole('radio', {name: 'False'}) as HTMLInputElement;
         expect(trueRadio.checked).toBe(wantOn);
         expect(falseRadio.checked).toBe(!wantOn);
     });
@@ -191,7 +192,7 @@ describe('DictationPanel', () => {
     test('turning channel context off saves false', () => {
         const onChange = renderPanel(enabled, [openai]);
         const group = screen.getByRole('radiogroup', {name: 'Use channel context to improve accuracy'});
-        fireEvent.click(group.querySelectorAll('input')[1]);
+        fireEvent.click(within(group).getByRole('radio', {name: 'False'}));
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({useChannelContext: false}));
     });
 
