@@ -18,7 +18,7 @@ On the agent, open **Advanced configuration** and enable **Web Search** under **
 
 Native tool activity, such as searches run and pages fetched, shows on the agent's reply as it streams and is kept with the conversation.
 
-**In channels.** Native web search works in direct messages by default. To allow it in public and private channels too, turn on **Allow native web search in channels** under **AI Functions**. It needs a Professional license. It affects only native provider search, not MCP tools or other tools, and it works even when **Enable Channel Mention Tool Calling** is off.
+**In channels.** Native web search works in direct messages by default. To allow it in public and private channels too, turn on **Allow native web search in channels** under **Agents > Settings > General**. It needs a Professional license. It affects only native provider search, not MCP tools or other tools, and it works even when **Enable Channel Mention Tool Calling** is off.
 
 ### Anthropic web fetch and code execution
 
