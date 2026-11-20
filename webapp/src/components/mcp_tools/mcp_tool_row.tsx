@@ -53,7 +53,7 @@ const MCPToolRow = ({
                         {badges}
                     </ToolNameLine>
                     {description && (
-                        <ToolDescription>{description}</ToolDescription>
+                        <ToolDescription $expanded={detailsExpanded}>{description}</ToolDescription>
                     )}
                 </ToolRowLeft>
                 <ToolRowRight>
@@ -88,11 +88,8 @@ const MCPToolRow = ({
                     </DetailsButtonSlot>
                 </ToolRowRight>
             </ToolRowMain>
-            {detailsExpanded && hasDetails && (
+            {detailsExpanded && hasDetails && (extraDetails || hasSchema) && (
                 <ExpandedContainer>
-                    {description && (
-                        <FullDescription>{description}</FullDescription>
-                    )}
                     {extraDetails}
                     {hasSchema && (
                         <SchemaContainer>
@@ -155,14 +152,14 @@ const ToolName = styled.div`
     line-height: 20px;
 `;
 
-const ToolDescription = styled.div`
+const ToolDescription = styled.div<{$expanded?: boolean}>`
     font-size: var(--font-size-75);
     font-weight: var(--font-weight-regular);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     line-height: var(--line-height-75);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: ${(props) => (props.$expanded ? 'pre-wrap' : 'nowrap')};
+    overflow: ${(props) => (props.$expanded ? 'visible' : 'hidden')};
+    text-overflow: ${(props) => (props.$expanded ? 'clip' : 'ellipsis')};
 `;
 
 const ToggleWrapper = styled.div<{$dimmed?: boolean}>`
@@ -186,13 +183,6 @@ const ExpandedContainer = styled.div`
     margin-top: var(--spacing-xs);
     margin-left: var(--spacing-xxl);
     margin-right: var(--spacing-l);
-`;
-
-const FullDescription = styled.div`
-    font-size: var(--font-size-75);
-    line-height: var(--line-height-100);
-    color: rgba(var(--center-channel-color-rgb), 0.8);
-    white-space: pre-wrap;
 `;
 
 const SchemaContainer = styled.pre`
