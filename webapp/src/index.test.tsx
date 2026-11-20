@@ -30,10 +30,6 @@ jest.mock('react-intl', () => ({
     }),
 }));
 
-// react-bootstrap is a webpack external supplied by the host webapp, so it is
-// not installed here; the entrypoint's component tree imports it at module load.
-jest.mock('react-bootstrap', () => ({OverlayTrigger: () => null, Tooltip: () => null}), {virtual: true});
-
 // @/client is the real HTTP boundary; stub the calls initialize() makes.
 const mockGetAIBots = jest.fn();
 const mockSetSiteURL = jest.fn();

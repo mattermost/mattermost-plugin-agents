@@ -1,10 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ComponentProps, useState} from 'react';
+import React, {ComponentProps, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-
-import {useUpdateEffect} from 'react-use';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton, type IconButtonPadding, type IconButtonSize} from '@mattermost/compass-ui/components/icon-button';
@@ -78,8 +76,15 @@ const DotMenu = ({
     const toggleOpen = () => {
         setOpen(!isOpen);
     };
-    useUpdateEffect(() => {
-        onOpenChange?.(isOpen);
+    const hasMountedRef = useRef(false);
+    const onOpenChangeRef = useRef(onOpenChange);
+    onOpenChangeRef.current = onOpenChange;
+    useEffect(() => {
+        if (!hasMountedRef.current) {
+            hasMountedRef.current = true;
+            return;
+        }
+        onOpenChangeRef.current?.(isOpen);
     }, [isOpen]);
 
     const Menu = dropdownMenu || DropdownMenu;
