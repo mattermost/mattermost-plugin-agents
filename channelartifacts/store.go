@@ -168,8 +168,8 @@ func (s *Store) Create(id, channelID, title string, v NewVersion, maxPerChannel 
 			return &DuplicateError{ArtifactID: dup}
 		}
 		_, err = tx.Exec(`
-			INSERT INTO Agents_ChannelArtifacts (ID, ChannelID, Title, HeadVersion, CreatedBy, CreateAt, UpdatedBy, UpdateAt)
-			VALUES ($1, $2, $3, 1, $4, $5, $4, $5)`, id, channelID, title, v.UserID, v.At)
+			INSERT INTO Agents_ChannelArtifacts (ID, ChannelID, Title, HeadVersion, LastVersion, CreatedBy, CreateAt, UpdatedBy, UpdateAt)
+			VALUES ($1, $2, $3, 1, 1, $4, $5, $4, $5)`, id, channelID, title, v.UserID, v.At)
 		if err != nil {
 			return fmt.Errorf("failed to insert channel artifact: %w", err)
 		}
@@ -200,8 +200,13 @@ func (s *Store) AddVersion(id string, v NewVersion, versionsToKeep int) error {
 		if dup != "" {
 			return &DuplicateError{ArtifactID: dup}
 		}
+		// LastVersion only grows, so a number whose version was deleted is never
+		// given to different content; rows from before the column existed are
+		// covered by the head and the highest stored version.
 		var next int
-		if err = tx.Get(&next, `SELECT COALESCE(MAX(Version), 0) + 1 FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id); err != nil {
+		if err = tx.Get(&next, `
+			SELECT GREATEST(a.LastVersion, a.HeadVersion, COALESCE((SELECT MAX(Version) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = a.ID), 0)) + 1
+			FROM Agents_ChannelArtifacts a WHERE a.ID = $1`, id); err != nil {
 			return fmt.Errorf("failed to number channel artifact version: %w", err)
 		}
 		if err = insertVersion(tx, id, next, v); err != nil {
@@ -209,7 +214,7 @@ func (s *Store) AddVersion(id string, v NewVersion, versionsToKeep int) error {
 		}
 		if _, err = tx.Exec(`
 			UPDATE Agents_ChannelArtifacts
-			SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4, Title = COALESCE(NULLIF($5, ''), Title)
+			SET HeadVersion = $2, LastVersion = $2, UpdatedBy = $3, UpdateAt = $4, Title = COALESCE(NULLIF($5, ''), Title)
 			WHERE ID = $1`, id, next, v.UserID, v.At, v.Title); err != nil {
 			return fmt.Errorf("failed to update channel artifact: %w", err)
 		}
