@@ -42,6 +42,19 @@ An automatic reply behaves as if the post's author had mentioned the agent. It u
 - **Ambient instructions** tell the agent when to reply. They're optional, up to 8,000 characters, and shared by both ambient modes.
 - The classification step uses the selected agent's model. If it fails or answers no, the agent stays silent. When the agent does reply, that reply uses the agent's model, tools, and the author's permissions.
 
+## Channel instructions and agent context
+
+Channel members who can manage channel settings can give agents background about a channel, such as what it's for, team conventions, or where things are tracked. Whenever an agent works in the channel (a mention, an automatic reply, or a thread or channel summary), it receives this context, much like a coding assistant reads a repository's `AGENTS.md` file. Agents are told the context is optional and may not be relevant, so they use it only when it helps. It never overrides the agent's own instructions set by your system admin.
+
+There are two kinds of channel context:
+
+- **Channel instructions**: free-form text, up to 8,000 characters. Open **Channel Settings**, select the **Agents** tab, enter text under **Channel instructions**, and select **Save**. Clear the text and save to remove it.
+- **Posts pinned to agent context**: posts whose content agents receive with every request. Hover over a post, open the **AI Actions** menu, and select **Pin to agent context**. Select **Unpin from agent context** in the same menu, or remove it from the **Pinned agent context** list in the **Agents** tab. Pinned posts show an **Agent context** label next to their timestamp. A channel can pin up to 10 posts, and agents receive at most the first 4,000 characters of each.
+
+Pinning to agent context is separate from [pinning a message](https://docs.mattermost.com/collaborate/pin-messages.html) to the channel: agent context pins don't appear in the channel's pinned messages, and regular pinned messages aren't sent to agents. Edits to a pinned post are picked up automatically, and deleting the post removes it from agent context.
+
+Channel context is captured when a conversation starts, so changes apply to new threads and mentions, not to follow-up replies in an existing conversation. It's available in public and private channels (not direct or group messages) at Enterprise Advanced. Below Enterprise Advanced the context isn't sent to agents, but you can still clear instructions and unpin posts. Admins and integrators: see [Channel instructions and pinned context](channel_settings.md#channel-instructions-and-pinned-context).
+
 ## Related
 
 - [Control agents in channels](channel_settings.md) for admins.

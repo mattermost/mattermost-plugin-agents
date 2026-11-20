@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -532,6 +533,9 @@ func (p *Plugin) OnActivate() error {
 	)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
+	channelContextService := channelcontext.NewService(channelcontext.NewStore(dbClient), mmClient)
+	contextBuilder.SetChannelContextProvider(channelContextService)
+
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	})
@@ -639,6 +643,7 @@ func (p *Plugin) OnActivate() error {
 		getSearchInitError,
 		customPromptsStore,
 		autoreplyService,
+		channelContextService,
 		accessChecker,
 	)
 

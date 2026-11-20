@@ -127,6 +127,7 @@ Agents sends a server audit record for every state-changing operation except pin
 - Agent create, update, delete, avatar, version restore, and version deletion.
 - Skill (custom prompt) create, update, and delete.
 - Channel auto-reply changes.
+- Channel instructions changes and agent-context pins and unpins. Records carry the channel and post IDs, never the instructions text.
 - Conversation renames and the wait controls (check now, cancel).
 - MCP OAuth start, callback, and disconnect, and per-user tool preferences.
 - Access policy changes for agents, services, and MCP servers.

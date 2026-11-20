@@ -61,14 +61,21 @@ type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
 }
 
+// ChannelContextProvider supplies the context channel members attached for
+// agents working in a channel, or nil when the channel has none.
+type ChannelContextProvider interface {
+	PromptContext(channelID string) (*llm.ChannelContext, error)
+}
+
 // Builder builds contexts for LLM requests
 type Builder struct {
-	pluginAPI       *pluginapi.Client
-	toolProvider    ToolProvider
-	mcpToolProvider MCPToolProvider
-	configProvider  ConfigProvider
-	licenseChecker  *enterprise.LicenseChecker
-	skillProvider   SkillProvider
+	pluginAPI              *pluginapi.Client
+	toolProvider           ToolProvider
+	mcpToolProvider        MCPToolProvider
+	configProvider         ConfigProvider
+	licenseChecker         *enterprise.LicenseChecker
+	skillProvider          SkillProvider
+	channelContextProvider ChannelContextProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -93,6 +100,12 @@ func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemet
 	b.mcpDynamicToolTelemetry = telemetry
 }
 
+// SetChannelContextProvider enables channel instructions and pinned agent
+// context in user requests. Channel context is omitted when unset.
+func (b *Builder) SetChannelContextProvider(provider ChannelContextProvider) {
+	b.channelContextProvider = provider
+}
+
 func (b *Builder) SetSkillProvider(provider SkillProvider) {
 	b.skillProvider = provider
 }
@@ -103,6 +116,7 @@ func (b *Builder) BuildLLMContextUserRequest(bot *bots.Bot, requestingUser *mode
 		b.WithLLMContextServerInfo(),
 		b.WithLLMContextRequestingUser(requestingUser),
 		b.WithLLMContextChannel(channel),
+		b.WithLLMContextChannelContext(channel),
 		b.WithLLMContextBot(bot),
 	}
 	allOpts = append(allOpts, opts...)
@@ -140,6 +154,35 @@ func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOptio
 		}
 
 		c.Team = team
+	}
+}
+
+// WithLLMContextChannelContext attaches the channel's instructions and posts
+// pinned to agent context. It reads c.RequestingUser, so it must be applied
+// after WithLLMContextRequestingUser: the context is only attached when the
+// requester can read the channel. A load failure is logged and the request
+// proceeds without channel context.
+func (b *Builder) WithLLMContextChannelContext(channel *model.Channel) llm.ContextOption {
+	return func(c *llm.Context) {
+		if b.channelContextProvider == nil || channel == nil || c.RequestingUser == nil {
+			return
+		}
+		if channel.Type != model.ChannelTypeOpen && channel.Type != model.ChannelTypePrivate {
+			return
+		}
+		if !b.licenseChecker.Allows(enterprise.CapChannelContext) {
+			return
+		}
+		if !b.pluginAPI.User.HasPermissionToChannel(c.RequestingUser.Id, channel.Id, model.PermissionReadChannel) {
+			return
+		}
+
+		channelContext, err := b.channelContextProvider.PromptContext(channel.Id)
+		if err != nil {
+			b.logWarn("Failed to load channel context; continuing without it", "channel_id", channel.Id, "error", err.Error())
+			return
+		}
+		c.ChannelContext = channelContext
 	}
 }
 

@@ -19,6 +19,14 @@ Auto-reply is a per-channel setting that channel managers configure on the chann
 - The same setting is available through `GET` and `PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`. The routes don't depend on the default agent, so they work even if the default agent is restricted or no agents exist. Writes check the selected agent's channel access.
 - Turning auto-reply off never needs a license, so an existing setting is always clearable. Below Enterprise Advanced the tab is hidden and a stored setting is inactive.
 
+## Channel instructions and pinned context
+
+Channel instructions and posts pinned to agent context are set on the same **Agents** tab. See [Use agents in channels](agents_in_channels.md#channel-instructions-and-agent-context) for what users see.
+
+- Writing needs the same permission as auto-reply. Channel members can read instructions and pins.
+- The context is sent to agents only at Enterprise Advanced. Clearing instructions and unpinning posts never need a license, so stored context is always removable.
+- Routes: `GET` and `PUT /plugins/mattermost-ai/channel/{channelid}/instructions`, `GET` and `POST /plugins/mattermost-ai/channel/{channelid}/context_posts`, and `DELETE /plugins/mattermost-ai/channel/{channelid}/context_posts/{postid}`.
+
 ## Ambient limits and cost
 
 - Every analyzed message costs one LLM call on the selected agent's model.
