@@ -151,7 +151,7 @@ The evalviewer and evaluation tests support multiple LLM providers. Configure wh
 
 ### Grader Configuration
 
-The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI with `DefaultGraderModel` from `evals/evals.go`, which is pinned separately from the model under test, at reasoning effort `none`. All rubrics for one output are graded in a single request. `TestLLMRubricEval` in `evals/graders_test.go` checks the grader against outputs with known verdicts; run it after changing the grader prompt or model. You can configure a different provider or model for grading:
+The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI with `DefaultGraderModel` from `evals/evals.go`, which is pinned separately from the model under test, at reasoning effort `low`. All rubrics for one output are graded in a single request. `TestLLMRubricEval` in `evals/graders_test.go` checks the grader against outputs with known verdicts; run it after changing the grader prompt or model. You can configure a different provider or model for grading:
 
 - **`GRADER_LLM_PROVIDER`**: Provider to use for grading (e.g., `openai`, `anthropic`, `azure`)
   - Default: `openai`

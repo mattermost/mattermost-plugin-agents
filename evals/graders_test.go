@@ -37,6 +37,12 @@ func TestLLMRubricEval(t *testing.T) {
 			pass:   true,
 		},
 		{
+			name:   "positive emoji name",
+			rubric: "Names an emoji that is positive",
+			output: "tada",
+			pass:   true,
+		},
+		{
 			name:   "bare emoji name",
 			rubric: "Names an emoji that is negative or sad",
 			output: "disappointed",

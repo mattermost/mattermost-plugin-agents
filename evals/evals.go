@@ -98,11 +98,12 @@ var simpleProviders = map[string]struct {
 var agentUnderTest = llm.BotConfig{ReasoningEnabled: true}
 
 // graderAgent keeps grading cheap and stable; reasoning adds latency and
-// variance without improving rubric checks. OpenAI models reason at medium
-// effort unless asked for none, so the OpenAI grader asks explicitly.
+// variance without improving rubric checks.
 var graderAgent = llm.BotConfig{ReasoningEnabled: false}
 
-var openAIGraderAgent = llm.BotConfig{ReasoningEnabled: true, ReasoningEffort: "none"}
+// openAIGraderAgent grades at low effort: at none, gpt-6-luna fails borderline
+// rubrics such as a bare emoji name about half the time.
+var openAIGraderAgent = llm.BotConfig{ReasoningEnabled: true, ReasoningEffort: "low"}
 
 // openAIServiceTierEnv selects the OpenAI processing tier for eval requests,
 // for example "flex", which costs half as much in exchange for latency.
