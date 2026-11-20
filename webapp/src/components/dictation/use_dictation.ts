@@ -23,7 +23,7 @@ type Options = {
     draft: EditorDraft;
     getSelectedText?: () => SelectedText;
     updateText: (message: string) => void;
-    createTransport: () => DictationTransport;
+    createTransport: (channelId: string) => DictationTransport;
     maxSessionMs?: number;
 };
 
@@ -140,7 +140,7 @@ export function useDictation({draft, getSelectedText, updateText, createTranspor
     const start = useCallback(async () => {
         const current = draftRef.current;
         const caret = getSelectedTextRef.current?.()?.start;
-        const transport = createTransport();
+        const transport = createTransport(current.channelId);
         const session: Session = {
             phase: 'starting',
             transport,

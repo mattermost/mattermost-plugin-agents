@@ -52,6 +52,7 @@ func (u pluginUsers) GetUser(userID string) (*model.User, error) {
 // tells its clients to refetch availability.
 func (p *Plugin) newDictationService(client *pluginapi.Client, license dictation.LicenseChecker, access dictation.AccessChecker, ws websocketPublisher) *dictation.Service {
 	svc := dictation.New(&p.configuration, license, access, pluginUsers{&client.User}, kvLeaseStore{&client.KV}, &client.Log,
+		dictation.WithChannelDirectory(dictation.NewPluginChannelDirectory(client)),
 		dictation.WithSessionEndNotifier(func(userID, sessionID, reason string) {
 			ws.PublishWebSocketEvent(api.WebsocketEventDictationSessionEnded,
 				map[string]any{"session_id": sessionID, "reason": reason},

@@ -177,6 +177,25 @@ describe('DictationPanel', () => {
     });
 
     test.each([
+        {name: 'unset', config: {}, wantOn: true},
+        {name: 'on', config: {useChannelContext: true}, wantOn: true},
+        {name: 'off', config: {useChannelContext: false}, wantOn: false},
+    ])('channel context $name shows on=$wantOn', ({config, wantOn}) => {
+        renderPanel({...enabled, ...config}, [openai]);
+        const group = screen.getByRole('radiogroup', {name: 'Use channel context to improve accuracy'});
+        const [trueRadio, falseRadio] = Array.from(group.querySelectorAll('input')) as HTMLInputElement[];
+        expect(trueRadio.checked).toBe(wantOn);
+        expect(falseRadio.checked).toBe(!wantOn);
+    });
+
+    test('turning channel context off saves false', () => {
+        const onChange = renderPanel(enabled, [openai]);
+        const group = screen.getByRole('radiogroup', {name: 'Use channel context to improve accuracy'});
+        fireEvent.click(group.querySelectorAll('input')[1]);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({useChannelContext: false}));
+    });
+
+    test.each([
         {licensed: true, enableDisabled: false},
         {licensed: false, enableDisabled: true},
     ])('licensed=$licensed: enabling disabled=$enableDisabled', ({licensed, enableDisabled}) => {

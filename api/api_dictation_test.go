@@ -92,11 +92,14 @@ type dictationEnv struct {
 }
 
 // newDictationService builds a service the way the server does, with this
-// environment's config, license, users and shared lease store.
+// environment's config, license, users, channels and shared lease store.
 func (e *dictationEnv) newDictationService(access dictation.AccessChecker, opts ...dictation.Option) *dictation.Service {
-	opts = append([]dictation.Option{dictation.WithSessionEndNotifier(func(userID, sessionID, reason string) {
-		e.ended <- sessionEnd{userID, sessionID, reason}
-	})}, opts...)
+	opts = append([]dictation.Option{
+		dictation.WithSessionEndNotifier(func(userID, sessionID, reason string) {
+			e.ended <- sessionEnd{userID, sessionID, reason}
+		}),
+		dictation.WithChannelDirectory(dictation.NewPluginChannelDirectory(e.client)),
+	}, opts...)
 	svc := dictation.New(e.config, enterprise.NewLicenseChecker(e.client), access, pluginUserGetter{e.client}, e.leases, &e.client.Log, opts...)
 	e.t.Cleanup(svc.Shutdown)
 	return svc

@@ -50,13 +50,16 @@ func TestCreateTranscriptionCallSession(t *testing.T) {
 		wantLanguages     any
 		wantTurnDetection any
 		wantTurnMode      string
+		// wantContext: the prompt and keywords are sent; other models
+		// don't take them.
+		wantContext bool
 	}{
-		{model: "gpt-live-transcribe", language: "en", wantLanguages: []any{"en"}, wantTurnMode: TurnDetectionNone},
-		{model: "gpt-live-transcribe-2026-07-28", language: "fr", wantLanguages: []any{"fr"}, wantTurnMode: TurnDetectionNone},
-		{model: "gpt-transcribe", language: "de", wantLanguages: []any{"de"}, wantTurnDetection: map[string]any{"type": "server_vad"}, wantTurnMode: TurnDetectionServerVAD},
+		{model: "gpt-live-transcribe", language: "en", wantLanguages: []any{"en"}, wantTurnMode: TurnDetectionNone, wantContext: true},
+		{model: "gpt-live-transcribe-2026-07-28", language: "fr", wantLanguages: []any{"fr"}, wantTurnMode: TurnDetectionNone, wantContext: true},
+		{model: "gpt-transcribe", language: "de", wantLanguages: []any{"de"}, wantTurnDetection: map[string]any{"type": "server_vad"}, wantTurnMode: TurnDetectionServerVAD, wantContext: true},
 		{model: "gpt-realtime-whisper", language: "en", wantLanguage: "en", wantTurnMode: TurnDetectionNone},
 		{model: "gpt-4o-transcribe", language: "en", wantLanguage: "en", wantTurnDetection: map[string]any{"type": "server_vad"}, wantTurnMode: TurnDetectionServerVAD},
-		{model: "gpt-live-transcribe", wantTurnMode: TurnDetectionNone},
+		{model: "gpt-live-transcribe", wantTurnMode: TurnDetectionNone, wantContext: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.model+"/"+tt.language, func(t *testing.T) {
@@ -64,7 +67,8 @@ func TestCreateTranscriptionCallSession(t *testing.T) {
 			defer fake.Close()
 			c := newTestCallClient(t, fake)
 
-			call, err := c.CreateTranscriptionCall(context.Background(), "v=0\r\noffer\r\n", TranscriptionSessionRequest{Model: tt.model, Language: tt.language})
+			req := TranscriptionSessionRequest{Model: tt.model, Language: tt.language, Prompt: "Dictation in a Mattermost conversation.", Keywords: []string{"Søren Larsen"}}
+			call, err := c.CreateTranscriptionCall(context.Background(), "v=0\r\noffer\r\n", req)
 			require.NoError(t, err)
 			assert.Equal(t, fake.LastCallID(), call.CallID)
 			assert.Equal(t, llmtest.FakeAnswerSDP, call.AnswerSDP)
@@ -75,7 +79,11 @@ func TestCreateTranscriptionCallSession(t *testing.T) {
 			input := postedInput(t, fake.Sessions()[0])
 			transcription := input["transcription"].(map[string]any)
 			assert.Equal(t, tt.model, transcription["model"])
-			for field, want := range map[string]any{"language": tt.wantLanguage, "languages": tt.wantLanguages} {
+			var wantPrompt, wantKeywords any
+			if tt.wantContext {
+				wantPrompt, wantKeywords = "Dictation in a Mattermost conversation.", []any{"Søren Larsen"}
+			}
+			for field, want := range map[string]any{"language": tt.wantLanguage, "languages": tt.wantLanguages, "prompt": wantPrompt, "keywords": wantKeywords} {
 				if want == nil {
 					assert.NotContains(t, transcription, field)
 				} else {
@@ -191,6 +199,9 @@ func TestSessionEventMatches(t *testing.T) {
 	empty := ""
 	live := TranscriptionSessionRequest{Model: "gpt-live-transcribe", Language: "en"}
 	vad := TranscriptionSessionRequest{Model: "gpt-4o-transcribe"}
+	hint := `Dictation in the Mattermost channel "Dictation Team". People in this conversation: Søren Larsen.`
+	hintKeywords := []string{"Dictation Team", "Søren Larsen"}
+	hinted := TranscriptionSessionRequest{Model: "gpt-live-transcribe", Language: "en", Prompt: hint, Keywords: hintKeywords}
 	tests := []struct {
 		name     string
 		expected TranscriptionSessionRequest
@@ -212,6 +223,12 @@ func TestSessionEventMatches(t *testing.T) {
 		{name: "session type changed", expected: live, event: map[string]any{"type": "session.updated", "session": map[string]any{"type": "realtime", "model": "gpt-realtime"}}},
 		{name: "unreadable event", expected: live, event: "not an object"},
 		{name: "response generated", expected: live, event: map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1"}}},
+		{name: "server context echoed", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &hint, hintKeywords, nil), want: true},
+		{name: "server context prompt changed", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &prompt, hintKeywords, nil)},
+		{name: "server context prompt emptied", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &empty, hintKeywords, nil)},
+		{name: "server context keywords reordered", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &hint, []string{"Søren Larsen", "Dictation Team"}, nil)},
+		{name: "server context keywords dropped", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &hint, nil, nil)},
+		{name: "context on a model without it", expected: TranscriptionSessionRequest{Model: "gpt-realtime-whisper", Prompt: hint, Keywords: hintKeywords}, event: llmtest.SessionUpdatedWithKeywords("gpt-realtime-whisper", nil, &hint, hintKeywords, nil)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
