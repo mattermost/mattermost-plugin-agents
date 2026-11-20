@@ -5,8 +5,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -171,8 +175,8 @@ type projectArtifacts struct{ library channelartifacts.Library }
 
 func (a projectArtifacts) SaveMarkdown(ctx context.Context, actor channelartifacts.Actor, channelID, title string, body []byte) (string, error) {
 	entry, err := a.library.Write(ctx, actor, channelartifacts.WriteRequest{
-		SaveRequest: channelartifacts.SaveRequest{ChannelID: channelID, Title: title, Format: channelartifacts.FormatMarkdown},
-		Body:        body,
+		ChannelID: channelID, Title: title, Format: channelartifacts.FormatMarkdown,
+		Body: body,
 	})
 	if err != nil {
 		return "", err
@@ -190,4 +194,84 @@ func (p *Plugin) ChannelWillBeArchived(c *plugin.Context, channel *model.Channel
 		p.pluginAPI.Log.Error("Failed to end the project of an archived channel", "channel_id", channel.Id, "error", err)
 	}
 	return ""
+}
+
+// projectPlaybooks reads and finishes checklist runs through the Playbooks
+// plugin's REST API, as the given user.
+type projectPlaybooks struct {
+	api     plugin.API
+	siteURL string
+}
+
+type playbookRun struct {
+	Name          string `json:"name"`
+	CurrentStatus string `json:"current_status"`
+	Checklists    []struct {
+		Items []struct {
+			State string `json:"state"`
+		} `json:"items"`
+	} `json:"checklists"`
+}
+
+func (p projectPlaybooks) do(ctx context.Context, method, path, userID string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "/playbooks/api/v0"+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Mattermost-User-Id", userID)
+	resp := p.api.PluginHTTP(req)
+	if resp == nil {
+		return nil, errors.New("the Playbooks plugin is not available")
+	}
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		resp.Body.Close()
+		return nil, playbooksStatusError{status: resp.StatusCode}
+	}
+	return resp, nil
+}
+
+type playbooksStatusError struct{ status int }
+
+func (e playbooksStatusError) Error() string {
+	return fmt.Sprintf("the Playbooks plugin returned status %d", e.status)
+}
+
+func (p projectPlaybooks) FinishRun(ctx context.Context, runID, actorUserID string) error {
+	resp, err := p.do(ctx, http.MethodPut, "/runs/"+url.PathEscape(runID)+"/finish", actorUserID)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
+func (p projectPlaybooks) RunSummary(ctx context.Context, runID, viewerUserID string) (*projects.ChecklistSummary, error) {
+	resp, err := p.do(ctx, http.MethodGet, "/runs/"+url.PathEscape(runID), viewerUserID)
+	if statusErr, ok := errors.AsType[playbooksStatusError](err); ok &&
+		(statusErr.status == http.StatusForbidden || statusErr.status == http.StatusNotFound) {
+		return &projects.ChecklistSummary{RunID: runID}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var run playbookRun
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&run); err != nil {
+		return nil, fmt.Errorf("failed to read the checklist run: %w", err)
+	}
+	summary := &projects.ChecklistSummary{
+		Available: true,
+		RunID:     runID,
+		Name:      run.Name,
+		Status:    run.CurrentStatus,
+		URL:       strings.TrimRight(p.siteURL, "/") + "/playbooks/runs/" + url.PathEscape(runID),
+	}
+	for _, checklist := range run.Checklists {
+		for _, item := range checklist.Items {
+			summary.TotalTasks++
+			if item.State == "closed" {
+				summary.CompletedTasks++
+			}
+		}
+	}
+	return summary, nil
 }

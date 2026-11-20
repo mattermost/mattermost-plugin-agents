@@ -507,8 +507,8 @@ func (p *Plugin) OnActivate() error {
 			if projectsService == nil || llmCtx.Channel == nil {
 				return channelartifacts.Actor{}, false
 			}
-			project, err := projectsService.LiveProject(bots.GetBotByID(llmCtx.BotUserID))
-			if err != nil || project.ChannelID != llmCtx.Channel.Id {
+			project, liveErr := projectsService.LiveProject(bots.GetBotByID(llmCtx.BotUserID))
+			if liveErr != nil || project.ChannelID != llmCtx.Channel.Id {
 				return channelartifacts.Actor{}, false
 			}
 			return projectsService.ArtifactActor(project), true
@@ -721,6 +721,7 @@ func (p *Plugin) OnActivate() error {
 		AutoReply:         projectAutoReply{service: autoreplyService},
 		WrapUps:           projectWrapUps{client: pluginAPI, projects: func() *projects.Service { return projectsService }},
 		Artifacts:         projectArtifacts{library: channelLibrary},
+		Playbooks:         projectPlaybooks{api: p.API, siteURL: *siteURL},
 		SetupSystemPrompt: agentSetupService.SystemPrompt,
 	})
 	contextBuilder.SetProjectRuntime(projectsService)

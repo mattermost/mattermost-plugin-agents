@@ -81,6 +81,8 @@ Everything is under **Agents > Settings**, in the **General**, **AI services**, 
 | General | Enable channel artifacts (experimental) | `enableChannelArtifacts` | Off | [Channel artifacts](channel_artifacts.md) |
 | General | Max artifacts per channel | `channelArtifactsMaxPerChannel` | 50 | [Channel artifacts](channel_artifacts.md#turn-it-on) |
 | General | Versions to keep per artifact | `channelArtifactVersionsToKeep` | 20 | [Channel artifacts](channel_artifacts.md#turn-it-on) |
+| General | Enable project channels | `enableProjectChannels` | Off | [Project channels](project_channels.md) |
+| General | Project agent service, Project agent model | `projectDefaultServiceID`, `projectDefaultModel` | Empty | [Project channels](project_channels.md#turn-it-on) |
 | General | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
 | General | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
 | General | Enable agent auto-setup (experimental) | `enableAgentAutoSetup` | Off | [Create and manage agents](managing_agents.md#set-up-an-agent-by-chatting-with-it) |

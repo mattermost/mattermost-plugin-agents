@@ -277,13 +277,13 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 		return nil, errors.New("the project agent is not running")
 	}
 	thread, err := s.deps.Threads.StartAgentThread(ctx, conversations.AgentThreadRequest{
-		Bot:         bot,
-		User:        actor,
-		Channel:     channel,
-		Operation:   llm.OperationProjectSetup,
-		Message:     "Let's set up this project. Tell me what it is for and what done looks like.",
-		Instruction: "Start the project setup with the people in this channel.",
-		RootProps:   map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectSetup},
+		Bot:          bot,
+		User:         actor,
+		Channel:      channel,
+		Operation:    llm.OperationProjectSetup,
+		Message:      "Let's set up this project. Tell me what it is for and what done looks like.",
+		Instruction:  "Start the project setup with the people in this channel.",
+		RootProps:    map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectSetup},
 		SystemPrompt: s.setupSystemPrompt,
 	})
 	if err != nil {
