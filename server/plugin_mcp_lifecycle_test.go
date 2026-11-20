@@ -48,7 +48,7 @@ type countingRebuilder struct{ calls atomic.Int32 }
 
 func (c *countingRebuilder) RequestRebuild() { c.calls.Add(1) }
 
-func newLifecycleTestPlugin(t *testing.T) (*Plugin, *mcp.ClientManager, *countingRebuilder, *lifecycleSourcePlugin) {
+func newLifecycleTestPlugin(t *testing.T) (*Plugin, *mcp.ClientManager, *countingRebuilder, *lifecycleSourcePlugin, *plugintest.API) {
 	t.Helper()
 	api := &plugintest.API{}
 	for _, method := range []string{"LogDebug", "LogError", "LogWarn", "LogInfo"} {
@@ -76,7 +76,7 @@ func newLifecycleTestPlugin(t *testing.T) (*Plugin, *mcp.ClientManager, *countin
 	rebuilder := &countingRebuilder{}
 	p := &Plugin{mcpLifecycle: newPluginMCPLifecycle(manager, rebuilder, &client.Log)}
 	t.Cleanup(p.mcpLifecycle.close)
-	return p, manager, rebuilder, source
+	return p, manager, rebuilder, source, api
 }
 
 var lifecycleSourceServer = mcp.PluginServerConfig{
@@ -97,7 +97,7 @@ func TestPluginLifecycleWatchStoppedPlugins(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, manager, rebuilder, source := newLifecycleTestPlugin(t)
+			p, manager, rebuilder, source, _ := newLifecycleTestPlugin(t)
 			manager.RegisterPluginServer(lifecycleSourceServer)
 			source.state.Store(int32(tt.state))
 
@@ -119,17 +119,99 @@ func TestPluginLifecycleWatchStoppedPlugins(t *testing.T) {
 // After a restart, saved registrations are known but not live; activation
 // brings back every one whose source plugin is running.
 func TestPluginLifecycleReconcileKnownOnActivation(t *testing.T) {
-	p, manager, rebuilder, _ := newLifecycleTestPlugin(t)
-	manager.RegisterPluginServer(lifecycleSourceServer)
-	manager.UnregisterPluginServer(lifecycleSourceServer.PluginID)
-	require.False(t, manager.IsPluginRegistered(lifecycleSourcePluginID))
+	tests := []struct {
+		name         string
+		handler      func(defaultHandler http.Handler) http.Handler
+		wantPromoted bool
+		wantWarn     bool
+		wantDebug    bool
+	}{
+		{
+			name:         "healthy legacy server is promoted without warnings",
+			handler:      func(defaultHandler http.Handler) http.Handler { return defaultHandler },
+			wantPromoted: true,
+		},
+		{
+			name: "403 without user stays unpromoted and logs debug instead of warn",
+			handler: func(defaultHandler http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get(mcp.MMUserIDHeader) == "" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					defaultHandler.ServeHTTP(w, r)
+				})
+			},
+			wantDebug: true,
+		},
+		{
+			name: "401 without user stays unpromoted and logs debug instead of warn",
+			handler: func(defaultHandler http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get(mcp.MMUserIDHeader) == "" {
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
+					defaultHandler.ServeHTTP(w, r)
+				})
+			},
+			wantDebug: true,
+		},
+		{
+			name: "5xx failure stays unpromoted and logs warn",
+			handler: func(http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+				})
+			},
+			wantWarn: true,
+		},
+		{
+			name: "protocol error stays unpromoted and logs warn",
+			handler: func(http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("not valid json"))
+				})
+			},
+			wantWarn: true,
+		},
+	}
 
-	p.mcpLifecycle.reconcileKnown()
-	p.mcpLifecycle.wg.Wait()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, manager, rebuilder, source, api := newLifecycleTestPlugin(t)
+			source.handler = tt.handler(source.handler)
+			manager.RegisterPluginServer(lifecycleSourceServer)
+			manager.UnregisterPluginServer(lifecycleSourceServer.PluginID)
+			require.False(t, manager.IsPluginRegistered(lifecycleSourcePluginID))
 
-	require.True(t, manager.IsPluginRegistered(lifecycleSourcePluginID))
-	require.Empty(t, knownPluginIDs(manager))
-	require.Equal(t, int32(1), rebuilder.calls.Load())
+			p.mcpLifecycle.reconcileKnown()
+			p.mcpLifecycle.wg.Wait()
+
+			require.Equal(t, tt.wantPromoted, manager.IsPluginRegistered(lifecycleSourcePluginID))
+			if tt.wantPromoted {
+				require.Empty(t, knownPluginIDs(manager))
+				require.Equal(t, int32(1), rebuilder.calls.Load())
+			} else {
+				require.Equal(t, []string{lifecycleSourcePluginID}, knownPluginIDs(manager))
+				require.Zero(t, rebuilder.calls.Load())
+			}
+
+			var sawWarn, sawProbeAuthDebug bool
+			for _, call := range api.Calls {
+				if call.Method == "LogWarn" {
+					sawWarn = true
+				}
+				if call.Method == "LogDebug" && len(call.Arguments) > 0 && call.Arguments[0] == "Plugin MCP server probe requires user authentication; waiting for plugin registration" {
+					sawProbeAuthDebug = true
+				}
+			}
+			require.Equal(t, tt.wantWarn, sawWarn)
+			require.Equal(t, tt.wantDebug, sawProbeAuthDebug)
+		})
+	}
 }
 
 func knownPluginIDs(m *mcp.ClientManager) []string {

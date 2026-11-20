@@ -18,11 +18,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
     useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
@@ -32,7 +27,6 @@ jest.mock('@/license', () => ({
 const enabledConfig: WebSearchConfig = {
     enabled: true,
     provider: 'brave',
-    google: {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''},
     brave: {apiKey: '', resultLimit: 5, apiURL: ''},
     searxng: {baseURL: '', resultLimit: 5},
     domainDenylist: [],
@@ -82,5 +76,26 @@ describe('WebSearchPanel license gating', () => {
         expect(falseRadio.disabled).toBe(false);
         fireEvent.click(falseRadio);
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({enabled: false}));
+    });
+});
+
+describe('WebSearchPanel provider', () => {
+    const unsupportedMessage = 'Google Custom Search is no longer supported. Choose another provider.';
+
+    test.each([
+        {provider: 'google', shown: true},
+        {provider: 'brave', shown: false},
+        {provider: 'searxng', shown: false},
+    ])('unsupported provider message for $provider shown: $shown', ({provider, shown}) => {
+        render(
+            <IntlProvider locale='en'>
+                <WebSearchPanel
+                    value={{...enabledConfig, provider}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.queryByText(unsupportedMessage) !== null).toBe(shown);
     });
 });

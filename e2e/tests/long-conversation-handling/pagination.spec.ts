@@ -49,6 +49,7 @@ async function setupTestPage(page) {
     await mmPage.login(url, username, password);
 
     // Wait for page to be fully loaded after login
+    // eslint-disable-next-line e2e/no-arbitrary-wait -- legacy wait; replace with an observable condition when touching this spec
     await page.waitForLoadState('networkidle');
 
     // Wait for plugin to be fully initialized by ensuring the app bar icon is loaded

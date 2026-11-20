@@ -109,14 +109,8 @@ export const defaultConfig: PluginConfig = {
     },
     webSearch: {
         enabled: false,
-        provider: 'google',
+        provider: 'brave',
         domainDenylist: [],
-        google: {
-            apiKey: '',
-            searchEngineId: '',
-            resultLimit: 5,
-            apiURL: '',
-        },
         brave: {
             apiKey: '',
             resultLimit: 5,
