@@ -44,15 +44,73 @@ type SizeLike = {
     height: number;
 };
 
+type Side = 'top' | 'bottom' | 'left' | 'right';
+
+const OPPOSITE_SIDE: Record<Side, Side> = {
+    left: 'right',
+    right: 'left',
+    top: 'bottom',
+    bottom: 'top',
+};
+
+function fitsOnSide(
+    side: Side,
+    triggerRect: RectLike,
+    tipSize: SizeLike,
+    distance: number,
+    viewport: SizeLike,
+): boolean {
+    switch (side) {
+    case 'left':
+        return triggerRect.left - tipSize.width - distance >= VIEWPORT_PADDING;
+    case 'right':
+        return triggerRect.right + distance + tipSize.width <= viewport.width - VIEWPORT_PADDING;
+    case 'top':
+        return triggerRect.top - tipSize.height - distance >= VIEWPORT_PADDING;
+    default:
+        return triggerRect.bottom + distance + tipSize.height <= viewport.height - VIEWPORT_PADDING;
+    }
+}
+
+function resolvePlacement(
+    triggerRect: RectLike,
+    tipSize: SizeLike,
+    placement: Placement,
+    distance: number,
+    viewport: SizeLike,
+): Placement {
+    const [side, alignment] = placement.split('-') as [Side, string | undefined];
+    const withAlignment = (nextSide: Side): Placement => (alignment ? `${nextSide}-${alignment}` as Placement : nextSide);
+
+    if (fitsOnSide(side, triggerRect, tipSize, distance, viewport)) {
+        return placement;
+    }
+
+    const opposite = OPPOSITE_SIDE[side];
+    if (fitsOnSide(opposite, triggerRect, tipSize, distance, viewport)) {
+        return withAlignment(opposite);
+    }
+
+    const fallbacks: Side[] = side === 'left' || side === 'right' ? ['bottom', 'top'] : ['right', 'left'];
+    for (const candidate of fallbacks) {
+        if (fitsOnSide(candidate, triggerRect, tipSize, distance, viewport)) {
+            return candidate;
+        }
+    }
+
+    return placement;
+}
+
 export function computeAnchoredPosition(
     triggerRect: RectLike,
     tipSize: SizeLike,
     placement: Placement,
     offset: [number, number],
     viewport: SizeLike,
-): {top: number; left: number} {
+): {top: number; left: number; placement: Placement} {
     const [skidding, distance] = offset;
-    const [side, alignment] = placement.split('-');
+    const resolvedPlacement = resolvePlacement(triggerRect, tipSize, placement, distance, viewport);
+    const [side, alignment] = resolvedPlacement.split('-');
 
     let top = 0;
     let left = 0;
@@ -83,6 +141,7 @@ export function computeAnchoredPosition(
     return {
         top: Math.min(Math.max(VIEWPORT_PADDING, top), maxTop),
         left: Math.min(Math.max(VIEWPORT_PADDING, left), maxLeft),
+        placement: resolvedPlacement,
     };
 }
 
@@ -166,7 +225,11 @@ const TutorialTourTip: React.FC<Props> = ({
 }) => {
     const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
     const tipRef = useRef<HTMLDivElement | null>(null);
-    const [position, setPosition] = useState({top: 0, left: 0});
+    const [position, setPosition] = useState<{top: number; left: number; placement: Placement}>({
+        top: 0,
+        left: 0,
+        placement,
+    });
     const intl = useIntl();
     const {show, handleOpen, handleDismiss} = useTourManager(
         tutorialCategory,
@@ -189,21 +252,34 @@ const TutorialTourTip: React.FC<Props> = ({
             [offsetSkidding, offsetDistance],
             {width: window.innerWidth, height: window.innerHeight},
         );
-        setPosition((prev) => (prev.top === next.top && prev.left === next.left ? prev : next));
+        setPosition((prev) => (
+            prev.top === next.top && prev.left === next.left && prev.placement === next.placement ? prev : next
+        ));
     }, [triggerElement, placement, offsetSkidding, offsetDistance, width]);
+
+    // Re-measure after rerenders so parent-driven trigger moves (e.g. useMeasurePunchouts) update the portal.
+    useLayoutEffect(() => {
+        if (show) {
+            updatePosition();
+        }
+    });
 
     useLayoutEffect(() => {
         if (!show) {
             return () => { /* empty */ };
         }
-        updatePosition();
         window.addEventListener('resize', updatePosition);
         window.addEventListener('scroll', updatePosition, true);
 
         let observer: ResizeObserver | undefined;
-        if (typeof ResizeObserver !== 'undefined' && tipRef.current) {
+        if (typeof ResizeObserver !== 'undefined') {
             observer = new ResizeObserver(updatePosition);
-            observer.observe(tipRef.current);
+            if (tipRef.current) {
+                observer.observe(tipRef.current);
+            }
+            if (triggerElement) {
+                observer.observe(triggerElement);
+            }
         }
 
         return () => {
@@ -211,7 +287,7 @@ const TutorialTourTip: React.FC<Props> = ({
             window.removeEventListener('scroll', updatePosition, true);
             observer?.disconnect();
         };
-    }, [show, updatePosition]);
+    }, [show, triggerElement, updatePosition]);
 
     useEffect(() => {
         if (!show) {
@@ -284,7 +360,7 @@ const TutorialTourTip: React.FC<Props> = ({
                 >
                     <TourPoint
                         title={title}
-                        pointerPosition={pointerPositionFor(placement)}
+                        pointerPosition={pointerPositionFor(position.placement)}
                         showPulsingDot={false}
                         onClose={handleDismiss}
                         closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
