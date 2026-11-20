@@ -374,6 +374,7 @@ describe('MCPServerToolRow — unreviewed tools', () => {
         expect(within(toolName('new_tool')).getByText('Not reviewed')).not.toBeNull();
         expect(selectedLabel(getSelect('Approval policy for new_tool'))).toBe('Auto Run (DM)');
         expect(screen.getByText(/have not been reviewed/)).not.toBeNull();
+        expect(screen.getByText(/It applies once you mark the tools as reviewed, or choose a policy, and save/)).not.toBeNull();
     });
 
     test('marking tools as reviewed stores the shown policies and keeps chosen ones', () => {
@@ -417,12 +418,80 @@ describe('MCPServerToolRow — unreviewed tools', () => {
         expect(screen.queryByRole('button', {name: /as reviewed/})).toBeNull();
     });
 
-    test('does not mark plugin server tools or offer to mark them reviewed', () => {
-        renderUnreviewed({...remoteServer, serverType: 'plugin'}, remoteConfig);
+    test('marks plugin server tools without a chosen policy and explains immediate defaults and save', () => {
+        const pluginServer: MCPServerInfo = {
+            name: 'Demo Plugin',
+            url: 'plugin://com.example.demo/mcp',
+            serverType: 'plugin',
+            enabled: true,
+            needsOAuth: false,
+            error: null,
+            tools: [
+                {name: 'com_example_demo__reviewed_tool', description: 'Reviewed', inputSchema: null, defaultPolicy: 'ask', suggestedPolicy: 'ask'},
+                {name: 'com_example_demo__toggled_tool', description: 'Toggled', inputSchema: null, defaultPolicy: 'ask', suggestedPolicy: 'ask'},
+                {name: 'com_example_demo__read_tool', description: 'Read', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm', suggestedPolicy: 'auto_run_in_dm'},
+            ],
+        };
+        const pluginConfig: MCPServerConfig = {
+            name: 'Demo Plugin',
+            enabled: true,
+            baseURL: 'plugin://com.example.demo/mcp',
+            headers: {},
+            tool_configs: [
+                {name: 'com_example_demo__reviewed_tool', policy: 'ask', enabled: true},
+                {name: 'com_example_demo__toggled_tool', policy: '', enabled: false},
+            ],
+        };
 
-        expect(screen.queryByText('Not reviewed')).toBeNull();
-        expect(screen.queryByRole('button', {name: /as reviewed/})).toBeNull();
-        expect(selectedLabel(getSelect('Approval policy for new_tool'))).toBe('Ask Every Time');
+        const {onServerConfigChange} = renderRow(pluginServer, pluginConfig);
+
+        // Collapsed state shows count and disables Mark tools as reviewed until expanded.
+        const collapsedMarkReviewed = screen.getByRole('button', {name: 'Mark tools on Demo Plugin as reviewed'}) as HTMLButtonElement;
+        expect(collapsedMarkReviewed.disabled).toBe(true);
+
+        fireEvent.click(screen.getByText('Demo Plugin'));
+
+        const toolName = (name: string) => screen.getByText(name).parentElement as HTMLElement;
+        expect(within(toolName('reviewed_tool')).queryByText('Not reviewed')).toBeNull();
+        expect(within(toolName('toggled_tool')).getByText('Not reviewed')).not.toBeNull();
+        expect(within(toolName('read_tool')).getByText('Not reviewed')).not.toBeNull();
+        expect(selectedLabel(getSelect('Approval policy for read_tool'))).toBe('Auto Run (DM)');
+        expect(selectedLabel(getSelect('Approval policy for toggled_tool'))).toBe('Ask Every Time');
+        expect(screen.getByText(/already run with their default policy/)).not.toBeNull();
+        expect(screen.getByText(/save your choices immediately/)).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Mark tools on Demo Plugin as reviewed'}));
+
+        expect(onServerConfigChange).toHaveBeenCalledWith({
+            ...pluginConfig,
+            tool_configs: [
+                {name: 'com_example_demo__reviewed_tool', policy: 'ask', enabled: true},
+                {name: 'com_example_demo__toggled_tool', policy: 'ask', enabled: false},
+                {name: 'com_example_demo__read_tool', policy: 'auto_run_in_dm', enabled: true},
+            ],
+        });
+    });
+
+    test('toggling an unreviewed plugin tool keeps policy empty so it stays unreviewed', () => {
+        const pluginServer: MCPServerInfo = {
+            ...makePluginServer(),
+            tools: [
+                {name: 'com_example_demo__read_tool', description: 'Read', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm', suggestedPolicy: 'auto_run_in_dm'},
+            ],
+            toolConfigs: [],
+        };
+        const pluginConfig: MCPServerConfig = {
+            ...makePluginServerConfig(),
+            tool_configs: [],
+        };
+
+        const {onServerConfigChange} = renderRow(pluginServer, pluginConfig);
+        fireEvent.click(screen.getByText('Demo Plugin'));
+
+        fireEvent.click(screen.getAllByRole('switch')[1]);
+        expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({
+            tool_configs: [{name: 'com_example_demo__read_tool', policy: '', enabled: false}],
+        }));
     });
 });
 

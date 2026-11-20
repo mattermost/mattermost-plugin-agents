@@ -122,4 +122,64 @@ describe('BuiltInPluginServersSection', () => {
         expect(screen.queryByText(/Denying access to the built-in Mattermost server/) !== null).toBe(shown);
         useABACSupport.mockReturnValue({supported: true, loading: false});
     });
+
+    it('shows unreviewed tool count tag on plugin cards when tools lack a stored policy', () => {
+        render(
+            <IntlProvider locale='en'>
+                <BuiltInPluginServersSection
+                    embeddedServerId={EMBEDDED_ID}
+                    pluginServers={[
+                        makePluginServer({
+                            enabled: true,
+                            tools: [
+                                {name: 'com_example_demo__read', description: 'Read', inputSchema: null, readOnlyHint: true},
+                                {name: 'com_example_demo__write', description: 'Write', inputSchema: null},
+                                {name: 'com_example_demo__reviewed', description: 'Reviewed', inputSchema: null},
+                            ],
+                            toolConfigs: [
+                                {name: 'com_example_demo__reviewed', policy: 'ask', enabled: true},
+                                {name: 'com_example_demo__read', policy: '', enabled: true},
+                            ],
+                        }),
+                    ]}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText(/not reviewed/)).not.toBeNull();
+    });
+
+    it('hides unreviewed tool count when all plugin tools are reviewed, server is disabled, or server has error', () => {
+        render(
+            <IntlProvider locale='en'>
+                <BuiltInPluginServersSection
+                    embeddedServerId={EMBEDDED_ID}
+                    pluginServers={[
+                        makePluginServer({
+                            name: 'Reviewed Plugin',
+                            url: 'plugin://com.example.reviewed/mcp',
+                            enabled: true,
+                            tools: [{name: 'com_example_reviewed__read', description: 'Read', inputSchema: null}],
+                            toolConfigs: [{name: 'com_example_reviewed__read', policy: 'auto_run_in_dm', enabled: true}],
+                        }),
+                        makePluginServer({
+                            name: 'Disabled Plugin',
+                            url: 'plugin://com.example.disabled/mcp',
+                            enabled: false,
+                            tools: [{name: 'com_example_disabled__read', description: 'Read', inputSchema: null}],
+                        }),
+                        makePluginServer({
+                            name: 'Errored Plugin',
+                            url: 'plugin://com.example.errored/mcp',
+                            enabled: true,
+                            error: 'failed to connect',
+                            tools: [{name: 'com_example_errored__read', description: 'Read', inputSchema: null}],
+                        }),
+                    ]}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.queryByText(/not reviewed/)).toBeNull();
+    });
 });

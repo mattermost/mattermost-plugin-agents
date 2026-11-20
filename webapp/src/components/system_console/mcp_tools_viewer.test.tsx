@@ -214,6 +214,44 @@ describe('MCPToolsViewer — plugin branch', () => {
         expect(update).not.toHaveProperty('tool_configs');
     });
 
+    test('marking plugin tools as reviewed saves via updatePluginServer immediately and refreshes', async () => {
+        const response: MCPToolsResponse = {
+            servers: [{
+                name: 'Demo Plugin',
+                url: 'plugin://com.example.demo/mcp',
+                serverType: 'plugin',
+                enabled: true,
+                tools: [
+                    {name: 'com_example_demo__echo', description: 'Echo', inputSchema: null, defaultPolicy: 'ask', suggestedPolicy: 'ask'},
+                    {name: 'com_example_demo__list', description: 'List', inputSchema: null, readOnlyHint: true, defaultPolicy: 'auto_run_in_dm', suggestedPolicy: 'auto_run_in_dm'},
+                ],
+                needsOAuth: false,
+                error: null,
+                toolConfigs: [
+                    {name: 'com_example_demo__echo', policy: 'ask', enabled: true},
+                ],
+            }],
+        };
+
+        renderViewer(response);
+        fireEvent.click(screen.getByText('Demo Plugin'));
+        fireEvent.click(screen.getByRole('button', {name: 'Mark tools on Demo Plugin as reviewed'}));
+
+        await waitFor(() => {
+            expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);
+        });
+
+        expect(mockUpdatePluginServer).toHaveBeenCalledWith('com.example.demo', {
+            tool_configs: [
+                {name: 'com_example_demo__echo', policy: 'ask', enabled: true},
+                {name: 'com_example_demo__list', policy: 'auto_run_in_dm', enabled: true},
+            ],
+        });
+        await waitFor(() => {
+            expect(mockGetMCPTools).toHaveBeenCalled();
+        });
+    });
+
     test('plugin branch ignores rows without serverType==="plugin"', async () => {
         const remoteResponse: MCPToolsResponse = {
             servers: [{

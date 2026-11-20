@@ -41,13 +41,14 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
     const policyOptions = useToolPolicyOptions();
-    const isRemoteMcp = server.serverType === 'remote' || server.serverType === 'plugin';
+    const isPlugin = server.serverType === 'plugin';
+    const isRemoteMcp = server.serverType === 'remote' || isPlugin;
     const enableRemoteBlocked = isRemoteMcp && !remoteMcpLicensed;
 
     const findStoredConfig = (toolName: string) => serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
 
-    // A remote server's tool is unreviewed until an admin chooses its policy.
-    const marksUnreviewed = server.serverType === 'remote' && !reviewing;
+    // A remote or plugin server's tool is unreviewed until an admin chooses its policy.
+    const marksUnreviewed = isRemoteMcp && !reviewing;
     const isUnreviewed = (tool: MCPToolInfo) => marksUnreviewed && !findStoredConfig(tool.name)?.policy;
     const unreviewedCount = server.tools.filter(isUnreviewed).length;
 
@@ -148,7 +149,6 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
     );
 
     const renderToolRow = (tool: MCPToolInfo) => {
-        const isPlugin = server.serverType === 'plugin';
         const pluginID = isPlugin ? pluginIDFromServerOrigin(server.url) : '';
         const displayName = isPlugin ? stripPluginPrefix(tool.name, pluginID) : tool.name;
 
@@ -320,7 +320,11 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                                             values={{count: unreviewedCount}}
                                         />
                                     )}
-                                    description={<FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>}
+                                    description={isPlugin ? (
+                                        <FormattedMessage defaultMessage='Tools marked Not reviewed already run with their default policy: Auto Run (DM) for tools the plugin marks read-only, and Ask Every Time for others. Mark the tools as reviewed, or choose a policy, to save your choices immediately.'/>
+                                    ) : (
+                                        <FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>
+                                    )}
                                 />
                             )}
                             <BulkRow>

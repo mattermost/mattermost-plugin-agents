@@ -242,12 +242,17 @@ retried.
 LLM request. Aim for ~10 tools per plugin, with union-typed args, over
 many narrow tools.
 
-**Per-tool admin policy.** Admins configure per-tool policy
-(enabled, auto-run-in-DM, require-confirmation) for plugin-registered
-tools from the system console Tools tab, alongside the server-level
-enable/disable toggle. Policy applies in both the user-facing tool flow
-and (when `ExposeExternal` is true) the external aggregated MCP
-endpoint.
+**Per-tool admin policy and `ReadOnlyHint`.** Admins configure per-tool
+policy (enabled, auto-run-in-DM, auto-run-everywhere, ask) for
+plugin-registered tools from the system console Tools tab, alongside the
+server-level enable/disable toggle. When tool-approval policies are
+licensed (Enterprise and above), tools annotated with
+`Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}` default to
+`auto_run_in_dm` until an admin saves an explicit policy; all other
+tools default to `ask`. Only set `ReadOnlyHint: true` on tools that
+perform caller-scoped reads without side effects. Policy applies in both
+the user-facing tool flow and (when `ExposeExternal` is true) the
+external aggregated MCP endpoint.
 
 ## Troubleshooting
 

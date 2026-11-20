@@ -13,6 +13,7 @@ import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import ConfirmationDialog from '../confirmation_dialog';
 
+import {countUnreviewedTools} from './mcp_tool_review';
 import {MCPServerConfig, MCPToolsResponse} from './mcp_types';
 import {useSettingsReadOnly} from './settings_read_only';
 
@@ -34,8 +35,7 @@ const unreviewedCount = (server: MCPServerConfig, toolsData: MCPToolsResponse | 
     if (!discovered || discovered.error || discovered.needsOAuth) {
         return null;
     }
-    const chosen = new Set((server.tool_configs ?? []).filter((tc) => tc.policy).map((tc) => tc.name));
-    return discovered.tools.filter((tool) => !chosen.has(tool.name)).length;
+    return countUnreviewedTools(discovered.tools, server.tool_configs);
 };
 
 const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
