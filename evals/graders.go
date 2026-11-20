@@ -48,6 +48,17 @@ Example:
 </Rubrics>
 {"verdicts": [{"rubric": 1, "reasoning": "The output says the clock is broken", "score": 1.0, "pass": true}, {"rubric": 2, "reasoning": "The output only talks about a clock and never mentions the mentos project", "score": 0.0, "pass": false}]}`
 
+// withVerdictsOutput requests rubricVerdicts as structured output. Go slices
+// map to a nullable array, which Anthropic rejects, so verdicts is made a plain
+// array.
+func withVerdictsOutput(cfg *llm.LanguageModelConfig) {
+	schema := llm.NewJSONSchemaFromStruct[rubricVerdicts]()
+	verdicts := schema.Properties["verdicts"]
+	verdicts.Types = nil
+	verdicts.Type = "array"
+	cfg.JSONOutputFormat = schema
+}
+
 // LLMRubrics grades output against every rubric in a single grader request,
 // so the output is sent once rather than once per rubric. Results are in the
 // order of rubrics.
@@ -71,7 +82,7 @@ func (e *Eval) LLMRubrics(rubrics []string, output string) ([]RubricResult, erro
 		Operation: llm.OperationEvalGrading,
 	}
 
-	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(500+500*len(rubrics)), llm.WithJSONOutput[rubricVerdicts]())
+	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(500+500*len(rubrics)), withVerdictsOutput)
 	if gradeErr != nil {
 		return nil, fmt.Errorf("failed to grade with llm: %w", gradeErr)
 	}
