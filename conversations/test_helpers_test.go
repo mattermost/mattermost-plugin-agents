@@ -100,6 +100,10 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	return nil
 }
 
+func (c *fakeMMClient) DeletePost(string) error {
+	return nil
+}
+
 func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 	c.updatedPosts = append(c.updatedPosts, post.Clone())
 	if c.onUpdatePost != nil {
