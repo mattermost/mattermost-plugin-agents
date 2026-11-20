@@ -489,6 +489,7 @@ test.describe('Agents product view', () => {
                 overflow: style.overflow,
                 textAlign: style.textAlign,
                 minWidth: style.minWidth,
+                maxWidth: style.maxWidth,
                 labelOverflow: labelStyle?.overflow ?? '',
                 labelTextOverflow: labelStyle?.textOverflow ?? '',
                 surfaceScrollWidth: surface?.scrollWidth ?? 0,
@@ -506,6 +507,7 @@ test.describe('Agents product view', () => {
         expect(metrics.overflow).toBe('hidden');
         expect(metrics.textAlign).toBe('start');
         expect(parseFloat(metrics.minWidth)).toBe(0);
+        expect(metrics.maxWidth).toBe('min(100%, 40rem)');
         expect(metrics.labelOverflow).toBe('hidden');
         expect(metrics.labelTextOverflow).toBe('ellipsis');
         expect(metrics.surfaceScrollWidth).toBeGreaterThan(metrics.surfaceClientWidth);

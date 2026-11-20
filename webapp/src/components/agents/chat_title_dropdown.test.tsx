@@ -41,9 +41,9 @@ describe('ChatTitleDropdown truncation', () => {
         expect(triggerStyle.overflow).toBe('hidden');
         expect(parseFloat(triggerStyle.minWidth)).toBe(0);
 
-        // Fill the Trigger so compass ellipsis gets a definite width at runtime.
+        // Fill the Trigger and keep the absolute max on the dropdown button itself.
         expect(getComputedStyle(button).width).toBe('100%');
-        expect(getComputedStyle(button).maxWidth).toBe('100%');
+        expect(getComputedStyle(button).maxWidth).toBe('min(100%, 40rem)');
 
         const label = button.querySelector('[class*="dropdown__label"]');
         expect(label).toBeTruthy();
