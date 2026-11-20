@@ -730,4 +730,68 @@ describe('McpsTab', () => {
             agentConfig: true,
         }));
     });
+
+    test('reconciles saved grants for admin-disabled tools so they cannot silently resurrect', async () => {
+        const origin = 'https://tracker.example.com/mcp';
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Tracker',
+                serverOrigin: origin,
+                kind: 'remote',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {name: 'list_issues', description: 'List issues', enabled: true, policy: 'auto_run_in_dm'},
+                    {name: 'delete_issue', description: 'Delete issue', enabled: false, policy: 'ask'},
+                ],
+            }],
+        });
+
+        const {onChange, onReconcileEnabledTools} = renderTab({
+            autoEnableNewMCPTools: false,
+            enabledTools: [
+                {server_origin: origin, tool_name: 'list_issues'},
+                {server_origin: origin, tool_name: 'delete_issue'},
+            ],
+        });
+
+        await screen.findByText('Tracker');
+        await waitFor(() => expect(onReconcileEnabledTools).toHaveBeenCalledWith([
+            {server_origin: origin, tool_name: 'list_issues'},
+        ]));
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
+    test('clears loading and refreshing spinners when a background connection event supersedes an in-flight load', async () => {
+        const {useMCPConnectionEvents} = jest.requireMock('@/hooks/use_mcp_connection_events') as {useMCPConnectionEvents: jest.Mock};
+        let onConnectionEvent: (() => void) | null = null;
+        useMCPConnectionEvents.mockImplementation((cb: () => void) => {
+            onConnectionEvent = cb;
+        });
+
+        let resolveFirst!: (value: {servers: Array<typeof mattermostServer>}) => void;
+        let resolveSecond!: (value: {servers: Array<typeof mattermostServer>}) => void;
+        mockedGetUserMCPTools.
+            mockImplementationOnce(() => new Promise((resolve) => {
+                resolveFirst = resolve;
+            })).
+            mockImplementationOnce(() => new Promise((resolve) => {
+                resolveSecond = resolve;
+            }));
+
+        renderTab();
+        expect(screen.getByText('Loading MCP tools...')).not.toBeNull();
+
+        // Trigger a background reload while the initial showLoading request is still in flight.
+        onConnectionEvent!();
+
+        resolveSecond({servers: [mattermostServer]});
+        await screen.findByText('Mattermost');
+        expect(screen.queryByText('Loading MCP tools...')).toBeNull();
+
+        // Settling the superseded initial request later must not break rendered state.
+        resolveFirst({servers: []});
+        await waitFor(() => expect(screen.getByText('Mattermost')).not.toBeNull());
+    });
 });

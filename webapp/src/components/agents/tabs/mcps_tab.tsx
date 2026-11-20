@@ -149,6 +149,7 @@ const McpsTab = (props: Props) => {
     const [collapsedInSearch, setCollapsedInSearch] = useState<Set<string>>(new Set());
     const [searchQuery, setSearchQuery] = useState('');
     const requestRef = useRef(0);
+    const hasLoadedRef = useRef(false);
 
     const handleSearchChange = useCallback((value: string) => {
         setSearchQuery(value);
@@ -179,6 +180,7 @@ const McpsTab = (props: Props) => {
                 return;
             }
             setServers(response.servers || []);
+            hasLoadedRef.current = true;
             setError(null);
             setRefreshError(null);
         } catch (err) {
@@ -189,7 +191,7 @@ const McpsTab = (props: Props) => {
                 // eslint-disable-next-line no-console
                 console.error('Failed to refresh MCP tools:', err);
                 setRefreshError(intl.formatMessage({defaultMessage: 'Failed to refresh MCP tools.'}));
-            } else if (opts.showLoading) {
+            } else if (opts.showLoading || !hasLoadedRef.current) {
                 // eslint-disable-next-line no-console
                 console.error('Failed to load MCP tools:', err);
                 setError(intl.formatMessage({defaultMessage: 'Failed to load MCP tools.'}));
@@ -199,12 +201,8 @@ const McpsTab = (props: Props) => {
             }
         } finally {
             if (request === requestRef.current) {
-                if (opts.showLoading) {
-                    setLoading(false);
-                }
-                if (opts.forceRefresh) {
-                    setRefreshing(false);
-                }
+                setLoading(false);
+                setRefreshing(false);
             }
         }
     }, [agentId, intl, useServiceAccountAuth]);
@@ -340,7 +338,7 @@ const McpsTab = (props: Props) => {
             if (mcpServerStatus(s, useServiceAccountAuth) === 'sa-only-unavailable') {
                 return true;
             }
-            return s.tools.some((t) => t.name === et.tool_name);
+            return s.tools.some((t) => t.name === et.tool_name && t.enabled);
         });
     }, [servers, useServiceAccountAuth]);
 
