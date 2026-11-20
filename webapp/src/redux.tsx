@@ -10,6 +10,7 @@ import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 import type {AIThread} from './types/ai_thread';
+import type {Project, ProjectTab} from './types/projects';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 type WebappStore = Store<GlobalState, UnknownAction>
@@ -186,10 +187,112 @@ function channelArtifactsLoadFailed(state = false, action: any) {
         return false;
     case 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED':
         return true;
+    default:
+        return state;
+    }
+}
+
 function scopedSessionsSupported(state: boolean | null = null, action: any) {
     switch (action.type) {
     case 'SET_SCOPED_SESSIONS_SUPPORTED':
         return action.scopedSessionsSupported;
+    default:
+        return state;
+    }
+}
+
+export const ProjectChannelsEnabledSet = 'SET_PROJECT_CHANNELS_ENABLED';
+export const ProjectAgentsSet = 'SET_PROJECT_AGENTS';
+export const ProjectsReceived = 'PROJECTS_RECEIVED';
+export const ProjectReceived = 'PROJECT_RECEIVED';
+export const ProjectMissing = 'PROJECT_MISSING';
+export const ProjectRHSTabSet = 'SET_PROJECT_RHS_TAB';
+
+function projectChannelsEnabled(state = false, action: any) {
+    switch (action.type) {
+    case ProjectChannelsEnabledSet:
+        return Boolean(action.projectChannelsEnabled);
+    default:
+        return state;
+    }
+}
+
+// Hidden project agents: kept apart from `bots` so the pickers never list them, while posts they
+// author are still recognized as agent posts.
+function projectAgents(state: ProjectAgentInfo[] = [], action: any): ProjectAgentInfo[] {
+    switch (action.type) {
+    case ProjectAgentsSet:
+        return Array.isArray(action.projectAgents) ? action.projectAgents : [];
+    case ProjectChannelsEnabledSet:
+        return action.projectChannelsEnabled ? state : [];
+    default:
+        return state;
+    }
+}
+
+export type ProjectAgentInfo = {id: string; displayName?: string; username?: string; dmChannelID?: string};
+
+export type ProjectsState = {
+    byChannelId: Record<string, Project>;
+
+    // Channels the server said are not projects, so they are not asked about again.
+    notProject: Record<string, true>;
+    loadedTeams: Record<string, true>;
+};
+
+export const initialProjectsState: ProjectsState = {byChannelId: {}, notProject: {}, loadedTeams: {}};
+
+// A response older than the stored copy (a late fetch overtaken by a websocket event) is dropped.
+function mergeProject(byChannelId: Record<string, Project>, project: Project): Record<string, Project> {
+    const current = byChannelId[project.channel_id];
+    if (current && current.update_at > project.update_at) {
+        return byChannelId;
+    }
+    return {...byChannelId, [project.channel_id]: project};
+}
+
+export function projects(state: ProjectsState = initialProjectsState, action: any): ProjectsState {
+    switch (action.type) {
+    case ProjectsReceived: {
+        const received: Project[] = action.projects ?? [];
+        const receivedIds = new Set(received.map((p) => p.channel_id));
+        let byChannelId: Record<string, Project> = {};
+        for (const [id, project] of Object.entries(state.byChannelId)) {
+            if (project.team_id !== action.teamId || receivedIds.has(id)) {
+                byChannelId[id] = project;
+            }
+        }
+        for (const project of received) {
+            byChannelId = mergeProject(byChannelId, project);
+        }
+        const notProject = {...state.notProject};
+        for (const id of receivedIds) {
+            delete notProject[id];
+        }
+        return {byChannelId, notProject, loadedTeams: {...state.loadedTeams, [action.teamId]: true}};
+    }
+    case ProjectReceived: {
+        const notProject = {...state.notProject};
+        delete notProject[action.project.channel_id];
+        return {...state, byChannelId: mergeProject(state.byChannelId, action.project), notProject};
+    }
+    case ProjectMissing:
+        if (state.byChannelId[action.channelId]) {
+            return state;
+        }
+        return {...state, notProject: {...state.notProject, [action.channelId]: true}};
+    case ProjectChannelsEnabledSet:
+        return action.projectChannelsEnabled ? state : initialProjectsState;
+    default:
+        return state;
+    }
+}
+
+// Kept in the store so the sidebar reopens on the tab it was left on.
+function projectRHSTab(state: ProjectTab = 'board', action: any): ProjectTab {
+    switch (action.type) {
+    case ProjectRHSTabSet:
+        return action.tab === 'artifacts' ? 'artifacts' : 'board';
     default:
         return state;
     }
@@ -348,6 +451,10 @@ export const pluginReducer = combineReducers({
     channelArtifactsLoadFailed,
     channelArtifactLibrary,
     scopedSessionsSupported,
+    projectChannelsEnabled,
+    projectAgents,
+    projects,
+    projectRHSTab,
     customPrompts,
     pinnedPromptIds,
     showCustomPromptsModal,

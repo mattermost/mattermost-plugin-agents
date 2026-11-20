@@ -19,6 +19,7 @@ import {
     AgentVersionDetail,
     ScopedAccessReport,
 } from '@/types/agents';
+import type {CreateProjectRequest, Project, ProjectChecklist} from '@/types/projects';
 import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
@@ -1809,4 +1810,56 @@ export async function renderCustomPrompt(id: string, channelId?: string, botId?:
         status_code: response.status,
         url,
     });
+}
+
+function projectRoute(channelId: string): string {
+    return `${baseRoute()}/projects/${encodeURIComponent(channelId)}`;
+}
+
+export function createProject(request: CreateProjectRequest): Promise<Project> {
+    return fetchAgentJSON(`${baseRoute()}/projects`, {method: 'POST', body: JSON.stringify(request)});
+}
+
+export function getProject(channelId: string): Promise<Project> {
+    return fetchAgentJSON(projectRoute(channelId), {method: 'GET'});
+}
+
+export async function listProjects(teamId: string): Promise<Project[]> {
+    const result: {projects: Project[] | null} = await fetchAgentJSON(`${baseRoute()}/projects?team_id=${encodeURIComponent(teamId)}`, {method: 'GET'});
+    return result.projects ?? [];
+}
+
+export function endProject(channelId: string, options: {skipWrapUp?: boolean} = {}): Promise<Project> {
+    return fetchAgentJSON(`${projectRoute(channelId)}/end`, {
+        method: 'POST',
+        body: JSON.stringify(options.skipWrapUp ? {skip_wrap_up: true} : {}),
+    });
+}
+
+export function transferProjectLead(channelId: string, leadUserId: string): Promise<Project> {
+    return fetchAgentJSON(`${projectRoute(channelId)}/transfer-lead`, {
+        method: 'POST',
+        body: JSON.stringify({lead_user_id: leadUserId}),
+    });
+}
+
+// An empty cron turns check-ins off.
+export function updateProjectSchedule(channelId: string, cron: string, timezone: string): Promise<Project> {
+    return fetchAgentJSON(`${projectRoute(channelId)}/schedule`, {
+        method: 'PUT',
+        body: JSON.stringify({cron, timezone}),
+    });
+}
+
+export function getProjectChecklist(channelId: string): Promise<ProjectChecklist> {
+    return fetchAgentJSON(`${projectRoute(channelId)}/checklist`, {method: 'GET'});
+}
+
+export function getChannelMemberProfiles(channelId: string) {
+    return Client4.getProfilesInChannel(channelId, 0, 200);
+}
+
+// Creates the channel as the signed-in user, so the server's own channel permissions apply.
+export function createChannelAsUser(channel: {team_id: string; name: string; display_name: string; purpose: string; type: 'O' | 'P'}) {
+    return Client4.createChannel(channel);
 }

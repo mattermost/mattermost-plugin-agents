@@ -32,7 +32,14 @@ import ChannelArtifactsCountBadge from './components/channel_artifacts/channel_a
 import ArtifactBookmarkPicker, {openArtifactBookmarkPicker} from './components/channel_artifacts/artifact_bookmark_picker';
 import LibraryArtifactDeepLink from './components/channel_artifacts/library_artifact_deep_link';
 import {applyLibraryEvent} from './components/channel_artifacts/library';
-import {getChannelArtifactsAvailableHere} from './selectors';
+import {getChannelArtifactsAvailableHere, getProject} from './selectors';
+import ProjectRHS, {ProjectRHSTitle} from './components/projects/project_rhs';
+import ProjectWatcher, {refreshCurrentTeamProjects} from './components/projects/project_watcher';
+import {ProjectHeaderIcon, ProjectInfoBadge, ProjectInfoText} from './components/projects/project_channel_indicators';
+import {makeProjectChannelTypeOption} from './components/projects/create_project_option';
+import {PROJECT_UPDATED_EVENT, applyProjectEvent} from './components/projects/project_state';
+import {setProjectRHSHandle} from './components/projects/project_rhs_handle';
+import {boardChannelPath, checklistRunPath, navigateTo} from './components/projects/project_links';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
 import SettingsAccessConfig from './components/system_console/settings_access_config';
@@ -168,6 +175,7 @@ export default class Plugin {
 
         let rhs: any = null;
         let artifactsRhs: any = null;
+        let projectRhs: any = null;
         if (isRHSCompatable()) {
             rhs = registry.registerRightHandSidebarComponent(RHS, RHSTitle);
             setOpenRHSAction(rhs.showRHSPlugin);
@@ -175,6 +183,8 @@ export default class Plugin {
                 ChannelArtifactsRHS,
                 ChannelArtifactsRHSTitle,
             );
+            projectRhs = registry.registerRightHandSidebarComponent(ProjectRHS, ProjectRHSTitle);
+            setProjectRHSHandle(projectRhs);
         }
 
         // The stored AI thread list follows the user's own agent chats: a finished turn, a rename
@@ -205,6 +215,7 @@ export default class Plugin {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                refreshCurrentTeamProjects(store);
             });
         }
 
@@ -241,6 +252,15 @@ export default class Plugin {
                 (msg: {data?: Record<string, unknown>}) => applyLibraryEvent(store as never, event, msg.data),
             );
         }
+
+        registry.registerWebSocketEventHandler(PROJECT_UPDATED_EVENT, (msg: {data?: unknown}) => applyProjectEvent(store.dispatch, msg.data));
+
+        // A project the user was just added to is not in the list loaded earlier.
+        registry.registerWebSocketEventHandler('user_added', (msg: {data?: {user_id?: string}}) => {
+            if (msg.data?.user_id === store.getState().entities.users.currentUserId) {
+                refreshCurrentTeamProjects(store);
+            }
+        });
 
         registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
 
@@ -343,6 +363,8 @@ export default class Plugin {
             registry.registerChannelHeaderIcon(AskChannelButton);
         }
 
+        this.registerProjectSurfaces(registry, store, projectRhs);
+
         // Register slash commands
         if (rhs) {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
@@ -432,6 +454,70 @@ export default class Plugin {
                 component: CustomPromptsDropdown,
             });
         }
+    }
+
+    private registerProjectSurfaces(registry: any, store: WebappStore, projectRhs: any) {
+        if (registry.registerRootComponent) {
+            registry.registerRootComponent(ProjectWatcher);
+        }
+
+        if (registry.registerChannelTypeOption) {
+            registry.registerChannelTypeOption(makeProjectChannelTypeOption(store, getStaticIntl(store)));
+        }
+
+        if (!projectRhs) {
+            return;
+        }
+
+        if (registry.registerChannelHeaderIcon) {
+            registry.registerChannelHeaderIcon(ProjectHeaderIcon);
+        }
+
+        if (registry.registerChannelIconOverride) {
+            registry.registerChannelIconOverride({
+                matcher: (state: GlobalState, channel: {id: string}) => Boolean(getProject(state as never, channel.id)),
+                iconName: 'flag-outline',
+            });
+        }
+
+        if (typeof registry.registerChannelInfoMenuAction !== 'function') {
+            return;
+        }
+        const intl = getStaticIntl(store);
+        const hasProject = (state: GlobalState, channel: {id: string}) => Boolean(getProject(state as never, channel.id));
+
+        registry.registerChannelInfoMenuAction(
+            <i className='icon icon-flag-outline'/>,
+            <ProjectInfoText/>,
+            () => store.dispatch(projectRhs.showRHSPlugin),
+            hasProject,
+            <ProjectInfoBadge/>,
+            true,
+        );
+        registry.registerChannelInfoMenuAction(
+            <i className='icon icon-kanban'/>,
+            intl.formatMessage({defaultMessage: 'Project board'}),
+            (channelId: string) => {
+                const project = getProject(store.getState() as never, channelId);
+                const path = project ? boardChannelPath(store.getState(), project) : '';
+                if (path) {
+                    navigateTo(path);
+                }
+            },
+            (state: GlobalState, channel: {id: string}) => Boolean(getProject(state as never, channel.id)?.board_channel_id),
+        );
+        registry.registerChannelInfoMenuAction(
+            <i className='icon icon-check-circle-outline'/>,
+            intl.formatMessage({defaultMessage: 'Project checklist'}),
+            (channelId: string) => {
+                const project = getProject(store.getState() as never, channelId);
+                const path = project ? checklistRunPath(project) : '';
+                if (path) {
+                    navigateTo(path);
+                }
+            },
+            (state: GlobalState, channel: {id: string}) => Boolean(getProject(state as never, channel.id)?.playbook_run_id),
+        );
     }
 
     private async blockFastBotNotifications(

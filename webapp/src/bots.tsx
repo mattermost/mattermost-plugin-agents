@@ -13,7 +13,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {getAIBots, savePreferences} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler, SetLinkPolicyHandler} from './redux';
+import {BotsHandler, ProjectAgentsSet, ProjectChannelsEnabledSet, SetLinkPolicyHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -128,6 +128,16 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     dispatch({
         type: 'SET_SCOPED_SESSIONS_SUPPORTED',
         scopedSessionsSupported: Boolean(response.scopedSessionsSupported),
+    });
+
+    dispatch({
+        type: ProjectChannelsEnabledSet,
+        projectChannelsEnabled: Boolean(response.projectChannelsEnabled),
+    });
+
+    dispatch({
+        type: ProjectAgentsSet,
+        projectAgents: response.projectAgents ?? [],
     });
 
     return response.bots;
