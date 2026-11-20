@@ -176,7 +176,7 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 
 	// Held through the approved tools and the follow-up stream, so a
 	// regenerate on another node can't scrub and rerun the response meanwhile.
-	ctx, release, err := c.reservePostRun(ctx, post.Id)
+	ctx, release, err := c.reservePostRunAfterRunEnds(ctx, post.Id, convID)
 	if errors.Is(err, streaming.ErrAlreadyStreamingToPost) {
 		// A duplicate click, or a regenerate replacing this response.
 		return fail(fmt.Errorf("post already has a run in progress: %w", ErrStaleToolClick))
@@ -990,6 +990,37 @@ func awaitSettledPostTurns(ctx context.Context, load func() ([]store.Turn, error
 		case <-ctx.Done():
 			return turns, nil
 		case <-time.After(interval):
+		}
+	}
+}
+
+// reservePostRunAfterRunEnds reserves postID for a tool decision. The client
+// shows the approval card as soon as the run that produced it has settled its
+// turn, but that run keeps the post reserved until its tool runner exits, so a
+// prompt click can land while the run is still releasing. It waits for that
+// release instead of failing the click. A turn still streaming means a real
+// run owns the post (a duplicate click, regenerate, or an approval already
+// running), which is refused at once.
+func (c *Conversations) reservePostRunAfterRunEnds(ctx context.Context, postID, convID string) (context.Context, func(), error) {
+	deadline := time.Now().Add(settleStreamingTurnTimeout)
+	for {
+		runCtx, release, err := c.reservePostRun(ctx, postID)
+		if !errors.Is(err, streaming.ErrAlreadyStreamingToPost) || !time.Now().Before(deadline) {
+			return runCtx, release, err
+		}
+		turns, turnsErr := c.convService.GetTurns(convID)
+		if turnsErr != nil {
+			return nil, nil, fmt.Errorf("failed to get turns: %w", turnsErr)
+		}
+		if slices.ContainsFunc(turns, func(t store.Turn) bool {
+			return t.Role == "assistant" && t.PostID != nil && *t.PostID == postID && t.Status == store.TurnStatusStreaming
+		}) {
+			return runCtx, release, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(settleStreamingTurnPollInterval):
 		}
 	}
 }

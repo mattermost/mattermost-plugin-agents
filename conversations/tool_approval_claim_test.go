@@ -277,3 +277,83 @@ func TestHandleToolResultStreamsFollowUpOnceUnderConcurrentClicks(t *testing.T) 
 	assert.ErrorIs(t, errs[1], ErrStaleToolClick)
 	assert.Len(t, lm.requests, 1, "the follow-up must stream once")
 }
+
+// The approval card appears once the run that produced it has settled its
+// turn, but that run keeps the post reserved until its tool runner exits. A
+// click in that window waits for the release instead of failing; a click on a
+// post a streaming run owns is refused at once.
+func TestHandleToolCallWaitsForTheEarlierRunToRelease(t *testing.T) {
+	// Trace correlation, turn settling and policy resolution each read the
+	// turns before the post is reserved.
+	const readsBeforeReservation = 3
+
+	tests := []struct {
+		name            string
+		turnStreaming   bool
+		wantStale       bool
+		wantExecutions  int
+		wantTurnsReads  int
+		releaseOnReread bool
+	}{
+		{name: "earlier run is only releasing", wantExecutions: 1, releaseOnReread: true},
+		{name: "a streaming run owns the post", turnStreaming: true, wantStale: true, wantTurnsReads: readsBeforeReservation + 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			postID := "approval-post-id"
+			status := conversation.StatusPending
+			if tt.turnStreaming {
+				status = conversation.StatusAccepted
+			}
+			seedClaimTestTurns(t, convStore, conv.ID, postID, []conversation.ContentBlock{{
+				Type: conversation.BlockTypeToolUse, ID: "tool-use-1", Name: "jira__get_issue",
+				Input: json.RawMessage(`{}`), Status: status, Shared: new(false),
+			}}, nil)
+			if tt.turnStreaming {
+				swapped, err := convStore.TransitionTurnStatus("assistant-turn", "", store.TurnStatusStreaming)
+				require.NoError(t, err)
+				require.True(t, swapped)
+			}
+
+			post := &model.Post{Id: postID, UserId: "bot-id"}
+			post.AddProp(streaming.ConversationIDProp, conv.ID)
+			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+			executions := 0
+			c := newClaimTestConversations(t, convStore, &loadedStateLLM{}, &loadedStateStreamingService{},
+				func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+					executions++
+					return "result", nil
+				})
+
+			_, releaseEarlierRun, err := c.reservePostRun(context.Background(), postID)
+			require.NoError(t, err)
+			released := false
+			totalReads := 0
+			convStore.afterTurnsRead = func(reads int) {
+				totalReads = reads
+				if tt.releaseOnReread && reads > readsBeforeReservation && !released {
+					released = true
+					releaseEarlierRun()
+				}
+			}
+			t.Cleanup(func() {
+				if !released {
+					releaseEarlierRun()
+				}
+			})
+
+			err = c.HandleToolCall(context.Background(), testRequesterID, post, channel, []string{"tool-use-1"}, nil)
+
+			if tt.wantStale {
+				require.ErrorIs(t, err, ErrStaleToolClick)
+				assert.Equal(t, tt.wantTurnsReads, totalReads, "a click on a post a streaming run owns must not wait")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantExecutions, executions)
+		})
+	}
+}
