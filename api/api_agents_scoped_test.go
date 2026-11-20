@@ -227,6 +227,54 @@ func TestAgentScopedChannelModeSave(t *testing.T) {
 	}
 }
 
+// A manager who can't change service account settings gets the same refusal
+// for every candidate channel, without the server looking any of them up.
+func TestAgentExtraChannelsNotProbedForNonAdmins(t *testing.T) {
+	allowlist := []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: "get_issue"}}
+	tests := []struct {
+		name    string
+		channel *model.Channel
+	}{
+		{name: "missing channel"},
+		{name: "direct message", channel: &model.Channel{Type: model.ChannelTypeDirect}},
+		{name: "archived channel", channel: &model.Channel{Type: model.ChannelTypeOpen, DeleteAt: 1}},
+		{name: "private channel", channel: &model.Channel{Type: model.ChannelTypePrivate}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+			mockLicensed(e.mockAPI)
+			enableScopedSessions(t, e)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			candidateID := model.NewId()
+			if tt.channel != nil {
+				tt.channel.Id = candidateID
+				e.mockAPI.On("GetChannel", candidateID).Return(tt.channel, nil).Maybe()
+			} else {
+				e.mockAPI.On("GetChannel", candidateID).Return(nil, model.NewAppError("GetChannel", "app.channel.missing", nil, "", http.StatusNotFound)).Maybe()
+			}
+
+			stored := llm.BotConfig{
+				ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+				DisplayName: "Scoped", Name: "scoped", ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelNone,
+				UseServiceAccountAuth: true, EnabledMCPTools: allowlist, ScopedChannelMode: true,
+			}
+			e.agentStore.agents["agent-1"] = &stored
+			before := stored
+			body := updateAgentBodyFromStored(&before, map[string]any{"scopedChannelMode": true, "scopedExtraChannelIDs": []string{candidateID}})
+
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+			assert.Contains(t, decodeAgentError(t, recorder), "system administrators")
+			e.mockAPI.AssertNotCalled(t, "GetChannel", candidateID)
+			assert.Empty(t, e.agentStore.agents["agent-1"].ScopedExtraChannelIDs)
+		})
+	}
+}
+
 func TestScopedExtraChannelsHiddenFromNonManagers(t *testing.T) {
 	extraID := model.NewId()
 

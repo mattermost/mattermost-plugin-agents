@@ -778,6 +778,9 @@ func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req
 		Stored:  cfg,
 		Apply: func(proposed *llm.BotConfig) error {
 			req.applyTo(proposed)
+			return nil
+		},
+		Validate: func(proposed *llm.BotConfig) error {
 			return a.scopedChannelModeError(*proposed, cfg)
 		},
 		Meta: meta,

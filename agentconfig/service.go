@@ -157,6 +157,10 @@ type UpdateRequest struct {
 	// Apply changes the proposed configuration, a copy of the stored one. An
 	// error refuses the update as KindInvalid.
 	Apply func(proposed *llm.BotConfig) error
+	// Validate checks the proposed configuration once the actor is known to
+	// be allowed to make the change, so its lookups reveal nothing to anyone
+	// else. An error refuses the update as KindInvalid.
+	Validate func(proposed *llm.BotConfig) error
 	// Username, when set and different, renames the agent's bot account.
 	Username *string
 	Meta     store.AgentVersionMeta
@@ -210,6 +214,11 @@ func (s *Service) Update(ctx context.Context, req UpdateRequest) (result *Update
 		}
 		if selfErr := checkSelfSetupChange(stored, &proposed); selfErr != nil {
 			return nil, newError(KindForbidden, selfErr)
+		}
+	}
+	if req.Validate != nil {
+		if validateErr := req.Validate(&proposed); validateErr != nil {
+			return nil, newError(KindInvalid, validateErr)
 		}
 	}
 
