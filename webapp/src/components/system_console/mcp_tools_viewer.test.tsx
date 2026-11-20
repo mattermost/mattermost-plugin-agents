@@ -547,3 +547,85 @@ test('maps servers to their configuration by ID when names were swapped by renam
         {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
     ]);
 });
+
+describe('MCPToolsViewer — search', () => {
+    const toolsResponse: MCPToolsResponse = {
+        servers: [
+            {
+                id: 'srv-1',
+                name: 'Tracker',
+                url: 'https://tracker.example.com',
+                serverType: 'remote',
+                enabled: true,
+                needsOAuth: false,
+                error: null,
+                tools: [
+                    {name: 'list_issues', description: 'List open tickets', inputSchema: null, readOnlyHint: true},
+                    {name: 'delete_issue', description: 'Remove an issue permanently', inputSchema: null},
+                ],
+            },
+            {
+                id: 'srv-2',
+                name: 'Wiki',
+                url: 'https://wiki.example.com',
+                serverType: 'remote',
+                enabled: true,
+                needsOAuth: false,
+                error: null,
+                tools: [
+                    {name: 'get_page', description: 'Read a wiki page', inputSchema: null, readOnlyHint: true},
+                ],
+            },
+        ],
+    };
+
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {
+                id: 'srv-1',
+                name: 'Tracker',
+                enabled: true,
+                baseURL: 'https://tracker.example.com',
+                headers: {},
+                tool_configs: [
+                    {name: 'list_issues', policy: 'auto_run_in_dm', enabled: true, retrieval_description_override: 'Find incident escalations'},
+                ],
+            },
+            {
+                id: 'srv-2',
+                name: 'Wiki',
+                enabled: true,
+                baseURL: 'https://wiki.example.com',
+                headers: {},
+            },
+        ],
+    });
+
+    test('filters servers and auto-expands matching tools, including retrieval description overrides', () => {
+        renderViewer(toolsResponse, mcpConfig);
+
+        const search = screen.getByPlaceholderText('Search servers and tools...');
+        fireEvent.change(search, {target: {value: 'escalations'}});
+
+        expect(screen.getByText('Tracker')).not.toBeNull();
+        expect(screen.queryByText('Wiki')).toBeNull();
+
+        // Auto-expanded and narrowed to only the matching tool.
+        expect(screen.getByText('list_issues')).not.toBeNull();
+        expect(screen.queryByText('delete_issue')).toBeNull();
+        expect(screen.getByText('Showing 1 of 2 tools matching your search')).not.toBeNull();
+    });
+
+    test('shows empty state with clear button when search matches nothing', () => {
+        renderViewer(toolsResponse, mcpConfig);
+
+        const search = screen.getByPlaceholderText('Search servers and tools...');
+        fireEvent.change(search, {target: {value: 'nonexistent'}});
+
+        expect(screen.getByText('No matching MCP servers or tools')).not.toBeNull();
+        fireEvent.click(screen.getByText('Clear search'));
+
+        expect(screen.getByText('Tracker')).not.toBeNull();
+        expect(screen.getByText('Wiki')).not.toBeNull();
+    });
+});

@@ -304,3 +304,88 @@ func TestFilterToolsByConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterToolsByConfigWithOptionsIncludeDisabled(t *testing.T) {
+	tests := []struct {
+		name            string
+		includeDisabled bool
+		config          Config
+		pluginServers   []PluginServerConfig
+		rawTools        []llm.Tool
+		wantToolNames   []string
+	}{
+		{
+			name:            "includeDisabled keeps admin-disabled tools on enabled servers",
+			includeDisabled: true,
+			config: Config{
+				Servers: []ServerConfig{
+					{
+						Name:    "Remote",
+						Enabled: true,
+						BaseURL: "https://remote.example.com",
+						ToolConfigs: []ToolConfig{
+							{Name: "enabled_tool", Policy: ToolPolicyAsk, Enabled: true},
+							{Name: "disabled_tool", Policy: ToolPolicyAsk, Enabled: false},
+						},
+					},
+					{
+						Name:    "OffServer",
+						Enabled: false,
+						BaseURL: "https://off.example.com",
+					},
+				},
+			},
+			pluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Name:     "Example",
+					Path:     "/mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "plugin_disabled", Policy: ToolPolicyAsk, Enabled: false},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "enabled_tool", ServerOrigin: "https://remote.example.com"},
+				{Name: "disabled_tool", ServerOrigin: "https://remote.example.com"},
+				{Name: "off_server_tool", ServerOrigin: "https://off.example.com"},
+				{Name: "plugin_disabled", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"disabled_tool", "enabled_tool", "plugin_disabled"},
+		},
+		{
+			name:            "includeDisabled false drops admin-disabled tools",
+			includeDisabled: false,
+			config: Config{
+				Servers: []ServerConfig{
+					{
+						Name:    "Remote",
+						Enabled: true,
+						BaseURL: "https://remote.example.com",
+						ToolConfigs: []ToolConfig{
+							{Name: "enabled_tool", Policy: ToolPolicyAsk, Enabled: true},
+							{Name: "disabled_tool", Policy: ToolPolicyAsk, Enabled: false},
+						},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "enabled_tool", ServerOrigin: "https://remote.example.com"},
+				{Name: "disabled_tool", ServerOrigin: "https://remote.example.com"},
+			},
+			wantToolNames: []string{"enabled_tool"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered := filterToolsByConfigWithOptions(tt.rawTools, tt.config, &EmbeddedServerClient{}, tt.pluginServers, tt.includeDisabled)
+			var names []string
+			for _, tool := range filtered {
+				names = append(names, tool.Name)
+			}
+			assert.Equal(t, tt.wantToolNames, names)
+		})
+	}
+}

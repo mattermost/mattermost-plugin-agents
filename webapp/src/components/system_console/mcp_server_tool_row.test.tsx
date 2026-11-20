@@ -127,10 +127,7 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         const {onServerConfigChange} = renderRow(makePluginServer(), makePluginServerConfig());
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        // ToggleSwitch renders as role="switch": index 0 is server-level, index 1 is the per-tool toggle.
-        const switches = screen.getAllByRole('switch');
-        expect(switches.length).toBeGreaterThanOrEqual(2);
-        fireEvent.click(switches[1]);
+        fireEvent.click(screen.getByRole('switch', {name: 'Disable tool echo on Demo Plugin'}));
 
         expect(onServerConfigChange).toHaveBeenCalledTimes(1);
         const [updated] = onServerConfigChange.mock.calls[0];
@@ -161,7 +158,7 @@ describe('MCPServerToolRow — unconfigured tool defaults', () => {
 
         // Disabling the tool does not choose a policy for it, so the stored
         // entry keeps following the default.
-        fireEvent.click(screen.getAllByRole('switch')[1]);
+        fireEvent.click(screen.getByRole('switch', {name: 'Disable tool list_things on Remote'}));
         expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({
             tool_configs: [{name: 'list_things', policy: '', enabled: false}],
         }));
@@ -186,7 +183,7 @@ describe('MCPServerToolRow — unconfigured tool defaults', () => {
 
         expect(selectedLabel(getSelect('Approval policy for list_things'))).toBe('Auto Run (DM)');
 
-        fireEvent.click(screen.getAllByRole('switch')[1]);
+        fireEvent.click(screen.getByRole('switch', {name: 'Enable tool list_things on Remote'}));
         expect(onServerConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({
             tool_configs: [{name: 'list_things', policy: '', enabled: true}],
         }));
@@ -315,6 +312,45 @@ describe('MCPServerToolRow — grouped tools and bulk policy controls', () => {
 
         expect((getSelect('Approval policy for all tools on Remote') as HTMLButtonElement).disabled).toBe(true);
         expect((getSelect('Approval policy for all read-only tools on Remote') as HTMLButtonElement).disabled).toBe(true);
+
+        // Bulk enable/disable switches remain usable below Enterprise.
+        expect((screen.getByRole('switch', {name: 'Disable all tools on Remote'}) as HTMLInputElement).disabled).toBe(false);
+        expect((screen.getByRole('switch', {name: 'Disable all read-only tools on Remote'}) as HTMLInputElement).disabled).toBe(false);
+    });
+
+    test('bulk enable/disable toggles only the targeted group and preserves policies and overrides', () => {
+        const {onServerConfigChange} = renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([
+            {name: 'list_things', policy: 'auto_run_in_dm', enabled: true, retrieval_description_override: 'Lists things'},
+            {name: 'delete_thing', policy: 'ask', enabled: true},
+        ]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        // Disabling read-only tools keeps list_things's policy + override, leaves get_thing unchosen (policy: ''), and leaves delete_thing untouched.
+        fireEvent.click(screen.getByRole('switch', {name: 'Disable all read-only tools on Remote'}));
+
+        expect(onServerConfigChange).toHaveBeenCalledTimes(1);
+        expect(onServerConfigChange.mock.calls[0][0].tool_configs).toEqual([
+            {name: 'list_things', policy: 'auto_run_in_dm', enabled: false, retrieval_description_override: 'Lists things'},
+            {name: 'delete_thing', policy: 'ask', enabled: true},
+            {name: 'get_thing', policy: '', enabled: false},
+        ]);
+    });
+
+    test('all-tools bulk enable/disable switch toggles every tool without choosing unreviewed policies', () => {
+        const {onServerConfigChange} = renderRow(makeRemoteServer(annotatedTools), makeRemoteConfig([
+            {name: 'list_things', policy: 'auto_run_in_dm', enabled: false},
+        ]));
+        fireEvent.click(screen.getByText('Remote'));
+
+        const allSwitch = screen.getByRole('switch', {name: 'Enable all tools on Remote'});
+        expect(allSwitch.getAttribute('aria-checked')).toBe('false');
+        fireEvent.click(allSwitch);
+
+        expect(onServerConfigChange.mock.calls[0][0].tool_configs).toEqual([
+            {name: 'list_things', policy: 'auto_run_in_dm', enabled: true},
+            {name: 'get_thing', policy: '', enabled: true},
+            {name: 'delete_thing', policy: '', enabled: true},
+        ]);
     });
 });
 
@@ -408,6 +444,26 @@ describe('MCPServerToolRow — unreviewed tools', () => {
 
         fireEvent.click(screen.getByText('Remote'));
         expect((screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    test('disables mark-as-reviewed while search hides tools on the server', () => {
+        const onServerConfigChange = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <MCPServerToolRow
+                    server={remoteServer}
+                    serverConfig={remoteConfig}
+                    onServerConfigChange={onServerConfigChange}
+                    visibleTools={[remoteServer.tools[0]]}
+                    isSearchFiltered={true}
+                />
+            </IntlProvider>,
+        );
+
+        const markReviewed = screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}) as HTMLButtonElement;
+        expect(markReviewed.disabled).toBe(true);
+        fireEvent.click(markReviewed);
+        expect(onServerConfigChange).not.toHaveBeenCalled();
     });
 
     test('offers no mark-as-reviewed once every tool has a chosen policy', () => {
