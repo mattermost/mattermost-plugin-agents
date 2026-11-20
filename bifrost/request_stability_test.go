@@ -37,7 +37,7 @@ func toolNamesOnWire(body map[string]any) []string {
 // sendWithTools sends one request with the given tools through the production
 // client for svc, which rejects it so a local fallback answers, and returns
 // the body svc received.
-func sendWithTools(t *testing.T, svc llm.ServiceConfig, bot llm.BotConfig, tools []llm.Tool) map[string]any {
+func sendWithTools(t *testing.T, svc llm.ServiceConfig, bot llm.BotConfig, tools []llm.Tool, opts ...llm.LanguageModelOption) map[string]any {
 	t.Helper()
 	store := llm.NewToolStore()
 	store.AddTools(tools)
@@ -48,7 +48,7 @@ func sendWithTools(t *testing.T, svc llm.ServiceConfig, bot llm.BotConfig, tools
 	_, err := client.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
 		Context: reqCtx,
-	})
+	}, opts...)
 	require.NoError(t, err)
 	body := loadCaptures(captures)[0]
 	require.NotNil(t, body, "the service must have been called")
@@ -82,6 +82,26 @@ func TestToolsAreSentInStableOrder(t *testing.T) {
 				body := sendWithTools(t, tc.svc, llm.BotConfig{}, tools)
 				assert.Equal(t, want, toolNamesOnWire(body))
 			}
+		})
+	}
+}
+
+// TestServiceTierIsSentToOpenAIOnly checks that a requested processing tier
+// reaches OpenAI hops and is left off providers whose tiers differ.
+func TestServiceTierIsSentToOpenAIOnly(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      llm.ServiceConfig
+		wantTier any
+	}{
+		{name: "OpenAI chat completions", svc: llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, DefaultModel: "gpt-6.1-terra"}, wantTier: "flex"},
+		{name: "OpenAI Responses", svc: llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, DefaultModel: "gpt-6.1-terra", UseResponsesAPI: true}, wantTier: "flex"},
+		{name: "Anthropic", svc: llm.ServiceConfig{Type: llm.ServiceTypeAnthropic, DefaultModel: "claude-sonnet-5-5"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := sendWithTools(t, tc.svc, llm.BotConfig{}, nil, llm.WithServiceTier("flex"))
+			assert.Equal(t, tc.wantTier, body["service_tier"])
 		})
 	}
 }
