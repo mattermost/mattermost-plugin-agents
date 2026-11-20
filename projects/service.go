@@ -280,10 +280,13 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 		Bot:          bot,
 		User:         actor,
 		Channel:      channel,
-		Operation:    llm.OperationProjectSetup,
-		Message:      "Let's set up this project. Tell me what it is for and what done looks like.",
-		Instruction:  "Start the project setup with the people in this channel.",
-		RootProps:    map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectSetup},
+		Operation:   llm.OperationAgentSetup,
+		Message:     "Let's set up this project. Tell me what it is for and what done looks like.",
+		Instruction: "Start the project setup with the people in this channel.",
+		RootProps: map[string]any{
+			conversations.ProjectThreadOperationProp: llm.OperationAgentSetup,
+			agentsetup.RootPostAgentIDProp:           agent.ID,
+		},
 		SystemPrompt: s.setupSystemPrompt,
 	})
 	if err != nil {
@@ -399,6 +402,7 @@ func (s *Service) createAgent(actor *model.User, channel *model.Channel) (*llm.B
 		Model:                 s.deps.Config.ProjectDefaultModel(),
 		ProjectChannelID:      channel.Id,
 		UseServiceAccountAuth: true,
+		ScopedChannelMode:     true,
 		MaxToolTurns:          projectAgentMaxToolTurns,
 	}
 	if err := s.deps.Store.CreateAgent(agent, store.AgentVersionMeta{ActorID: actor.Id, Source: store.AgentVersionSourceCreate}); err != nil {
@@ -696,7 +700,26 @@ func (s *Service) TransferLead(_ context.Context, actorID, channelID, leadUserID
 	if err := s.deps.Store.SetProjectLead(channelID, leadUserID); err != nil {
 		return nil, err
 	}
+	if project.CheckinCron != "" && project.NextCheckinAt == 0 {
+		if err := s.resumeCheckins(project); err != nil {
+			s.deps.Platform.LogError("Failed to resume project check-ins", "channel_id", channelID, "error", err)
+		}
+	}
 	return s.reloadAndPublish(channelID)
+}
+
+// resumeCheckins schedules the next check-in of a project whose check-ins
+// were paused, for example because its lead left.
+func (s *Service) resumeCheckins(project *store.Project) error {
+	schedule, err := ParseSchedule(project.CheckinCron, project.CheckinTimezone)
+	if err != nil {
+		return err
+	}
+	next, ok := schedule.Next(time.Now())
+	if !ok {
+		return errors.New("the schedule never runs")
+	}
+	return s.deps.Store.SetProjectSchedule(project.ChannelID, project.CheckinCron, project.CheckinTimezone, next.UnixMilli())
 }
 
 // UpdateSchedule changes the check-in schedule. An empty cron turns
@@ -961,8 +984,9 @@ func (s *Service) ArtifactActor(project *store.Project) channelartifacts.Actor {
 	return channelartifacts.Actor{UserID: project.AgentBotUserID, BotUserID: project.AgentBotUserID}
 }
 
-// Authorizer wraps base so the members of a live project channel may manage
-// its agent's non-sensitive settings. Sensitive settings stay with base.
+// Authorizer wraps base so a live project's lead, and whoever manages the
+// project channel's roles, may manage its agent's non-sensitive settings.
+// Sensitive settings stay with base.
 func (s *Service) Authorizer(base agentconfig.Authorizer) agentconfig.Authorizer {
 	return projectAuthorizer{base: base, service: s}
 }
@@ -983,14 +1007,7 @@ func (a projectAuthorizer) CanManage(ctx context.Context, actorID string, agent 
 	if err != nil || !project.Live() || project.AgentID != agent.ID {
 		return false
 	}
-	if actorID == project.AgentBotUserID {
-		return true
-	}
-	user, err := a.service.deps.Platform.GetUser(actorID)
-	if err != nil || user.IsGuest() || user.IsBot {
-		return false
-	}
-	return a.service.isMember(project.ChannelID, actorID)
+	return a.service.canLead(actorID, project)
 }
 
 func (a projectAuthorizer) CanManageServiceAccounts(ctx context.Context, actorID string, agent *llm.BotConfig) bool {

@@ -69,7 +69,9 @@ func (b *Builder) projectScope(ctx stdcontext.Context, bot *bots.Bot, channel *m
 
 // projectPluginTools connects the project's plugin MCP servers, the binder
 // ones as the bot and the rest as the requester, and returns their tools
-// wrapped in the project's argument binder.
+// wrapped in the project's argument binder. The binder is the allowlist for
+// these servers, so the agent's EnabledMCPTools does not narrow them; admin,
+// license, and user-disabled server rules in selection still apply.
 func (b *Builder) projectPluginTools(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, requesterID string, selection mcp.ToolSelection) []llm.Tool {
 	runtime := b.projects()
 	if runtime == nil || b.mcpToolProvider == nil {
@@ -79,23 +81,23 @@ func (b *Builder) projectPluginTools(ctx stdcontext.Context, c *llm.Context, bot
 	if err != nil {
 		return nil
 	}
-	cfg := bot.GetConfig()
+	serverRules := selection
+	serverRules.AllowedOrigins = nil
 	fetch := func(identity string, origins []string) []llm.Tool {
 		if identity == "" || len(origins) == 0 {
 			return nil
 		}
 		sel := selection
 		sel.AllowedOrigins = slices.DeleteFunc(slices.Clone(origins), func(origin string) bool {
-			return !selection.Allows(origin)
+			return !serverRules.Allows(origin)
 		})
 		if len(sel.AllowedOrigins) == 0 {
 			return nil
 		}
 		tools, _ := b.mcpToolProvider.GetToolsWithSelection(ctx, mcp.UserCatalogRequest(identity), sel)
-		tools = slices.DeleteFunc(tools, func(tool llm.Tool) bool {
+		return slices.DeleteFunc(tools, func(tool llm.Tool) bool {
 			return !slices.Contains(llm.NormalizeMCPServerOrigins(origins), llm.NormalizeMCPServerOrigin(tool.ServerOrigin))
 		})
-		return llm.FilterMCPToolsByEnabledAllowlist(tools, cfg.EnabledMCPTools)
 	}
 	var tools []llm.Tool
 	tools = append(tools, fetch(bot.BotUserID(), scope.BotPluginOrigins)...)

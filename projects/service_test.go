@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -28,12 +29,15 @@ type memStore struct {
 	projects map[string]*store.Project
 	grants   map[string]store.ProjectGrant
 	deleted  []string
+	agents   []llm.BotConfig
 }
 
 func newMemStore(projects ...*store.Project) *memStore {
 	m := &memStore{projects: map[string]*store.Project{}, grants: map[string]store.ProjectGrant{}}
 	for _, p := range projects {
-		m.projects[p.ChannelID] = p
+		if p != nil {
+			m.projects[p.ChannelID] = p
+		}
 	}
 	return m
 }
@@ -178,8 +182,14 @@ func (m *memStore) RevokeProjectGrant(channelID, targetType, targetID string) er
 	m.grants[key] = g
 	return nil
 }
+
+// CreateAgent gives every agent the fixture bot's ID so the service finds it
+// running.
 func (m *memStore) CreateAgent(cfg *llm.BotConfig, _ store.AgentVersionMeta) error {
-	cfg.ID = model.NewId()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg.ID = "agent"
+	m.agents = append(m.agents, *cfg)
 	return nil
 }
 func (m *memStore) DeleteAgent(id string) error {
@@ -235,7 +245,7 @@ func (f *fakePlatform) GetChannelMember(channelID, userID string) (*model.Channe
 func (f *fakePlatform) SetChannelAdmin(string, string, bool) error { return nil }
 func (f *fakePlatform) BotChannelIDs(string) ([]string, error)     { return f.botChannels, f.channelsErr }
 func (f *fakePlatform) CreateBot(b *model.Bot) error {
-	b.UserId = model.NewId()
+	b.UserId = "botuser"
 	return nil
 }
 func (f *fakePlatform) DeactivateBot(id string) error {
@@ -566,6 +576,91 @@ func TestParseSchedule(t *testing.T) {
 			next, ok := s.Next(from)
 			require.True(t, ok)
 			assert.True(t, tc.want.Equal(next), "got %s", next.UTC())
+		})
+	}
+}
+
+func TestAuthorizerLimitsProjectAgentManagement(t *testing.T) {
+	tests := []struct {
+		name          string
+		enabled       bool
+		actor         string
+		channelAdmins []string
+		mutate        func(p *store.Project)
+		want          bool
+	}{
+		{name: "lead", enabled: true, actor: "lead", want: true},
+		{name: "channel admin", enabled: true, actor: "other", channelAdmins: []string{"other"}, want: true},
+		{name: "plain member", enabled: true, actor: "other"},
+		{name: "guest with channel roles", enabled: true, actor: "guest", channelAdmins: []string{"guest"}},
+		{name: "the agent's own bot", enabled: true, actor: "botuser"},
+		{name: "unknown user", enabled: true, actor: "nobody"},
+		{name: "setting off", actor: "lead"},
+		{name: "ended project", enabled: true, actor: "lead", mutate: func(p *store.Project) { p.State = store.ProjectStateEnded }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := activeProject()
+			if tt.mutate != nil {
+				tt.mutate(project)
+			}
+			f := newFixture(t, tt.enabled, project)
+			f.platform.channelAdmins = tt.channelAdmins
+			f.platform.users["botuser"] = &model.User{Id: "botuser", IsBot: true}
+			agent := f.bot.GetConfig()
+			assert.Equal(t, tt.want, f.svc.Authorizer(nil).CanManage(context.Background(), tt.actor, &agent))
+		})
+	}
+}
+
+func TestCreateProjectAgentRunsScopedWithSetupTools(t *testing.T) {
+	f := newFixture(t, true, nil)
+	project, err := f.svc.CreateProject(context.Background(), "lead", CreateRequest{TeamID: "T", Name: "launch", DisplayName: "Launch"})
+	require.NoError(t, err)
+
+	require.Len(t, f.store.agents, 1)
+	agent := f.store.agents[0]
+	assert.True(t, agent.ScopedChannelMode, "channel turns only get tools on a scoped session")
+	assert.True(t, agent.UseServiceAccountAuth)
+	assert.Equal(t, project.ChannelID, agent.ProjectChannelID)
+	require.NoError(t, agent.Validate())
+
+	require.Len(t, f.threads.calls, 1)
+	setup := f.threads.calls[0]
+	assert.Equal(t, llm.OperationAgentSetup, setup.Operation)
+	assert.Equal(t, llm.OperationAgentSetup, setup.RootProps[conversations.ProjectThreadOperationProp])
+	assert.Equal(t, agent.ID, setup.RootProps[agentsetup.RootPostAgentIDProp])
+}
+
+func TestTransferLeadResumesPausedCheckins(t *testing.T) {
+	tests := []struct {
+		name       string
+		cron       string
+		nextAt     int64
+		wantNextAt func(t *testing.T, nextAt int64)
+	}{
+		{name: "paused check-ins resume", cron: "0 9 * * 1", wantNextAt: func(t *testing.T, nextAt int64) {
+			assert.Greater(t, nextAt, time.Now().UnixMilli())
+		}},
+		{name: "scheduled check-ins keep their time", cron: "0 9 * * 1", nextAt: 42, wantNextAt: func(t *testing.T, nextAt int64) {
+			assert.Equal(t, int64(42), nextAt)
+		}},
+		{name: "no schedule stays off", wantNextAt: func(t *testing.T, nextAt int64) {
+			assert.Zero(t, nextAt)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := activeProject()
+			project.CheckinCron, project.CheckinTimezone, project.NextCheckinAt = tt.cron, "UTC", tt.nextAt
+			f := newFixture(t, true, project)
+
+			got, err := f.svc.TransferLead(context.Background(), "lead", "P", "other")
+			require.NoError(t, err)
+			assert.Equal(t, "other", got.LeadUserID)
+			stored, err := f.store.GetProject("P")
+			require.NoError(t, err)
+			tt.wantNextAt(t, stored.NextCheckinAt)
 		})
 	}
 }

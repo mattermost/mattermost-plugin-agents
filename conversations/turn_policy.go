@@ -125,9 +125,6 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 	}
 
 	p := &turnPolicy{c: c, turnRequest: req, isDM: isDM}
-	if req.conv != nil {
-		p.operation = req.conv.Operation
-	}
 	initiator, initiatingUser := req.trigger, req.user
 	if req.trigger == nil {
 		var err error
@@ -217,6 +214,15 @@ func (c *Conversations) runInitiator(conv *store.Conversation, post *model.Post)
 		return nil, nil, fmt.Errorf("failed to get the run's initiating user: %w", err)
 	}
 	return initiator, initiatingUser, nil
+}
+
+// effectiveOperation is the operation of the turn's conversation, or of the
+// conversation a new thread's first turn will create.
+func (p *turnPolicy) effectiveOperation() string {
+	if p.conv != nil {
+		return p.conv.Operation
+	}
+	return p.operation
 }
 
 // isAnalysisOperation reports whether conversations of operation replay
@@ -357,7 +363,8 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
 	}
-	opts = append(opts, builder.WithLLMContextSkills(p.conv == nil || p.conv.Operation == llm.OperationConversation))
+	operation := p.effectiveOperation()
+	opts = append(opts, builder.WithLLMContextSkills(operation == "" || operation == llm.OperationConversation))
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
@@ -371,7 +378,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		llmContext.ReleaseScopedSession()
 		return nil, fmt.Errorf("failed to load skills: %w", err)
 	}
-	if tools, ok := p.c.registeredOperation(p.operation); ok && tools != nil {
+	if tools, ok := p.c.registeredOperation(operation); ok && tools != nil {
 		if llmContext.Tools == nil {
 			llmContext.Tools = llm.NewToolStore()
 		}

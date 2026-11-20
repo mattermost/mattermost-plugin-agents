@@ -56,6 +56,14 @@ func requestToolNames(t *testing.T, env *dmTestEnv, index int) []string {
 	return visibleToolNames(env.fakeLLM.requests[index].Context)
 }
 
+func requestSkillsEnabled(t *testing.T, env *dmTestEnv, index int) bool {
+	t.Helper()
+	env.fakeLLM.mu.Lock()
+	defer env.fakeLLM.mu.Unlock()
+	require.Greater(t, len(env.fakeLLM.requests), index)
+	return env.fakeLLM.requests[index].Context.ToolCatalog.SkillsEnabled
+}
+
 func userTurnTexts(t *testing.T, env *dmTestEnv, convID string) []string {
 	t.Helper()
 	var texts []string
@@ -139,6 +147,7 @@ func TestStartAgentThread(t *testing.T) {
 
 			assert.Contains(t, requestToolNames(t, env, 0), "op_tool", "the operation's tools are offered on the first turn")
 			assert.Equal(t, 1, tools.callCount(), "the operation's tool ran for the requester")
+			assert.False(t, requestSkillsEnabled(t, env, 0), "user skills are not offered on an operation's first turn")
 
 			env.fakeLLM.mu.Lock()
 			interactive := env.fakeLLM.requests[0].Context.ToolCatalog.InteractiveUserPresent
@@ -178,6 +187,8 @@ func TestStartAgentThreadReplyContinuesWithOperationTools(t *testing.T) {
 	conv := searchConversation(t, env, thread.RootPost.Id)
 	assert.Equal(t, []string{"Help me set this up", "Call yourself Helper"}, userTurnTexts(t, env, conv.ID))
 	assert.Contains(t, requestToolNames(t, env, 1), "op_tool", "replies keep the operation's tools")
+	assert.False(t, requestSkillsEnabled(t, env, 0), "no skills on the first turn")
+	assert.False(t, requestSkillsEnabled(t, env, 1), "no skills on replies")
 }
 
 func TestOperationToolsOnlyInTheirOperation(t *testing.T) {
@@ -193,6 +204,7 @@ func TestOperationToolsOnlyInTheirOperation(t *testing.T) {
 	waitForStreamFinished(t, env)
 
 	assert.NotContains(t, requestToolNames(t, env, 0), "op_tool")
+	assert.True(t, requestSkillsEnabled(t, env, 0), "ordinary conversations keep skills")
 }
 
 func TestStartAgentThreadRefusals(t *testing.T) {

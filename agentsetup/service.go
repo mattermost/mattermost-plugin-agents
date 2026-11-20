@@ -202,16 +202,24 @@ func isRequesterDM(botUserID string, llmCtx *llm.Context) bool {
 		channel.Name == model.GetDMNameFromIds(botUserID, llmCtx.RequestingUser.Id)
 }
 
+// inClaimedProjectChannel reports whether llmCtx is an attended turn in the
+// project channel of a project agent an extension claims.
+func (s *Service) inClaimedProjectChannel(agent *llm.BotConfig, llmCtx *llm.Context) bool {
+	return agent.IsProjectAgent() && llmCtx.Channel != nil && llmCtx.Channel.Id == agent.ProjectChannelID &&
+		llmCtx.ToolCatalog.InteractiveUserPresent && s.extensionFor(agent) != nil
+}
+
 // OperationTools returns the setup tools for a turn of a setup conversation.
 // They are offered only in the requester's DM with a user-created agent the
-// requester may manage, while setup is enabled for it; each call re-checks
+// requester may manage, or, for a project agent, in an attended turn in its
+// project channel, while setup is enabled for it; each call re-checks
 // authorization at the time it runs.
 func (s *Service) OperationTools(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context) []llm.Tool {
 	if bot == nil || llmCtx == nil || llmCtx.RequestingUser == nil {
 		return nil
 	}
 	agent := bot.GetConfig()
-	if agent.ID == "" || !isRequesterDM(bot.BotUserID(), llmCtx) {
+	if agent.ID == "" || (!isRequesterDM(bot.BotUserID(), llmCtx) && !s.inClaimedProjectChannel(&agent, llmCtx)) {
 		return nil
 	}
 	ext, enabled := s.enabledFor(&agent)
