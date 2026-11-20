@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/external/pluginmcp"
@@ -24,7 +25,10 @@ const pluginReconcileTimeout = 10 * time.Second
 // register again; the registration then arrives through the bridge register
 // route. A source plugin built before it could be asked does not acknowledge
 // the request, so its MCP endpoint is probed instead and, when it answers, the
-// known entry is promoted directly. It reports whether the entry was promoted.
+// known entry is promoted directly. If the probe is rejected with 401 or 403
+// (for example, an endpoint that requires a user context), the server stays
+// unpromoted and waits for the plugin's own registration. It reports whether
+// the entry was promoted.
 //
 // Nothing is contacted when pluginID is not a known, non-live entry, when
 // remote and plugin MCP servers are not licensed, or when the source plugin
@@ -47,7 +51,8 @@ func (m *ClientManager) ReconcileKnownPluginServer(ctx context.Context, pluginID
 
 	ctx, cancel := context.WithTimeout(ctx, pluginReconcileTimeout)
 	defer cancel()
-	httpClient := PluginServerHTTPClient(NewPluginHTTPRoundTripper(pluginID, cfg.Path, m.sourcePluginAPI), "")
+	baseTransport := NewPluginHTTPRoundTripper(pluginID, cfg.Path, m.sourcePluginAPI)
+	httpClient := PluginServerHTTPClient(baseTransport, "")
 
 	acknowledged, err := requestPluginReregister(ctx, httpClient, cfg.Path)
 	if err != nil {
@@ -57,14 +62,44 @@ func (m *ClientManager) ReconcileKnownPluginServer(ctx context.Context, pluginID
 		return false, nil
 	}
 
-	session, err := ConnectPluginServer(ctx, "mattermost-agents-probe", cfg.Path, httpClient)
+	probeTransport := &probeStatusRoundTripper{base: baseTransport}
+	session, err := ConnectPluginServer(ctx, "mattermost-agents-probe", cfg.Path, PluginServerHTTPClient(probeTransport, ""))
 	if err != nil {
+		if ctx.Err() == nil {
+			if status := int(probeTransport.lastPostStatus.Load()); status == http.StatusUnauthorized || status == http.StatusForbidden {
+				m.log.Debug("Plugin MCP server probe requires user authentication; waiting for plugin registration",
+					"plugin_id", pluginID,
+					"status", status,
+				)
+				return false, nil
+			}
+		}
 		return false, fmt.Errorf("probe plugin MCP server: %w", err)
 	}
 	if closeErr := session.Close(); closeErr != nil {
 		m.log.Debug("Failed to close plugin MCP probe session", "plugin_id", pluginID, "error", closeErr.Error())
 	}
 	return m.PromoteKnownPluginServer(pluginID), nil
+}
+
+// probeStatusRoundTripper records the HTTP status of the most recent POST
+// response during a startup probe so auth rejections (401/403) can be
+// distinguished from server or protocol failures without parsing SDK error
+// strings.
+type probeStatusRoundTripper struct {
+	base           http.RoundTripper
+	lastPostStatus atomic.Int32
+}
+
+func (t *probeStatusRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodPost {
+		t.lastPostStatus.Store(0)
+	}
+	resp, err := t.base.RoundTrip(req)
+	if req.Method == http.MethodPost && resp != nil {
+		t.lastPostStatus.Store(int32(resp.StatusCode))
+	}
+	return resp, err
 }
 
 // requestPluginReregister sends the re-register request to a source plugin's
