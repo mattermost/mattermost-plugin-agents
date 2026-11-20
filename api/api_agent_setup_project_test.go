@@ -224,6 +224,15 @@ func TestProjectLeadSetsUpTheProjectAgentWithoutAgentPermissions(t *testing.T) {
 				return
 			}
 
+			// Other members' posts are in a project thread's context, so every
+			// write asks the lead even though project turns run tools unasked.
+			for _, name := range []string{agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName, agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup} {
+				tool := setupTool(t, tools, name)
+				assert.True(t, tool.AlwaysAsk, name)
+				assert.False(t, tool.AutoExecute, name)
+			}
+			assert.False(t, setupTool(t, tools, agentsetup.ToolGetMyConfig).AlwaysAsk, "reading the configuration doesn't ask")
+
 			_, err := callSetupTool(t, setupTool(t, tools, agentsetup.ToolUpdateMyInstructions), llmCtx, map[string]any{"instructions": setupNewPromptText})
 			require.NoError(t, err)
 			_, err = callSetupTool(t, setupTool(t, tools, agentsetup.ToolSetMyDisplayName), llmCtx, map[string]any{"display_name": "Launch crew"})

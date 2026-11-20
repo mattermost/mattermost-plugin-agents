@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 )
 
@@ -120,10 +121,38 @@ func (b *Binder) Bind(tools []llm.Tool) []llm.Tool {
 	return bound
 }
 
-// bind matches rules on the bare tool name; catalogs namespace MCP tools by
-// server, and the bound tool keeps its namespaced name.
+// projectEmbeddedTools are the embedded Mattermost tools a project agent
+// uses. The scoped session still limits them to the project's channels, and
+// the writes to what its write grant covers.
+var projectEmbeddedTools = []string{
+	"read_channel", "read_post", "search_posts", "get_channel_info", "get_user", "get_user_by_username",
+	"list_channel_bookmarks", "list_channel_artifacts", "get_channel_artifact",
+	"add_reaction", "create_channel_bookmark", "update_channel_bookmark",
+}
+
+// ProjectEmbeddedTools is a project agent's embedded Mattermost allowlist.
+func ProjectEmbeddedTools() []llm.EnabledMCPTool {
+	tools := make([]llm.EnabledMCPTool, 0, len(projectEmbeddedTools))
+	for _, name := range projectEmbeddedTools {
+		tools = append(tools, llm.EnabledMCPTool{ServerOrigin: mcp.EmbeddedClientKey, ToolName: name})
+	}
+	return tools
+}
+
+// pluginToolName is the plugin's own name for an MCP tool. Catalogs prefix
+// it with the server namespace, and plugins add their own prefix, as in
+// boards__com_mattermost_boardsv2__create_board.
+func pluginToolName(name string) string {
+	if _, tool, found := strings.CutLast(name, llm.MCPToolNameSeparator); found {
+		return tool
+	}
+	return name
+}
+
+// bind matches rules on the plugin's tool name; the bound tool keeps its
+// namespaced name. The server origin, not the name prefix, picks the rules.
 func (b *Binder) bind(tool llm.Tool) (llm.Tool, bool) {
-	name := llm.BareMCPToolName(tool.Name)
+	name := pluginToolName(tool.Name)
 	switch llm.NormalizeMCPServerOrigin(tool.ServerOrigin) {
 	case BoardsOrigin:
 		return b.bindBoards(tool, name)

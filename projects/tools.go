@@ -149,6 +149,8 @@ func (s *Service) startCursorThreadTool(bot *bots.Bot, project *store.Project) l
 		Name:        ToolStartCursorThread,
 		Description: "Open a run thread in the project channel for a Cursor cloud agent working on one coding task. The Cursor run itself is started from that thread with the requester's approval.",
 		Schema:      llm.NewJSONSchemaFromStruct[startCursorThreadArgs](),
+		// The requester approves the title and description that seed the run.
+		AlwaysAsk: true,
 		Resolver: func(ctx context.Context, llmCtx *llm.Context, get llm.ToolArgumentGetter) (string, error) {
 			var args startCursorThreadArgs
 			if err := get(&args); err != nil {
@@ -177,7 +179,7 @@ func (s *Service) startCursorThreadTool(bot *bots.Bot, project *store.Project) l
 				Channel:     llmCtx.Channel,
 				Operation:   llm.OperationProjectRun,
 				Message:     "Cursor run: " + title,
-				Instruction: "Plan this Cursor run and ask the requester to confirm it here before you start the Cursor agent:\n\n" + args.Description,
+				Instruction: runKickoffInstruction(args.Description),
 				RootProps:   map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectRun},
 			})
 			if err != nil {

@@ -740,6 +740,9 @@ func (p *Plugin) OnActivate() error {
 	apiService.AgentConfigService().SetAuthorizer(projectsService.Authorizer(apiService.AgentConfigService().Authorizer()))
 	apiService.SetProjects(projectsService)
 	p.projects = projectsService
+	if err := projectsService.BackfillAgentTools(); err != nil {
+		p.API.LogError("Failed to give project agents their tools", "error", err.Error())
+	}
 	projectsService.StartCheckinTicker()
 
 	// Apply OpenTelemetry config now and re-apply on every config change so

@@ -1225,10 +1225,13 @@ func TestDeleteAgentOnlyDeletesRetiredProjectAgents(t *testing.T) {
 		project     *store.Project
 		wantDeleted bool
 	}{
-		{name: "provisioning", project: &store.Project{State: store.ProjectStateProvisioning}},
-		{name: "active", project: &store.Project{State: store.ProjectStateActive}},
-		{name: "ending", project: &store.Project{State: store.ProjectStateEnding}},
-		{name: "ended", project: &store.Project{State: store.ProjectStateEnded}, wantDeleted: true},
+		// CreateProject records the agent on the project after creating it.
+		{name: "provisioning, before the agent is recorded", project: &store.Project{State: store.ProjectStateProvisioning}},
+		{name: "provisioning", project: &store.Project{State: store.ProjectStateProvisioning, AgentID: "agent-1"}},
+		{name: "active", project: &store.Project{State: store.ProjectStateActive, AgentID: "agent-1"}},
+		{name: "ending", project: &store.Project{State: store.ProjectStateEnding, AgentID: "agent-1"}},
+		{name: "ended", project: &store.Project{State: store.ProjectStateEnded, AgentID: "agent-1"}, wantDeleted: true},
+		{name: "active with another agent", project: &store.Project{State: store.ProjectStateActive, AgentID: "agent-2"}, wantDeleted: true},
 		{name: "never finished being created", wantDeleted: true},
 	}
 	for _, tt := range tests {
@@ -1245,7 +1248,7 @@ func TestDeleteAgentOnlyDeletesRetiredProjectAgents(t *testing.T) {
 			project := &store.Project{ChannelID: "elsewhere"}
 			if tt.project != nil {
 				project = tt.project
-				project.ChannelID, project.AgentID = channelID, "agent-1"
+				project.ChannelID = channelID
 			}
 			e.api.SetProjects(projects.New(projects.Deps{
 				Store:     projectStoreStub{project: project},

@@ -93,6 +93,15 @@ func dropAlwaysAskTools(llmContext *llm.Context) {
 	llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool { return !tool.AlwaysAsk })
 }
 
+// keepReadOnlyTools leaves an unattended run-thread turn, whose task came
+// from the model, only tools that read until a person replies in the thread.
+func keepReadOnlyTools(llmContext *llm.Context) {
+	if llmContext == nil || llmContext.Tools == nil {
+		return
+	}
+	llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool { return tool.ReadOnly })
+}
+
 // ProjectThreadOperationProp records, on the root post of a thread a project
 // agent started, the conversation operation replies in the thread continue.
 // Only roots the agent itself posted are trusted.

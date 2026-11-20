@@ -76,6 +76,8 @@ type Store interface {
 	ListProjectGrants(channelID string) ([]store.ProjectGrant, error)
 	RevokeProjectGrant(channelID, targetType, targetID string) error
 	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
+	ListAgents() ([]*llm.BotConfig, error)
+	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
 }
 
@@ -406,6 +408,7 @@ func (s *Service) createAgent(actor *model.User, channel *model.Channel) (*llm.B
 		UseServiceAccountAuth: true,
 		ScopedChannelMode:     true,
 		MaxToolTurns:          projectAgentMaxToolTurns,
+		EnabledMCPTools:       ProjectEmbeddedTools(),
 	}
 	if err := s.deps.Store.CreateAgent(agent, store.AgentVersionMeta{ActorID: actor.Id, Source: store.AgentVersionSourceCreate}); err != nil {
 		if deactivateErr := s.deps.Platform.DeactivateBot(mmBot.UserId); deactivateErr != nil {
@@ -909,6 +912,32 @@ func (s *Service) CheckTurn(_ context.Context, bot *bots.Bot, channel *model.Cha
 	return nil
 }
 
+// BackfillAgentTools gives project agents created before their embedded
+// Mattermost tools were seeded those tools. An agent with any MCP tool, or
+// with tools turned off, is left alone.
+func (s *Service) BackfillAgentTools() error {
+	agents, err := s.deps.Store.ListAgents()
+	if err != nil {
+		return err
+	}
+	updated := false
+	for _, agent := range agents {
+		if !agent.IsProjectAgent() || agent.DisableTools || agent.AutoEnableNewMCPTools || len(agent.EnabledMCPTools) > 0 {
+			continue
+		}
+		next := *agent
+		next.EnabledMCPTools = ProjectEmbeddedTools()
+		if err := s.deps.Store.UpdateAgent(&next, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem}); err != nil {
+			return fmt.Errorf("failed to give project agent %s its tools: %w", agent.ID, err)
+		}
+		updated = true
+	}
+	if updated {
+		return s.deps.Bots.EnsureBots()
+	}
+	return nil
+}
+
 // AgentRetired reports whether agent no longer leads a live project.
 func (s *Service) AgentRetired(agent *llm.BotConfig) (bool, error) {
 	if agent == nil || !agent.IsProjectAgent() {
@@ -921,7 +950,15 @@ func (s *Service) AgentRetired(agent *llm.BotConfig) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return project.State == store.ProjectStateEnded || project.AgentID != agent.ID, nil
+	switch project.State {
+	case store.ProjectStateEnded:
+		return true, nil
+	case store.ProjectStateProvisioning:
+		// CreateProject records the agent on the project only after creating it.
+		return false, nil
+	default:
+		return project.AgentID != agent.ID, nil
+	}
 }
 
 // SystemPromptSuffix implements conversations.ProjectGate.
@@ -973,7 +1010,7 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 	return BinderCallbacks{
 		Current: s.deps.Store.GetProject,
 		BoardCreated: func(_ context.Context, project *store.Project, boardChannelID string) error {
-			if err := s.deps.Store.SetProjectBoard(project.ChannelID, boardChannelID); err != nil {
+			if err := s.linkOnce(project.ChannelID, boardChannelID, s.deps.Store.SetProjectBoard, func(p *store.Project) string { return p.BoardChannelID }); err != nil {
 				return err
 			}
 			if err := s.grantChannelAdmin(project.ChannelID, boardChannelID, bot.BotUserID()); err != nil {
@@ -983,13 +1020,30 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 			return nil
 		},
 		RunCreated: func(_ context.Context, project *store.Project, runID string) error {
-			if err := s.deps.Store.SetProjectRun(project.ChannelID, runID); err != nil {
+			if err := s.linkOnce(project.ChannelID, runID, s.deps.Store.SetProjectRun, func(p *store.Project) string { return p.PlaybookRunID }); err != nil {
 				return err
 			}
 			s.broadcast(project.ChannelID)
 			return nil
 		},
 	}
+}
+
+// linkOnce records id with set, and accepts a link that already holds the
+// same id, so a retry after a later step failed can finish that step.
+func (s *Service) linkOnce(channelID, id string, set func(channelID, id string) error, linked func(*store.Project) string) error {
+	err := set(channelID, id)
+	if !errors.Is(err, store.ErrProjectLinkSet) {
+		return err
+	}
+	project, getErr := s.deps.Store.GetProject(channelID)
+	if getErr != nil {
+		return getErr
+	}
+	if project.State == store.ProjectStateEnded || linked(project) != id {
+		return err
+	}
+	return nil
 }
 
 // OperationTools implements conversations.OperationTools for the project

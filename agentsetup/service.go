@@ -228,12 +228,19 @@ func (s *Service) OperationTools(ctx context.Context, bot *bots.Bot, llmCtx *llm
 	}
 
 	tools := s.setupTools(agent.ID)
-	if ext != nil {
-		for i := range tools {
-			if !tools[i].AutoExecute {
-				tools[i].AutoExecute = ext.AutoExecute(&agent, tools[i].Name)
-			}
+	// Outside the requester's DM other people's posts are in context, so every
+	// write asks the requester, even on a turn that runs tools unasked.
+	shared := !isRequesterDM(bot.BotUserID(), llmCtx)
+	for i := range tools {
+		switch {
+		case tools[i].AutoExecute:
+		case shared:
+			tools[i].AlwaysAsk = true
+		case ext != nil:
+			tools[i].AutoExecute = ext.AutoExecute(&agent, tools[i].Name)
 		}
+	}
+	if ext != nil {
 		tools = append(tools, ext.Tools(ctx, &agent, llmCtx)...)
 	}
 	return tools

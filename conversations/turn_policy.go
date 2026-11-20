@@ -402,6 +402,9 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if p.scoped && !p.interactive {
 		dropAlwaysAskTools(llmContext)
 	}
+	if p.bot.IsProjectAgent() && !p.interactive && operation == llm.OperationProjectRun {
+		keepReadOnlyTools(llmContext)
+	}
 	return llmContext, nil
 }
 

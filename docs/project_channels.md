@@ -22,14 +22,16 @@ The agent is limited to its project:
 
 - It reads and writes only the project channel and its board channel. If its bot account is found in any other channel, every turn is refused until it is removed. The exception is the team's default channel (usually Town Square), which Mattermost keeps every team member in; the agent still can't read it.
 - It saves and removes artifacts in the project channel without asking for approval.
+- Its Mattermost tools are reading the project's channels, posts, users, bookmarks and artifacts, adding reactions, and creating and updating bookmarks in the project channel. New project agents get this list when they're created, and existing ones get it when the plugin starts.
 - Board tools are bound to the project's board, and checklist tools to the project's run. It can create one board and one checklist, and can't delete cards, list other boards, or change views and fields.
-- Starting a Cursor run or adding a follow-up always asks the person who requested it, runs as that person once approved, and is never offered when nobody is present to approve it.
+- Opening a Cursor run thread, starting a Cursor run and adding a follow-up always ask the person who requested them. Cursor tools run as that person once approved, and are never offered when nobody is present to approve them. Until someone replies in a new run thread, the agent can only read there.
+- In a project channel, changing the agent's own instructions, name or tools, or completing setup, always asks the person who requested it.
 - It treats the status note as information from the channel, not as instructions, and doesn't see the note in the setup thread, where it can change its own instructions.
-- Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list. They can't be changed or deleted from the agent settings while the project is running; end the project instead. If a project agent remains after its project ended, it can be deleted from the agent settings.
+- Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list. Their bot accounts are regular Mattermost bot accounts, so the Mattermost MCP server's `list_bots` and `get_bot` tools still return them. They can't be changed or deleted from the agent settings while the project is running; end the project instead. If a project agent remains after its project ended, it can be deleted from the agent settings.
 
 ## Check-ins
 
-The project lead can set a check-in schedule as a five-field cron expression (minute, hour, day of month, month, weekday) in a time zone. At each check-in the agent posts a short update in a new thread, acting on behalf of the lead. Check-ins pause when the lead leaves the channel or becomes a guest; transfer the lead to resume them.
+The project lead can set a check-in schedule from the project panel as a five-field cron expression (minute, hour, day of month, month, weekday) in a time zone. The agent can't change the schedule. At each check-in the agent posts a short update in a new thread, acting on behalf of the lead. Check-ins pause when the lead leaves the channel or becomes a guest; transfer the lead to resume them.
 
 ## Ending a project
 

@@ -241,16 +241,19 @@ func TestOnceOnlyCreateDoesNotHoldTheLockAcrossTheCall(t *testing.T) {
 func TestBinderMatchesNamespacedCatalogNames(t *testing.T) {
 	project := &store.Project{ChannelID: "P", TeamID: "T", State: store.ProjectStateActive, BoardChannelID: "B", PlaybookRunID: "R"}
 	tests := []struct {
-		origin, slug, bare string
-		wantArgs           map[string]any
+		origin, prefix, tool string
+		wantArgs             map[string]any
+		wantAlwaysAsk        bool
 	}{
-		{origin: BoardsOrigin, slug: "boards", bare: "list_cards", wantArgs: map[string]any{"board_id": "B"}},
-		{origin: PlaybooksOrigin, slug: "playbooks", bare: "check_item", wantArgs: map[string]any{"run_id": "R"}},
-		{origin: CursorOrigin, slug: "cursor", bare: "create_agent", wantArgs: map[string]any{}},
+		// Prefixes as plugins name their tools, under the server namespace.
+		{origin: BoardsOrigin, prefix: "boards__com_mattermost_boardsv2", tool: "list_cards", wantArgs: map[string]any{"board_id": "B"}},
+		{origin: PlaybooksOrigin, prefix: "playbooks__playbooks", tool: "check_item", wantArgs: map[string]any{"run_id": "R"}},
+		{origin: CursorOrigin, prefix: "cursor_cloud_agents__com_mattermost_plugin-cursor", tool: "create_agent", wantArgs: map[string]any{}, wantAlwaysAsk: true},
+		{origin: BoardsOrigin, prefix: "boards", tool: "list_cards", wantArgs: map[string]any{"board_id": "B"}},
 	}
 	for _, tc := range tests {
-		t.Run(tc.bare, func(t *testing.T) {
-			name := llm.NamespaceMCPToolName(tc.slug, tc.bare)
+		t.Run(tc.prefix+"__"+tc.tool, func(t *testing.T) {
+			name := tc.prefix + llm.MCPToolNameSeparator + tc.tool
 			var props []string
 			for key := range tc.wantArgs {
 				props = append(props, key)
@@ -258,12 +261,31 @@ func TestBinderMatchesNamespacedCatalogNames(t *testing.T) {
 			var got map[string]any
 			tool := recordingTool(tc.origin, name, props, "ok", &got)
 
-			bound := NewBinder(project, true, BinderCallbacks{}).Bind([]llm.Tool{tool, recordingTool(tc.origin, llm.NamespaceMCPToolName(tc.slug, "delete_everything"), nil, "ok", &got)})
+			bound := NewBinder(project, true, BinderCallbacks{}).Bind([]llm.Tool{tool, recordingTool(tc.origin, tc.prefix+llm.MCPToolNameSeparator+"delete_everything", nil, "ok", &got)})
 			require.Len(t, bound, 1, "the known tool is kept and the unknown one dropped")
 			assert.Equal(t, name, bound[0].Name, "the bound tool keeps its catalog name")
+			assert.Equal(t, tc.wantAlwaysAsk, bound[0].AlwaysAsk)
 			_, err := callTool(t, bound[0], map[string]any{})
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantArgs, got)
+		})
+	}
+}
+
+func TestBinderCreatesWithPluginNamespacedNames(t *testing.T) {
+	tests := []struct {
+		name, origin, tool string
+	}{
+		{name: "board", origin: BoardsOrigin, tool: "boards__com_mattermost_boardsv2__create_board"},
+		{name: "checklist", origin: PlaybooksOrigin, tool: "playbooks__playbooks__create_checklist"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			project := &store.Project{ChannelID: "P", TeamID: "T", State: store.ProjectStateActive}
+			var got map[string]any
+			bound := NewBinder(project, true, BinderCallbacks{}).Bind([]llm.Tool{recordingTool(tc.origin, tc.tool, []string{"channel_id"}, "ok", &got)})
+			require.Len(t, bound, 1, "the once-only create is offered")
+			assert.Equal(t, tc.tool, bound[0].Name)
 		})
 	}
 }

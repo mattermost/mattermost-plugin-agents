@@ -127,6 +127,8 @@ type scopedTestEnv struct {
 	builder       *llmcontext.Builder
 	mm            *fakeMMClient
 	botConfig     llm.BotConfig
+	bot           *bots.Bot
+	lm            *dmTestLLM
 
 	toolRuns int
 	runsMu   sync.Mutex
@@ -286,12 +288,14 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	if opts.projectAgent {
 		env.botConfig.ProjectChannelID = channel.Id
 	}
-	conversations.SetBotsWithAccounts(mockAPI, botService, bots.NewBot(
+	env.lm = newDMTestLLM(llmResponses...)
+	env.bot = bots.NewBot(
 		env.botConfig,
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername, DisplayName: "Scoped Bot"},
-		newDMTestLLM(llmResponses...),
-	))
+		env.lm,
+	)
+	conversations.SetBotsWithAccounts(mockAPI, botService, env.bot)
 
 	requesterRoles := model.SystemUserRoleId
 	if opts.guestRequester {
@@ -780,4 +784,59 @@ func TestProjectTurnRefusedWithoutAScopedSession(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	assert.Empty(t, env.streaming.streamedPosts)
+}
+
+type projectRunRuntime struct{}
+
+func (projectRunRuntime) Scope(context.Context, *bots.Bot, *model.Channel) (llmcontext.ProjectScope, error) {
+	return llmcontext.ProjectScope{WriteChannelIDs: []string{scopedChannelID}}, nil
+}
+
+func (projectRunRuntime) BindPluginTools(context.Context, *bots.Bot, *llm.Context, []llm.Tool) []llm.Tool {
+	return nil
+}
+
+type projectRunTools struct{}
+
+func (projectRunTools) OperationTools(context.Context, *bots.Bot, *llm.Context) []llm.Tool {
+	noop := func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }
+	return []llm.Tool{
+		{Name: "update_project_status_note", AutoExecute: true, Resolver: noop},
+		{Name: "read_project", ReadOnly: true, Resolver: noop},
+	}
+}
+
+// The opening turn of a run thread works from a task the model wrote, so
+// until someone replies it gets only tools that read.
+func TestProjectRunThreadKickoffOnlyReads(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "launch"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{projectAgent: true}, dmMakeTextStream("Here is the plan; shall I start it?"))
+	env.builder.SetProjectRuntime(projectRunRuntime{})
+	env.conversations.RegisterOperation(llm.OperationProjectRun, projectRunTools{})
+
+	_, err := env.conversations.StartAgentThread(context.Background(), conversations.AgentThreadRequest{
+		Bot:         env.bot,
+		User:        env.mm.users[scopedUserID],
+		Channel:     channel,
+		Operation:   llm.OperationProjectRun,
+		Message:     "Cursor run: fix the login bug",
+		Instruction: "Plan this run.",
+	})
+	require.NoError(t, err)
+	select {
+	case <-env.streaming.finished:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the kickoff did not finish")
+	}
+
+	env.lm.mu.Lock()
+	requests := slices.Clone(env.lm.requests)
+	env.lm.mu.Unlock()
+	require.Len(t, requests, 1)
+	require.NotNil(t, requests[0].Context.Tools)
+	var names []string
+	for _, tool := range requests[0].Context.Tools.GetTools() {
+		names = append(names, tool.Name)
+	}
+	assert.Equal(t, []string{"read_project"}, names, "no project-changing or remote tools before a person replies")
 }
