@@ -693,7 +693,6 @@ const McpsTab = (props: Props) => {
                     <MCPServerAccordion
                         key={server.serverOrigin}
                         serverName={server.name}
-                        serverIdKey={server.serverOrigin}
                         serverType={server.kind}
                         meta={(
                             <>

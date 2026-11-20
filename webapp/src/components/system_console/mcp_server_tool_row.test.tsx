@@ -446,6 +446,26 @@ describe('MCPServerToolRow — unreviewed tools', () => {
         expect((screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}) as HTMLButtonElement).disabled).toBe(false);
     });
 
+    test('disables mark-as-reviewed while search hides tools on the server', () => {
+        const onServerConfigChange = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <MCPServerToolRow
+                    server={remoteServer}
+                    serverConfig={remoteConfig}
+                    onServerConfigChange={onServerConfigChange}
+                    visibleTools={[remoteServer.tools[0]]}
+                    isSearchFiltered={true}
+                />
+            </IntlProvider>,
+        );
+
+        const markReviewed = screen.getByRole('button', {name: 'Mark tools on Remote as reviewed'}) as HTMLButtonElement;
+        expect(markReviewed.disabled).toBe(true);
+        fireEvent.click(markReviewed);
+        expect(onServerConfigChange).not.toHaveBeenCalled();
+    });
+
     test('offers no mark-as-reviewed once every tool has a chosen policy', () => {
         renderUnreviewed(remoteServer, {...remoteConfig, tool_configs: remoteServer.tools.map((tool) => ({name: tool.name, policy: 'ask' as const, enabled: true}))});
 

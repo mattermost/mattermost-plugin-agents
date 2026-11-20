@@ -820,10 +820,38 @@ func TestCollectToolsFromSnapshotsPreservesReadOnlyHintAndSchema(t *testing.T) {
 		byBareName[llm.BareMCPToolName(tool.Name)] = tool
 	}
 
-	require.True(t, byBareName["list_items"].ReadOnlyHint)
-	require.Equal(t, schema, byBareName["list_items"].Schema)
-	require.False(t, byBareName["delete_item"].ReadOnlyHint)
-	require.Equal(t, schema, byBareName["delete_item"].Schema)
-	require.False(t, byBareName["plain_tool"].ReadOnlyHint)
-	require.Nil(t, byBareName["plain_tool"].Schema)
+	tests := []struct {
+		name             string
+		toolName         string
+		wantReadOnlyHint bool
+		wantSchema       any
+	}{
+		{
+			name:             "readOnlyHint true with schema",
+			toolName:         "list_items",
+			wantReadOnlyHint: true,
+			wantSchema:       schema,
+		},
+		{
+			name:             "readOnlyHint false with schema",
+			toolName:         "delete_item",
+			wantReadOnlyHint: false,
+			wantSchema:       schema,
+		},
+		{
+			name:             "absent annotations and nil schema",
+			toolName:         "plain_tool",
+			wantReadOnlyHint: false,
+			wantSchema:       nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, ok := byBareName[tt.toolName]
+			require.True(t, ok, "expected tool %q to be collected", tt.toolName)
+			require.Equal(t, tt.wantReadOnlyHint, tool.ReadOnlyHint)
+			require.Equal(t, tt.wantSchema, tool.Schema)
+		})
+	}
 }

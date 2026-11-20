@@ -261,12 +261,13 @@ const MCPServerToolRow = ({
         );
     };
 
+    const markReviewedDisabledByVisibility = !expanded || isSearchFiltered;
     const markReviewedButton = (
         <Button
             emphasis='secondary'
             size='small'
             onClick={handleMarkReviewed}
-            disabled={readOnly || !serverEnabled || !expanded}
+            disabled={readOnly || !serverEnabled || markReviewedDisabledByVisibility}
             aria-label={intl.formatMessage({defaultMessage: 'Mark tools on {serverName} as reviewed'}, {serverName: server.name})}
         >
             <FormattedMessage defaultMessage='Mark tools as reviewed'/>
@@ -277,15 +278,17 @@ const MCPServerToolRow = ({
         if (unreviewedCount <= 0 || !serverConfig) {
             return null;
         }
-        if (expanded) {
+        if (!markReviewedDisabledByVisibility) {
             return markReviewedButton;
         }
 
-        // Until the tool list is open the button only tells the
-        // admin there is something to review: tools are marked
-        // reviewed only after the admin has seen them.
+        // Tools are marked reviewed only when the admin can see the full tool
+        // list (expanded and not narrowed by search).
+        const tooltip = isSearchFiltered ?
+            intl.formatMessage({defaultMessage: 'Clear search to review all tools on this server'}) :
+            intl.formatMessage({defaultMessage: 'Open the tool list to review its tools'});
         return (
-            <WithTooltip title={intl.formatMessage({defaultMessage: 'Open the tool list to review its tools'})}>
+            <WithTooltip title={tooltip}>
                 <InactiveButtonAnchor>{markReviewedButton}</InactiveButtonAnchor>
             </WithTooltip>
         );
@@ -369,7 +372,6 @@ const MCPServerToolRow = ({
     return (
         <MCPServerAccordion
             serverName={server.name}
-            serverIdKey={server.id ?? `${server.name}:${server.url}`}
             serverType={server.serverType}
             meta={meta}
             expanded={expanded}

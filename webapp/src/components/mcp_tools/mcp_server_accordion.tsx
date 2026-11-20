@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useId} from 'react';
 import styled from 'styled-components';
 import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -21,7 +21,6 @@ export type MCPBulkToggleState = {
 
 export type MCPServerAccordionProps<TTool extends {name: string; readOnlyHint?: boolean}> = {
     serverName: string;
-    serverIdKey: string;
     serverType?: string;
     meta?: React.ReactNode;
     expandAriaLabel?: string;
@@ -45,13 +44,8 @@ export type MCPServerAccordionProps<TTool extends {name: string; readOnlyHint?: 
     renderToolRow: (tool: TTool) => React.ReactNode;
 };
 
-function buildPanelId(serverIdKey: string): string {
-    return `mcp-tools-${serverIdKey.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-}
-
 function MCPServerAccordion<TTool extends {name: string; readOnlyHint?: boolean}>({
     serverName,
-    serverIdKey,
     serverType,
     meta,
     expandAriaLabel,
@@ -70,7 +64,7 @@ function MCPServerAccordion<TTool extends {name: string; readOnlyHint?: boolean}
     renderToolRow,
 }: MCPServerAccordionProps<TTool>) {
     const intl = useIntl();
-    const panelId = buildPanelId(serverIdKey);
+    const panelId = `mcp-tools-${useId()}`;
 
     // Group tools by the server's readOnlyHint annotation when at least one
     // visible tool is marked read-only; otherwise render a flat list so we do
