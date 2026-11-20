@@ -15,6 +15,7 @@ import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
 import {useIsLicensedFor} from '@/license';
+import {isCurrentChannelAgentDM} from '@/agent_dm_view';
 
 import {useBotlist} from '@/bots';
 
@@ -73,6 +74,7 @@ const AskChannelButton = () => {
     const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
     const currentChannel = useSelector((state: GlobalState) => state.entities.channels.channels[currentChannelId]);
     const lastViewedAt = useSelector((state: GlobalState) => state.entities.channels.myMembers[currentChannelId]?.last_viewed_at || 0);
+    const inAgentDM = useSelector(isCurrentChannelAgentDM);
     const [initialLastViewedAt, setInitialLastViewedAt] = useState(lastViewedAt);
 
     useEffect(() => {
@@ -124,7 +126,8 @@ const AskChannelButton = () => {
         setShowPopover(!showPopover);
     };
 
-    if (!channelSummarizationLicensed) {
+    // Asking an agent about a chat with an agent adds nothing.
+    if (!channelSummarizationLicensed || inAgentDM) {
         return null;
     }
 

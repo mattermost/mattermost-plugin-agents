@@ -46,19 +46,19 @@ export interface AgentsNavigation {
 }
 
 // Minimal slice of the host's history object. v4 passes (location, action) to
-// listeners and v5 passes ({location}); we ignore the arguments and re-read
+// listeners and v5 passes ({location, action}); most listeners ignore the arguments and re-read
 // `location`, so both work.
-interface HostHistory {
+export interface HostHistory {
     location?: {pathname: string};
     push: (path: string) => void;
     replace?: (path: string) => void;
-    listen?: (listener: () => void) => (() => void) | void;
+    listen?: (listener: (...args: unknown[]) => void) => (() => void) | void;
 
     // history v4: a string asks the user to confirm the transition, undefined lets it through.
     block?: (prompt: (location: {pathname: string}) => string | undefined) => (() => void) | void;
 }
 
-const getHistory = (): HostHistory | undefined => {
+export const getHistory = (): HostHistory | undefined => {
     return window.WebappUtils?.browserHistory as HostHistory | undefined;
 };
 
