@@ -136,6 +136,7 @@ describe('TutorialTourTip', () => {
                     />
                 </div>,
             );
+
             // Tip-origin: vertical center of the 20px trigger (200 + 10).
             expect(tip.style.top).toBe('210px');
 
@@ -165,6 +166,7 @@ describe('computeAnchoredPosition', () => {
     const viewport = {width: 1000, height: 800};
 
     test.each([
+
         // Tip-origin on the trigger edge facing the tip (TourPoint root is 0×0).
         {placement: 'left' as const, offset: [0, 12] as [number, number], want: {top: 210, left: 488, placement: 'left'}},
         {placement: 'right' as const, offset: [0, 12] as [number, number], want: {top: 210, left: 532, placement: 'right'}},
@@ -188,6 +190,7 @@ describe('computeAnchoredPosition', () => {
         const nearLeftEdge = {top: 200, left: 10, right: 30, bottom: 220, width: 20, height: 20};
         expect(computeAnchoredPosition(nearLeftEdge, tip, 'left', [0, 12], narrowViewport)).toEqual({
             top: 232,
+
             // Bottom tip-origin is centered on the trigger; skid so the 300px card stays in view.
             left: 158,
             placement: 'bottom',
@@ -197,8 +200,9 @@ describe('computeAnchoredPosition', () => {
     test('clamps tip origin inside the viewport when no side fits and the card cannot', () => {
         const tinyViewport = {width: 200, height: 120};
         const nearEdge = {top: 10, left: 10, right: 30, bottom: 30, width: 20, height: 20};
+
+        // Height still fits (skid); width does not, so left falls back to tip-in-viewport.
         expect(computeAnchoredPosition(nearEdge, tip, 'left', [0, 12], tinyViewport)).toEqual({
-            // Height still fits (skid); width does not, so left falls back to tip-in-viewport.
             top: 58,
             left: 8,
             placement: 'left',
