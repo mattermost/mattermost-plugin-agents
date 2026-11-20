@@ -10,6 +10,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
+import type {DictationAvailability, DictationSession} from '@/dictation/types';
 import {
     UserAgent,
     CreateAgentRequest,
@@ -588,6 +589,94 @@ export async function getAIBots() {
         status_code: response.status,
         url,
     });
+}
+
+export async function getDictationAvailability(): Promise<DictationAvailability> {
+    const url = `${baseRoute()}/dictation/availability`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+// The server needs time for its own exchange with the provider and for
+// attaching its control channel before it answers.
+const DICTATION_SESSION_TIMEOUT_MS = 20000;
+
+// createDictationSession sends the browser's SDP offer to the plugin, which
+// exchanges it with the provider and returns the answer. A failure, timeout
+// or abort included, throws a ClientError whose status_code is 0 when there
+// was no response.
+export async function createDictationSession(offerSDP: string, signal?: AbortSignal): Promise<DictationSession> {
+    const url = `${baseRoute()}/dictation/session`;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const timer = setTimeout(abort, DICTATION_SESSION_TIMEOUT_MS);
+    signal?.addEventListener('abort', abort);
+    if (signal?.aborted) {
+        abort();
+    }
+    try {
+        let response: Response;
+        try {
+            response = await fetch(url, {
+                ...Client4.getOptions({
+                    method: 'POST',
+                    body: JSON.stringify({sdp: offerSDP}),
+                    headers: {'Content-Type': 'application/json'},
+                }),
+                redirect: 'error',
+                signal: controller.signal,
+            });
+        } catch {
+            throw new ClientError(Client4.url, {message: '', status_code: 0, url});
+        }
+
+        if (response.ok) {
+            return await response.json();
+        }
+
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+    }
+}
+
+const DICTATION_END_TIMEOUT_MS = 10000;
+
+// endDictationSession asks the plugin to hang up the user's session so its
+// slot frees at once. keepalive lets the request finish when the page is
+// closing.
+export async function endDictationSession(sessionId: string): Promise<void> {
+    const url = `${baseRoute()}/dictation/session/${encodeURIComponent(sessionId)}`;
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...Client4.getOptions({method: 'DELETE'}),
+            redirect: 'error',
+            keepalive: true,
+            signal: AbortSignal.timeout(DICTATION_END_TIMEOUT_MS),
+        });
+    } catch {
+        throw new ClientError(Client4.url, {message: '', status_code: 0, url});
+    }
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {message: '', status_code: response.status, url});
+    }
 }
 
 export async function createPost(post: any) {

@@ -21,6 +21,12 @@ import MCPServers, {MCPServerConfig} from '@/components/system_console/mcp_serve
 import {MCPConfig, PersistMCPServerScope} from '@/components/system_console/mcp_types';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import WebSearchPanel from '@/components/system_console/web_search/web_search_panel';
+import DictationPanel, {
+    DEFAULT_DICTATION_MODEL,
+    DictationConfig,
+    defaultDictationConfig,
+    validateDictationConfig,
+} from '@/components/system_console/dictation_panel';
 
 import {SettingsSection} from './sections';
 
@@ -127,7 +133,22 @@ export const defaultConfig: PluginConfig = {
             resultLimit: 5,
         },
     },
+    dictation: defaultDictationConfig,
 };
+
+// A server's zero-value dictation config has no model; pre-fill the default.
+const withDictationDefaults = (dictation: DictationConfig | undefined): DictationConfig => ({
+    ...defaultDictationConfig,
+    ...(dictation ?? {}),
+    model: dictation?.model || DEFAULT_DICTATION_MODEL,
+});
+
+// withConfigDefaults fills what a loaded or saved configuration may omit.
+export const withConfigDefaults = (cfg: PluginConfig): PluginConfig => ({
+    ...defaultConfig,
+    ...cfg,
+    dictation: withDictationDefaults(cfg.dictation),
+});
 
 type Props = {
     section: SettingsSection;
@@ -141,6 +162,9 @@ type Props = {
 
     // The server's rejection of the allowed link domains on the last save.
     linkDomainsError: string;
+
+    // The server's reason for refusing the dictation settings on the last save.
+    dictationSaveError: string;
     updateConfig: (updates: Partial<PluginConfig>) => void;
 
     // Applies an MCP change to the configuration as it is when the change
@@ -155,7 +179,7 @@ type Props = {
 };
 
 // The panels of one Settings section.
-const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer, draftService}: Props) => {
+const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runtimeBotsError, linkDomainsError, dictationSaveError, updateConfig, updateMCP, persistMCPServer, deleteMCPServer, draftService}: Props) => {
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
@@ -348,6 +372,18 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                 onChange={(config) => updateConfig({webSearch: config})}
             />
         );
+    case 'dictation': {
+        const dictation = value.dictation ?? defaultDictationConfig;
+        return (
+            <DictationPanel
+                value={dictation}
+                services={value.services ?? []}
+                errors={validateDictationConfig(dictation, value.services ?? [], intl)}
+                saveError={dictationSaveError}
+                onChange={(next) => updateConfig({dictation: next})}
+            />
+        );
+    }
     case 'debug':
         return (
             <AdminPanel title={intl.formatMessage({defaultMessage: 'Debug'})}>

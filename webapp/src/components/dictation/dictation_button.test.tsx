@@ -1,0 +1,507 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React, {useLayoutEffect, useState} from 'react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+
+import {DictationError, DictationTransport, TranscriptUpdate} from '@/dictation/types';
+
+import DictationButton, {displayLevel} from './dictation_button';
+import {EditorDraft} from './use_dictation';
+
+jest.mock('react-intl', () => {
+    const actual = jest.requireActual('react-intl');
+    return {
+        ...actual,
+        useIntl: () => ({
+            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        }),
+    };
+});
+
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+}));
+
+jest.mock('@/dictation/availability', () => ({
+    useDictationAvailable: jest.fn(() => true),
+}));
+
+jest.mock('@/dictation/webrtc_transcriber', () => ({
+    WebRTCTranscriber: jest.fn(),
+    isDictationSupported: jest.fn(() => true),
+}));
+
+const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+const {useDictationAvailable} = jest.requireMock('@/dictation/availability') as {useDictationAvailable: jest.Mock};
+const {isDictationSupported} = jest.requireMock('@/dictation/webrtc_transcriber') as {isDictationSupported: jest.Mock};
+
+class FakeTransport implements DictationTransport {
+    transcript: (u: TranscriptUpdate) => void = () => { /* set by hook */ };
+    error: (e: DictationError) => void = () => { /* set by hook */ };
+    idle: () => void = () => { /* set by hook */ };
+    connecting: () => void = () => { /* set by hook */ };
+    resolveStart: () => void = () => { /* set in start */ };
+    rejectStart: (e: unknown) => void = () => { /* set in start */ };
+    stop = jest.fn(async () => { /* stopped */ });
+
+    start() {
+        return new Promise<void>((resolve, reject) => {
+            this.resolveStart = resolve;
+            this.rejectStart = reject;
+        });
+    }
+
+    onTranscript(h: (u: TranscriptUpdate) => void) {
+        this.transcript = h;
+    }
+
+    onError(h: (e: DictationError) => void) {
+        this.error = h;
+    }
+
+    level: (level: number) => void = () => { /* set by hook */ };
+
+    onLevel(h: (level: number) => void) {
+        this.level = h;
+    }
+
+    onIdle(h: () => void) {
+        this.idle = h;
+    }
+
+    onConnecting(h: () => void) {
+        this.connecting = h;
+    }
+}
+
+type HarnessControls = {
+    setDraft: (update: (d: EditorDraft) => EditorDraft) => void;
+};
+
+// Harness behaves like the host editor: updateText writes the draft through
+// React state, so the button sees its own writes on the next render.
+// Frames queued with requestAnimationFrame, run on demand.
+let queuedFrames: FrameRequestCallback[] = [];
+const runQueuedFrames = () => {
+    const frames = queuedFrames;
+    queuedFrames = [];
+    frames.forEach((frame) => frame(0));
+};
+
+// Runs queued frames in the layout phase after a draft change, the way a
+// browser frame can land between React's layout and passive effects.
+const FrameBetweenEffects = ({draft}: {draft: EditorDraft}) => {
+    useLayoutEffect(() => {
+        runQueuedFrames();
+    }, [draft]);
+    return null;
+};
+
+type RenderOptions = {
+    caret?: number;
+    frameBetweenEffects?: boolean;
+    onEditorKeyDown?: (e: React.KeyboardEvent) => void;
+    maxSessionMs?: number;
+};
+
+function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionMs, frameBetweenEffects}: RenderOptions = {}) {
+    const transports: FakeTransport[] = [];
+    const controls: HarnessControls = {setDraft: () => { /* set on render */ }};
+    const updateText = jest.fn();
+
+    const Harness = () => {
+        const [draft, setDraft] = useState(initial);
+        controls.setDraft = setDraft;
+        return (
+            // eslint-disable-next-line agents/no-static-element-interactions -- stands in for the host editor's key handling
+            <div onKeyDown={onEditorKeyDown}>
+                <textarea
+                    aria-label='editor'
+                    readOnly={true}
+                    value={draft.message}
+                />
+                <DictationButton
+                    draft={draft}
+                    getSelectedText={() => ({start: caret, end: caret})}
+                    updateText={(message) => {
+                        updateText(message);
+                        setDraft((d) => ({...d, message}));
+                    }}
+                    createTransport={() => {
+                        const t = new FakeTransport();
+                        transports.push(t);
+                        return t;
+                    }}
+                    maxSessionMs={maxSessionMs}
+                />
+                {frameBetweenEffects && <FrameBetweenEffects draft={draft}/>}
+                <div data-testid='draft'>{draft.message}</div>
+            </div>
+        );
+    };
+    const {unmount} = render(<Harness/>);
+    return {transports, controls, updateText, unmount, draft: () => screen.getByTestId('draft').textContent};
+}
+
+const button = () => screen.getByTestId('dictation-button');
+
+async function startListening(transport: () => FakeTransport) {
+    fireEvent.click(button());
+    await act(async () => {
+        transport().connecting();
+        transport().resolveStart();
+    });
+}
+
+describe('DictationButton', () => {
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+        useDictationAvailable.mockReturnValue(true);
+        isDictationSupported.mockReturnValue(true);
+    });
+
+    test.each([
+        {name: 'available and licensed', available: true, licensed: true, shown: true},
+        {name: 'below Enterprise', available: true, licensed: false, shown: false},
+        {name: 'not available', available: false, licensed: true, shown: false},
+    ])('$name: shown=$shown', ({available, licensed, shown}) => {
+        useDictationAvailable.mockReturnValue(available);
+        useIsLicensedFor.mockReturnValue(licensed);
+        renderButton({message: '', channelId: 'c1'});
+        expect(screen.queryByTestId('dictation-button') !== null).toBe(shown);
+        expect(useIsLicensedFor).toHaveBeenCalledWith('dictation');
+    });
+
+    test('is disabled with an explanation when the browser lacks WebRTC or microphone access', () => {
+        isDictationSupported.mockReturnValue(false);
+        renderButton({message: '', channelId: 'c1'});
+        expect((button() as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('with-tooltip').getAttribute('data-title')).toBe('Dictation isn\'t supported in this browser');
+    });
+
+    test('moves through its states with matching labels', async () => {
+        const {transports} = renderButton({message: '', channelId: 'c1'});
+        expect(button().getAttribute('aria-label')).toBe('Start dictation');
+        expect(button().getAttribute('aria-pressed')).toBe('false');
+
+        expect(screen.queryByTestId('dictation-getting-ready')).toBeNull();
+
+        fireEvent.click(button());
+        expect(button().getAttribute('data-status')).toBe('requesting_permission');
+        expect(button().getAttribute('aria-label')).toBe('Stop dictation');
+        expect(button().getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByTestId('dictation-getting-ready')).toBeTruthy();
+        expect(screen.getByRole('status').textContent).toBe('Getting ready. Allow microphone access if your browser asks.');
+
+        act(() => transports[0].connecting());
+        expect(button().getAttribute('data-status')).toBe('connecting');
+        expect(screen.getByTestId('dictation-getting-ready')).toBeTruthy();
+        expect(screen.getByRole('status').textContent).toBe('Getting ready. Wait before speaking.');
+        await act(async () => transports[0].resolveStart());
+        expect(button().getAttribute('data-status')).toBe('listening');
+        expect(screen.queryByTestId('dictation-getting-ready')).toBeNull();
+        expect(screen.getByRole('status').textContent).toBe('Listening. Speak now. Select to stop, or press Esc.');
+
+        fireEvent.click(button());
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+        expect(transports[0].stop).toHaveBeenCalled();
+        expect(button().getAttribute('aria-label')).toBe('Start dictation');
+        expect(screen.getByTestId('dictation-indicator').style.getPropertyValue('--dictation-level')).toBe('');
+        expect(screen.getByRole('status').textContent).toBe('');
+    });
+
+    test('a click while getting ready stops the transport, and its failed start shows no error', async () => {
+        const {transports} = renderButton({message: '', channelId: 'c1'});
+        fireEvent.click(button());
+        act(() => transports[0].connecting());
+
+        fireEvent.click(button());
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+        expect(transports[0].stop).toHaveBeenCalledTimes(1);
+
+        await act(async () => transports[0].rejectStart(new DictationError('unavailable', 'stopped')));
+        expect(button().getAttribute('data-status')).toBe('idle');
+        expect(screen.getByRole('status').textContent).toBe('');
+    });
+
+    test('the level ring follows the microphone level while listening', async () => {
+        const {transports} = renderButton({message: '', channelId: 'c1'});
+        fireEvent.click(button());
+
+        // Levels before listening are ignored: speech there isn't transcribed.
+        act(() => transports[0].level(0.5));
+        await act(async () => {
+            transports[0].connecting();
+            transports[0].resolveStart();
+        });
+        const ring = () => screen.getByTestId('dictation-indicator');
+        await new Promise((r) => setTimeout(r, 50));
+        expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.00');
+
+        // Quiet speech, about -35 dBFS RMS, shows half the glow.
+        act(() => transports[0].level(0.0178));
+        await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('0.50'));
+
+        act(() => transports[0].level(0.5));
+        await waitFor(() => expect(ring().style.getPropertyValue('--dictation-level')).toBe('1.00'));
+    });
+
+    test.each([
+        {name: 'no signal', rms: 0, want: 0},
+        {name: 'noise floor, -60 dBFS', rms: 0.001, want: 0},
+        {name: '-50 dBFS', rms: 0.00316, want: 0},
+        {name: 'soft speech, -40 dBFS', rms: 0.01, want: 0.33},
+        {name: 'quiet speech, -35 dBFS', rms: 0.0178, want: 0.5},
+        {name: 'normal speech, -30 dBFS', rms: 0.0316, want: 0.67},
+        {name: 'loud speech, -20 dBFS', rms: 0.1, want: 1},
+        {name: 'clipping', rms: 1, want: 1},
+    ])('displayLevel: $name', ({rms, want}) => {
+        expect(displayLevel(rms)).toBeCloseTo(want, 2);
+    });
+
+    test('with reduced motion the level still updates, for the glow\'s brightness', async () => {
+        const matchMedia = window.matchMedia;
+        window.matchMedia = jest.fn((query: string) => ({matches: query.includes('reduce')})) as unknown as typeof window.matchMedia;
+        try {
+            const {transports} = renderButton({message: '', channelId: 'c1'});
+            await startListening(() => transports[0]);
+            act(() => transports[0].level(0.2));
+            await waitFor(() => expect(screen.getByTestId('dictation-indicator').style.getPropertyValue('--dictation-level')).toBe('1.00'));
+        } finally {
+            window.matchMedia = matchMedia;
+        }
+    });
+
+    test('types the transcript at the caret as it grows', async () => {
+        const {transports, draft} = renderButton({message: 'Hello world', channelId: 'c1'}, {caret: 5});
+        await startListening(() => transports[0]);
+
+        act(() => transports[0].transcript({text: 'big'}));
+        await waitFor(() => expect(draft()).toBe('Hello big world'));
+
+        act(() => transports[0].transcript({text: 'big brave'}));
+        await waitFor(() => expect(draft()).toBe('Hello big brave world'));
+    });
+
+    test.each([
+        {name: 'a channel switch never writes into the new editor', change: {message: 'new channel draft', channelId: 'c2'}},
+        {name: 'a user edit never overwrites the edit', change: {message: 'user typed', channelId: 'c1'}},
+    ])('a frame queued before $name', async ({change}) => {
+        const raf = jest.spyOn(window, 'requestAnimationFrame').mockImplementation((frame) => {
+            queuedFrames.push(frame);
+            return queuedFrames.length;
+        });
+        try {
+            const {transports, controls, updateText, draft} = renderButton({message: 'old channel', channelId: 'c1'}, {frameBetweenEffects: true});
+            await startListening(() => transports[0]);
+
+            act(() => {
+                transports[0].transcript({text: 'spoken'});
+                controls.setDraft(() => change);
+            });
+
+            await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+            expect(updateText).not.toHaveBeenCalled();
+            expect(draft()).toBe(change.message);
+        } finally {
+            raf.mockRestore();
+            queuedFrames = [];
+        }
+    });
+
+    test('a running session survives availability turning false, then the button hides and can\'t start again', async () => {
+        const {transports, controls, draft} = renderButton({message: '', channelId: 'c1'});
+        await startListening(() => transports[0]);
+
+        // A failed refetch reports dictation as unavailable mid-session.
+        useDictationAvailable.mockReturnValue(false);
+        act(() => controls.setDraft((d) => ({...d})));
+        expect(transports[0].stop).not.toHaveBeenCalled();
+        expect(button().getAttribute('data-status')).toBe('listening');
+
+        act(() => transports[0].transcript({text: 'still heard'}));
+        await waitFor(() => expect(draft()).toBe('still heard'));
+
+        fireEvent.click(button());
+        await waitFor(() => expect(screen.queryByTestId('dictation-button')).toBeNull());
+        expect(transports[0].stop).toHaveBeenCalledWith({waitForFinal: true});
+        expect(draft()).toBe('still heard');
+        expect(transports).toHaveLength(1);
+    });
+
+    test('coalesces updates into one write per frame', async () => {
+        const {transports, updateText, draft} = renderButton({message: '', channelId: 'c1'});
+        await startListening(() => transports[0]);
+
+        act(() => {
+            transports[0].transcript({text: 'a'});
+            transports[0].transcript({text: 'a b'});
+            transports[0].transcript({text: 'a b c'});
+        });
+        await waitFor(() => expect(draft()).toBe('a b c'));
+        expect(updateText).toHaveBeenCalledTimes(1);
+    });
+
+    test('Esc stops dictation without reaching the editor, which would cancel a post edit', async () => {
+        const editorKeyDown = jest.fn();
+        const {transports} = renderButton({message: '', channelId: 'c1'}, {onEditorKeyDown: editorKeyDown});
+        await startListening(() => transports[0]);
+
+        fireEvent.keyDown(screen.getByLabelText('editor'), {key: 'Escape'});
+        await waitFor(() => expect(transports[0].stop).toHaveBeenCalled());
+        expect(editorKeyDown).not.toHaveBeenCalled();
+
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('idle'));
+        fireEvent.keyDown(screen.getByLabelText('editor'), {key: 'Escape'});
+        expect(editorKeyDown).toHaveBeenCalledTimes(1);
+    });
+
+    // Every way dictation ends goes through one stop. Streamed text differs
+    // from the final text stop delivers, so a final write is visible.
+    const PARTIAL = 'Hello big braid world';
+    const FINAL = 'Hello big brave world';
+
+    type Ctx = {transport: FakeTransport; controls: HarnessControls; unmount: () => void};
+    type Row = {
+        name: string;
+        trigger: (ctx: Ctx) => unknown;
+        duringStop?: (ctx: Ctx) => unknown;
+        maxSessionMs?: number;
+
+        // The transport already tore down (a provider error), so stop has no final to deliver.
+        stopDeliversFinal?: boolean;
+        unmounts?: boolean;
+
+        // Whether stop waits for the last segment's final text; a stop that
+        // keeps nothing releases the microphone and connection at once.
+        waits: boolean;
+        draft?: string;
+        status?: 'idle' | 'error';
+    };
+
+    const editor = () => screen.getByLabelText('editor');
+    const setMessage = (ctx: Ctx, message: string) => ctx.controls.setDraft((d) => ({...d, message}));
+
+    const rows: Row[] = [
+        {waits: true, name: 'the button', trigger: () => fireEvent.click(button()), draft: FINAL, status: 'idle'},
+        {waits: true, name: 'the button, with no final before the grace period ends', trigger: () => fireEvent.click(button()), stopDeliversFinal: false, draft: PARTIAL, status: 'idle'},
+        {waits: true, name: 'Esc', trigger: () => fireEvent.keyDown(editor(), {key: 'Escape'}), draft: FINAL, status: 'idle'},
+        {waits: true,
+            name: 'silence',
+            trigger: ({transport}) => {
+                transport.idle();
+            },
+            draft: FINAL,
+            status: 'idle'},
+        {waits: true, name: 'the session cap', maxSessionMs: 500, trigger: ({transport}) => waitFor(() => expect(transport.stop).toHaveBeenCalled(), {timeout: 2000}), draft: FINAL, status: 'idle'},
+        {waits: true,
+            name: 'a provider error',
+            trigger: ({transport}) => {
+                transport.error(new DictationError('provider_error'));
+            },
+            stopDeliversFinal: false,
+            draft: PARTIAL,
+            status: 'error'},
+        {waits: false, name: 'typing', trigger: (ctx) => setMessage(ctx, PARTIAL + '!'), draft: PARTIAL + '!', status: 'idle'},
+        {waits: false, name: 'sending', trigger: (ctx) => setMessage(ctx, ''), draft: '', status: 'idle'},
+        {waits: false, name: 'a channel switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, channelId: 'c2'})), draft: PARTIAL, status: 'idle'},
+        {waits: false, name: 'a thread switch', trigger: ({controls}) => controls.setDraft((d) => ({...d, rootId: 'r2'})), draft: PARTIAL, status: 'idle'},
+        {waits: false, name: 'unmounting', trigger: ({unmount}) => unmount(), unmounts: true},
+        {waits: true, name: 'the button, then typing while stopping', trigger: () => fireEvent.click(button()), duringStop: (ctx) => setMessage(ctx, 'mine'), draft: 'mine', status: 'idle'},
+        {waits: true, name: 'the button, then unmounting while stopping', trigger: () => fireEvent.click(button()), duringStop: ({unmount}) => unmount(), unmounts: true},
+        {waits: true,
+            name: 'the button, then a provider error while stopping',
+            trigger: () => fireEvent.click(button()),
+            duringStop: ({transport}) => {
+                transport.error(new DictationError('provider_error'));
+            },
+            draft: FINAL,
+            status: 'idle'},
+    ];
+
+    test.each(rows)('stopping by $name', async (row) => {
+        const {transports, controls, unmount, updateText, draft} = renderButton({message: 'Hello world', channelId: 'c1', rootId: ''}, {caret: 5, maxSessionMs: row.maxSessionMs});
+        await startListening(() => transports[0]);
+        const transport = transports[0];
+        const ctx = {transport, controls, unmount};
+
+        act(() => transport.transcript({text: 'big braid'}));
+        await waitFor(() => expect(draft()).toBe(PARTIAL));
+
+        let finishStop: () => void = () => { /* set when stop is called */ };
+        transport.stop.mockImplementation(() => new Promise<void>((resolve) => {
+            finishStop = () => {
+                if (row.stopDeliversFinal !== false) {
+                    transport.transcript({text: 'big brave'});
+                }
+                resolve();
+            };
+        }));
+
+        await act(async () => {
+            await row.trigger(ctx);
+        });
+        await waitFor(() => expect(transport.stop).toHaveBeenCalledTimes(1));
+        expect(transport.stop).toHaveBeenCalledWith({waitForFinal: row.waits});
+
+        if (!row.unmounts || row.duringStop) {
+            expect(button().getAttribute('data-status')).toBe('stopping');
+            expect((button() as HTMLButtonElement).disabled).toBe(true);
+            fireEvent.click(button());
+            expect(transports).toHaveLength(1);
+        }
+
+        act(() => {
+            row.duringStop?.(ctx);
+        });
+        const writesBeforeStop = updateText.mock.calls.length;
+        await act(async () => finishStop());
+
+        if (row.unmounts) {
+            expect(updateText).toHaveBeenCalledTimes(writesBeforeStop);
+            return;
+        }
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe(row.status));
+        expect(draft()).toBe(row.draft);
+        expect(transport.stop).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+        {reason: 'mic_blocked', message: 'Microphone access is blocked. Allow it in your browser settings and try again.'},
+        {reason: 'rate_limited', message: 'Dictation can\'t start right now: it was started too often, or you\'re already dictating in another window. Stop dictating there, or wait a minute, and try again.'},
+        {reason: 'offer_too_large', message: 'Your browser\'s connection request was too large. Reload the page and try again.'},
+        {reason: 'forbidden', message: 'You don\'t have access to dictation.'},
+        {reason: 'provider_unreachable', message: 'The speech service could not be reached.'},
+    ] as const)('a start failure ($reason) shows an error state', async ({reason, message}) => {
+        const {transports} = renderButton({message: '', channelId: 'c1'});
+        fireEvent.click(button());
+        await act(async () => transports[0].rejectStart(new DictationError(reason)));
+
+        expect(button().getAttribute('data-status')).toBe('error');
+        expect(screen.getByTestId('with-tooltip').getAttribute('data-title')).toBe(message);
+        expect(screen.getByRole('status').textContent).toBe(message);
+
+        fireEvent.click(button());
+        expect(transports).toHaveLength(2);
+    });
+
+    test.each([
+        {reason: 'session_time_limit', message: 'Dictation stopped at its time limit. Start it again to keep going.'},
+        {reason: 'session_policy', message: 'Dictation stopped because its session settings were changed. Start it again.'},
+        {reason: 'session_shutdown', message: 'Dictation stopped because the Agents plugin restarted. Start it again.'},
+    ] as const)('the server ending the session ($reason) explains why and keeps the text', async ({reason, message}) => {
+        const {transports, draft} = renderButton({message: '', channelId: 'c1'});
+        await startListening(() => transports[0]);
+        act(() => transports[0].transcript({text: 'spoken words'}));
+        await waitFor(() => expect(draft()).toBe('spoken words'));
+
+        await act(async () => {
+            transports[0].error(new DictationError(reason));
+        });
+
+        await waitFor(() => expect(button().getAttribute('data-status')).toBe('error'));
+        expect(screen.getByRole('status').textContent).toBe(message);
+        expect(draft()).toBe('spoken words');
+    });
+});
