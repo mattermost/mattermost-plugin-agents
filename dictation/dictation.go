@@ -192,7 +192,8 @@ func WithMaxSessionDuration(d time.Duration) Option {
 }
 
 // WithChannelDirectory sets where channel context is read from. Without
-// one, sessions get no channel context.
+// one, a session for a channel is denied while channel context is on, since
+// read access can't be checked.
 func WithChannelDirectory(d ChannelDirectory) Option {
 	return func(s *Service) { s.channels = d }
 }
@@ -362,18 +363,23 @@ func (s *Service) CreateSession(ctx context.Context, userID, offerSDP, channelID
 	}
 	audit.AddParam(audit.RecordFromContext(ctx), audit.KeyServiceID, r.service.ID)
 
+	req := r.request()
+	useContext := channelID != "" && r.dictation.ChannelContextEnabled() && bifrost.SupportsTranscriptionContext(req.Model)
+	// Authorization comes before the rate limit, like the other checks; the
+	// heavier context lookups come after it.
+	if useContext {
+		if err = s.checkChannel(userID, channelID); err != nil {
+			return nil, err
+		}
+	}
 	if !s.limiter.allow(userID) {
 		return nil, ErrRateLimited
 	}
-	req := r.request()
-	if channelID != "" && r.dictation.ChannelContextEnabled() && bifrost.SupportsTranscriptionContext(req.Model) {
-		hints, hintsErr := s.channelContext(userID, channelID)
-		switch {
-		case errors.Is(hintsErr, ErrAccessDenied):
-			return nil, hintsErr
-		case hintsErr != nil:
+	if useContext {
+		hints, hintsErr := s.channelContext(channelID)
+		if hintsErr != nil {
 			s.log.Warn("Failed to read dictation channel context; sending none", "user_id", userID, "channel_id", channelID, "error", hintsErr.Error())
-		default:
+		} else {
 			req.Prompt, req.Keywords = hints.Prompt, hints.Keywords
 		}
 	}

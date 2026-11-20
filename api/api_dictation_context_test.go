@@ -345,6 +345,18 @@ func TestCreateDictationSessionChannelContext(t *testing.T) {
 	}
 }
 
+func TestChannelDenialDoesNotUseTheStartLimit(t *testing.T) {
+	e := setupDictationEnv(t, enterprise.LevelEnterprise)
+	defer e.Cleanup(t)
+	contextChannel{channel: &model.Channel{Id: contextChannelID, Type: model.ChannelTypeOpen}, canRead: false}.mock(e)
+
+	for range 12 {
+		require.Equal(t, http.StatusForbidden, e.postSession(sessionBody(contextChannelID)).Code, "every refusal is a 403, never a 429")
+	}
+	// The denied requests left the user's start budget untouched.
+	e.startSession(t)
+}
+
 func TestDictationSessionWithContextPolicy(t *testing.T) {
 	soren := contextUser(contextUserID(1), "Søren", "Larsen", "")
 	channel := contextChannel{

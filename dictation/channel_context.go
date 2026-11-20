@@ -72,17 +72,20 @@ func (d pluginChannelDirectory) ShowFullName() bool {
 	return cfg != nil && model.SafeDereference(cfg.PrivacySettings.ShowFullName)
 }
 
-// channelContext builds the hints for channelID. A user who can't read the
-// channel gets ErrAccessDenied; any lookup error is returned, and the caller
-// then sends no context at all.
-func (s *Service) channelContext(userID, channelID string) (format.DictationContext, error) {
+// checkChannel denies a user who can't read channelID. Without a channel
+// directory nothing can be checked, so it denies too.
+func (s *Service) checkChannel(userID, channelID string) error {
+	if s.channels == nil || !s.channels.CanReadChannel(userID, channelID) {
+		return fmt.Errorf("%w: channel not readable", ErrAccessDenied)
+	}
+	return nil
+}
+
+// channelContext builds the hints for channelID, which checkChannel has
+// cleared. Any lookup error is returned, and the caller then sends no
+// context at all.
+func (s *Service) channelContext(channelID string) (format.DictationContext, error) {
 	d := s.channels
-	if d == nil {
-		return format.DictationContext{}, fmt.Errorf("no channel directory")
-	}
-	if !d.CanReadChannel(userID, channelID) {
-		return format.DictationContext{}, fmt.Errorf("%w: channel not readable", ErrAccessDenied)
-	}
 	channel, err := d.GetChannel(channelID)
 	if err != nil {
 		return format.DictationContext{}, fmt.Errorf("failed to get the channel: %w", err)
