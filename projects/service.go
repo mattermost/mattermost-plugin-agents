@@ -1213,9 +1213,12 @@ func (s *Service) Tools(ctx context.Context, agent *llm.BotConfig, llmCtx *llm.C
 }
 
 // ArtifactAutoExecute reports whether a channel artifact tool runs unasked
-// for bot: a project agent manages its own project's library.
+// for bot: a project agent manages its own project's library while someone
+// is present. Unattended turns, such as check-ins, write as the lead, so
+// there the tools keep asking and are dropped, and posts the agent reads
+// can't borrow the lead's bookmark permissions.
 func (s *Service) ArtifactAutoExecute(bot *bots.Bot, llmCtx *llm.Context) bool {
-	if llmCtx == nil || llmCtx.Channel == nil {
+	if llmCtx == nil || llmCtx.Channel == nil || !llmCtx.ToolCatalog.InteractiveUserPresent {
 		return false
 	}
 	project, err := s.liveProjectFor(bot)

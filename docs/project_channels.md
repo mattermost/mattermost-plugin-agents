@@ -21,7 +21,7 @@ When someone creates a project, Agents creates the channel (or uses the channel 
 The agent is limited to its project:
 
 - It reads and writes only the project channel and its board channel. If its bot account is found in any other channel, every turn is refused until it is removed. The exception is the team's default channel (usually Town Square), which Mattermost keeps every team member in; the agent still can't read it.
-- It saves and removes artifacts in the project channel without asking for approval.
+- When someone in the project channel is talking to it, it saves and removes artifacts there without asking for approval. On check-ins and other turns with nobody present, it can't save or remove artifacts.
 - Its Mattermost tools are reading the project's channels, posts, users, bookmarks and artifacts, adding reactions, and creating and updating bookmarks in the project channel. New project agents get this list when they're created, and existing ones get it when the plugin starts.
 - Board tools are bound to the project's board, and checklist tools to the project's run. It can create one board and one checklist, and can't delete cards, list other boards, or change views and fields.
 - Members of the project channel are added to the board channel when the board is created, and as they join, so they can open the board. People who leave the project channel are removed from the board channel.

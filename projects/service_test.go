@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -1310,6 +1311,59 @@ func TestBackfillLeavesAConcurrentEditAlone(t *testing.T) {
 	assert.Zero(t, updated)
 	assert.True(t, f.store.agents[0].DisableTools, "the edit made after the read survives")
 	assert.Empty(t, f.store.agents[0].EnabledMCPTools)
+}
+
+// stubLibrary satisfies channelartifacts.Library; these tests only build
+// the tool list.
+type stubLibrary struct{ channelartifacts.Library }
+
+func TestUnattendedProjectTurnsDropLibraryWrites(t *testing.T) {
+	tests := []struct {
+		name        string
+		interactive bool
+		channel     string
+		wantTools   []string
+		wantAutoRun bool
+	}{
+		{name: "a member's turn in the project channel runs them unasked", interactive: true, channel: "P",
+			wantTools: []string{mmtools.SaveChannelArtifactToolName, mmtools.RemoveChannelArtifactToolName}, wantAutoRun: true},
+		{name: "a check-in with nobody present drops them", channel: "P"},
+		{name: "another channel asks, and nobody present drops them", channel: "X"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, true, activeProject())
+			library := &mmtools.ChannelArtifactTools{
+				Library: stubLibrary{},
+				Enabled: func() bool { return true },
+				ActorFor: func(context.Context, *llm.Context) (channelartifacts.Actor, bool) {
+					return channelartifacts.Actor{UserID: "lead"}, true
+				},
+				AutoExecuteFor: func(llmCtx *llm.Context, _ string) bool { return f.svc.ArtifactAutoExecute(f.bot, llmCtx) },
+			}
+			llmCtx := &llm.Context{
+				Channel:        &model.Channel{Id: tt.channel, Type: model.ChannelTypeOpen},
+				BotUserID:      model.NewId(),
+				RequestingUser: &model.User{Id: "lead"},
+				ToolCatalog:    llm.ToolCatalogContext{InteractiveUserPresent: tt.interactive},
+			}
+
+			var offered []string
+			for _, tool := range library.Tools(llmCtx) {
+				// An unattended scoped turn keeps only tools that never ask.
+				if !tt.interactive && tool.AlwaysAsk {
+					continue
+				}
+				offered = append(offered, tool.Name)
+				assert.Equal(t, tt.wantAutoRun, tool.AutoExecute, tool.Name)
+			}
+			if tt.interactive {
+				assert.ElementsMatch(t, tt.wantTools, offered)
+			} else {
+				assert.Empty(t, offered)
+			}
+		})
+	}
 }
 
 func TestRunThreadsDontOfferAnotherRunThread(t *testing.T) {
