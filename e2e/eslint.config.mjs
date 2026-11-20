@@ -12,6 +12,7 @@ export default [
         rules: {
             'e2e/container-exec-exit-code': 'error',
             'e2e/container-start-in-fixture': 'error',
+            'e2e/no-arbitrary-wait': 'error',
         },
     },
     {

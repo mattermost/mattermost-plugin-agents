@@ -49,4 +49,4 @@ Every page is for one audience. Don't mix them.
 ## Links and images
 
 - Link between pages here with relative `.md` links, which work on GitHub and on the site. Link to other docs.mattermost.com pages by site path (`/end-user-guide/...`), without `.html`.
-- Keep images in `img/`, only when they match the current UI, and delete unused ones.
+- Keep images in `docs/img/` (not repo-root `img/`, which is for `README.md`), only when they match the current UI, and delete unused ones.
