@@ -62,7 +62,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
     return (
         <AdminPanel
             title={<FormattedMessage defaultMessage='Web Search'/>}
-            subtitle={intl.formatMessage({defaultMessage: 'Configure built-in web search for agents that do not have native web search capabilities. NOTE: If your agent is configured to use native tool web search, that will be used instead of this web search.'})}
+            subtitle={intl.formatMessage({defaultMessage: 'Built-in web search for agents without provider-native search. Agents with native web search enabled use that instead.'})}
         >
             <ItemList>
                 <BooleanItem
@@ -73,7 +73,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                         <LicenseChip capability='sovereign_web_search'/>
                     )}
                     onChange={(enabled) => handleUpdate({enabled})}
-                    helpText={intl.formatMessage({defaultMessage: 'Allow agents to call Mattermost\'s built-in web search tool. If your LLM already provides native web search support, leave this disabled.'})}
+                    helpText={intl.formatMessage({defaultMessage: 'Lets agents use Mattermost\'s built-in web search tool. Leave off if your LLM provides native web search.'})}
                 />
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Provider'})}
@@ -93,7 +93,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             type='password'
                             value={brave.apiKey}
                             onChange={(e) => handleBraveUpdate({apiKey: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: "Brave Search API Key. Ensure you subscribe to Brave's Pro AI plan when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension."})}
+                            helptext={intl.formatMessage({defaultMessage: "Requires Brave's Pro AI plan."})}
                             disabled={!value.enabled}
                         />
                         <TextItem
@@ -110,7 +110,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             label={intl.formatMessage({defaultMessage: 'Brave API URL (optional)'})}
                             value={brave.apiURL}
                             onChange={(e) => handleBraveUpdate({apiURL: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'Override the default Brave Search endpoint if necessary.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Override the default Brave Search endpoint.'})}
                             disabled={!value.enabled}
                         />
                     </>
@@ -121,7 +121,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             label={intl.formatMessage({defaultMessage: 'SearXNG Base URL'})}
                             value={searxng.baseURL}
                             onChange={(e) => handleSearxngUpdate({baseURL: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'Root URL of your SearXNG instance (e.g. https://searx.example.com). The instance must allow the json format (search.formats in its settings). If the instance is on a private/reserved address, add it to the Mattermost AllowedUntrustedInternalConnections setting.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'SearXNG root URL (e.g., https://searx.example.com). Must enable json in search.formats. Add private addresses to AllowedUntrustedInternalConnections.'})}
                             disabled={!value.enabled}
                         />
                         <TextItem
@@ -143,7 +143,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                         const domains = e.target.value.split(',').map((d) => d.trim()).filter((d) => d !== '');
                         handleUpdate({domainDenylist: domains});
                     }}
-                    helptext={intl.formatMessage({defaultMessage: 'Comma-separated list of domains to exclude from search results (e.g., example.com, spam-site.org). Results from these domains will be filtered out and the LLM will never see them.'})}
+                    helptext={intl.formatMessage({defaultMessage: 'Comma-separated domains excluded from search results before the LLM sees them (e.g., example.com, spam-site.org).'})}
                     disabled={!value.enabled}
                 />
             </ItemList>
