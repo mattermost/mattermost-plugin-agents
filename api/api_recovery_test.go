@@ -63,12 +63,12 @@ func TestServeHTTPRecovery(t *testing.T) {
 			wantErrorLogs: 1,
 		},
 		{
-			name:          "cancelled context logs debug only and does not write 500",
+			name:          "canceled context logs debug only and does not write 500",
 			cancelContext: true,
 			wantDebugLogs: 1,
 		},
 		{
-			name:          "cancelled context nil header panic from c.JSON logs debug only",
+			name:          "canceled context nil header panic from c.JSON logs debug only",
 			cancelContext: true,
 			nilHeader:     true,
 			wantDebugLogs: 1,
@@ -123,11 +123,11 @@ func TestServeHTTPRecovery(t *testing.T) {
 			case tt.nilHeader:
 				w := &nilHeaderResponseWriter{}
 				e.api.ServeHTTP(&plugin.Context{}, w, req)
-				assert.Zero(t, w.writeCalls, "cancelled request must not write response body")
+				assert.Zero(t, w.writeCalls, "canceled request must not write response body")
 				assert.NotContains(t, w.statusCodes, http.StatusInternalServerError,
-					"cancelled request must not write 500")
+					"canceled request must not write 500")
 			case tt.panicAfterBody:
-				router := e.api.newRouter(&plugin.Context{}, reqCtx)
+				router := e.api.newRouter(reqCtx, &plugin.Context{})
 				router.GET("/test-panic-after-body", func(c *gin.Context) {
 					c.String(http.StatusOK, tt.wantBody)
 					panic("boom after write")

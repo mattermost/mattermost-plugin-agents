@@ -335,11 +335,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
 
-	router := a.newRouter(c, serverCtx)
+	router := a.newRouter(serverCtx, c)
 	router.ServeHTTP(w, r)
 }
 
-func (a *API) newRouter(c *plugin.Context, serverCtx context.Context) *gin.Engine {
+func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engine {
 	// Use gin.New() instead of gin.Default(): gin.Recovery dumps full request
 	// headers (including cookies) in debug mode, and gin.Logger writes raw
 	// query strings and client IPs to stdout (plugin_stdout at INFO) while
