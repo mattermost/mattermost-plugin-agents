@@ -162,7 +162,9 @@ func TestStartAgentSetup(t *testing.T) {
 		{name: "the agent's manager opens a setup thread", enabled: true, agentID: setupAgentID, wantStatus: http.StatusCreated},
 		{name: "the setting is off", agentID: setupAgentID, wantStatus: http.StatusForbidden},
 		{name: "a project-style extension claims the agent while the setting is off", agentID: setupAgentID, wantStatus: http.StatusCreated, wantExtensionPrompt: true,
-			setup: func(env *setupTestEnv) { env.setup.RegisterExtension(&testExtension{instructions: "EXTENSION-INSTRUCTIONS"}) }},
+			setup: func(env *setupTestEnv) {
+				env.setup.RegisterExtension(&testExtension{instructions: "EXTENSION-INSTRUCTIONS"})
+			}},
 		{name: "someone who cannot manage the agent", enabled: true, agentID: setupAgentID, wantStatus: http.StatusForbidden,
 			setup: func(env *setupTestEnv) { env.agentStore.agents[setupAgentID].CreatorID = "someoneelse000000000000000" }},
 		{name: "an unknown agent", enabled: true, agentID: "missingagent00000000000000", wantStatus: http.StatusNotFound},
