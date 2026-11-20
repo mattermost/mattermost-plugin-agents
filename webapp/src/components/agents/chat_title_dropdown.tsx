@@ -63,24 +63,19 @@ const Trigger = styled.span`
     max-width: ${TITLE_MAX_WIDTH};
 `;
 
-// The compass label is nowrap and none of the wrappers around it (the button's own label span
-// included) shrink below their content, so a long title would run past the bar: let them shrink and
-// end the label in an ellipsis. (The class names are compass's generated ones.)
+// The compass label is nowrap and the wrappers around it shrink no smaller than their content, so a
+// long title would run past the bar: let them shrink and end the label in an ellipsis. (The class
+// names are compass's generated ones.)
 const TitleDropdown = styled(Dropdown)`
     && {
         min-width: 0;
         max-width: 100%;
     }
 
-    && [class*='button__label'],
     && [class*='dropdown__trigger'],
     && [class*='dropdown__content'],
     && [class*='dropdown__label'] {
         min-width: 0;
-    }
-
-    && [class*='button__label'] {
-        overflow: hidden;
     }
 
     /* An inline-flex box takes the width of its nowrap text (its min-content) instead of the space
