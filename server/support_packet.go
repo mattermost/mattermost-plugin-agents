@@ -100,8 +100,7 @@ func yamlScalar(s string) string {
 		return strconv.Quote(s)
 	}
 	for i := range len(s) {
-		c := s[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_') {
+		if !isPlainYAMLByte(s[i]) {
 			return strconv.Quote(s)
 		}
 	}
@@ -109,6 +108,10 @@ func yamlScalar(s string) string {
 		return strconv.Quote(s)
 	}
 	return s
+}
+
+func isPlainYAMLByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_'
 }
 
 // buildSupportPacket assembles the diagnostics struct from config and the store.

@@ -30,12 +30,16 @@ func isLegacyUUID(s string) bool {
 				return false
 			}
 		default:
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			if !isHexDigit(c) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // ABACIDMigrationReport summarizes what MigrateABACIDs did so the caller
