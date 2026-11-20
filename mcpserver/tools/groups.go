@@ -56,11 +56,15 @@ type CreateGroupArgs struct {
 
 // UpdateGroupArgs represents arguments for the update_group tool.
 type UpdateGroupArgs struct {
-	GroupID        string  `json:"group_id" jsonschema:"The group to update,minLength=26,maxLength=26"`
-	DisplayName    *string `json:"display_name,omitempty" jsonschema:"New display name"`
-	Name           *string `json:"name,omitempty" jsonschema:"New mention handle (lowercase letters, numbers, periods, dashes, underscores),maxLength=64"`
-	Description    *string `json:"description,omitempty" jsonschema:"New description. Pass an empty string to clear it,maxLength=1024"`
-	AllowReference *bool   `json:"allow_reference,omitempty" jsonschema:"Whether the group can be @mentioned. Custom groups must stay mentionable. Omit name to keep the stored handle; a group with no handle needs name. A supplied name can rename the group"`
+	GroupID     string  `json:"group_id" jsonschema:"The custom group to update,minLength=26,maxLength=26"`
+	DisplayName *string `json:"display_name,omitempty" jsonschema:"New display name"`
+	Name        *string `json:"name,omitempty" jsonschema:"New mention handle (lowercase letters, numbers, periods, dashes, underscores),maxLength=64"`
+	Description *string `json:"description,omitempty" jsonschema:"New description. Pass an empty string to clear it,maxLength=1024"`
+}
+
+// DeleteGroupArgs represents arguments for the delete_group tool.
+type DeleteGroupArgs struct {
+	GroupID string `json:"group_id" jsonschema:"The custom group to delete,minLength=26,maxLength=26"`
 }
 
 const (
@@ -70,8 +74,9 @@ const (
 	getChannelGroupsDescription        = "Get the groups synced to a channel. Parameters: channel_id (required), page, per_page."
 	getTeamGroupsDescription           = "Get the groups synced to a team. Parameters: team_id (required), page, per_page."
 	getUsersInGroupChannelsDescription = "Get the members of given group-message (GM) channels. Parameters: channel_ids (required list)."
-	createGroupDescription             = "Create a custom user group. Parameters: display_name (required), name (required mention handle), description (optional). Custom groups are mentionable. LDAP and plugin-synced groups cannot be created this way."
-	updateGroupDescription             = "Update a user group's display name, mention handle, description, or whether it can be @mentioned. Parameters: group_id (required), plus any of display_name, name, description, allow_reference. Custom groups must stay mentionable. Omit name to keep the stored handle; a group with no handle needs name to enable mentions. A supplied name can rename the group. Does not add or remove members."
+	createGroupDescription             = "Create a custom user group. Parameters: display_name (required), name (required mention handle), description (optional). Custom groups are always mentionable. LDAP and plugin-synced groups cannot be created this way."
+	updateGroupDescription             = "Update a custom user group's display name, mention handle, or description. Parameters: group_id (required), plus any of display_name, name, description. LDAP and plugin-synced groups are refused. Does not add or remove members."
+	deleteGroupDescription             = "Delete a custom user group (a soft delete). Parameters: group_id (required). LDAP and plugin-synced groups are refused."
 )
 
 // getGroupTools returns the group tools.
@@ -85,6 +90,7 @@ func (p *MattermostToolProvider) getGroupTools() []MCPTool {
 		mcpReadTool(p, "get_users_in_group_channels", getUsersInGroupChannelsDescription, p.toolGetUsersInGroupChannels),
 		mcpTool(p, "create_group", createGroupDescription, p.toolCreateGroup),
 		mcpTool(p, "update_group", updateGroupDescription, p.toolUpdateGroup),
+		mcpTool(p, "delete_group", deleteGroupDescription, p.toolDeleteGroup),
 	}
 }
 
@@ -244,8 +250,8 @@ func (p *MattermostToolProvider) toolUpdateGroup(mcpContext *MCPToolContext, arg
 	if err := requireID("group_id", args.GroupID); err != nil {
 		return "", err
 	}
-	if args.DisplayName == nil && args.Name == nil && args.Description == nil && args.AllowReference == nil {
-		return "", fmt.Errorf("provide at least one of display_name, name, description, allow_reference to update")
+	if args.DisplayName == nil && args.Name == nil && args.Description == nil {
+		return "", fmt.Errorf("provide at least one of display_name, name, description to update")
 	}
 	if args.DisplayName != nil {
 		if err := validateGroupDisplayName(*args.DisplayName); err != nil {
@@ -262,22 +268,15 @@ func (p *MattermostToolProvider) toolUpdateGroup(mcpContext *MCPToolContext, arg
 			return "", err
 		}
 	}
+	if _, err := requireCustomGroup(mcpContext, args.GroupID, "updated"); err != nil {
+		return "", err
+	}
 
 	patch := &model.GroupPatch{
-		Name:           args.Name,
-		DisplayName:    args.DisplayName,
-		Description:    args.Description,
-		AllowReference: args.AllowReference,
+		Name:        args.Name,
+		DisplayName: args.DisplayName,
+		Description: args.Description,
 	}
-	// Setting allow_reference true with no name makes Mattermost replace the
-	// stored handle with one derived from the display name, skipping the
-	// reserved-name checks. Keep the stored handle instead.
-	if msg, err := keepStoredMentionHandle(mcpContext, args, patch); err != nil {
-		return "", err
-	} else if msg != "" {
-		return msg, nil
-	}
-
 	updated, _, err := mcpContext.Client.PatchGroup(mcpContext.Ctx, args.GroupID, patch)
 	if err != nil {
 		return "", fmt.Errorf("error updating group: %w", err)
@@ -285,56 +284,33 @@ func (p *MattermostToolProvider) toolUpdateGroup(mcpContext *MCPToolContext, arg
 	return fmt.Sprintf("Successfully updated group '%s' (ID: %s)", updated.DisplayName, updated.Id), nil
 }
 
-// keepStoredMentionHandle adjusts a patch that changes mentionability.
-// An empty string means the caller should apply the patch. A non-empty string
-// is a completed no-op result.
-func keepStoredMentionHandle(mcpContext *MCPToolContext, args UpdateGroupArgs, patch *model.GroupPatch) (string, error) {
-	if args.AllowReference == nil {
-		return "", nil
-	}
-
-	group, _, err := mcpContext.Client.GetGroup(mcpContext.Ctx, args.GroupID, "")
-	if err != nil {
-		return "", fmt.Errorf("error fetching group: %w", err)
-	}
-
-	if !*args.AllowReference {
-		if group.Source == model.GroupSourceCustom {
-			return "", fmt.Errorf("custom groups must remain mentionable")
-		}
-		return "", nil
-	}
-	if args.Name != nil {
-		// Repeating the handle of a group that is already mentionable makes
-		// Mattermost's duplicate-name check find the group itself and reject
-		// the whole patch, including unrelated field changes.
-		if group.AllowReference && *args.Name == group.GetName() {
-			patch.Name = nil
-			patch.AllowReference = nil
-			if patch.DisplayName == nil && patch.Description == nil {
-				return fmt.Sprintf("Group '%s' (ID: %s) is already mentionable; the mention handle was left unchanged", group.DisplayName, group.Id), nil
-			}
-		}
-		return "", nil
-	}
-	if group.GetName() == "" {
-		return "", fmt.Errorf("name is required to allow mentions when the group has no mention handle")
-	}
-	if err := validateGroupName(group.GetName()); err != nil {
+// toolDeleteGroup implements the delete_group tool.
+func (p *MattermostToolProvider) toolDeleteGroup(mcpContext *MCPToolContext, args DeleteGroupArgs) (string, error) {
+	if err := requireID("group_id", args.GroupID); err != nil {
 		return "", err
 	}
-
-	if group.AllowReference {
-		patch.AllowReference = nil
-		if patch.DisplayName == nil && patch.Description == nil {
-			return fmt.Sprintf("Group '%s' (ID: %s) is already mentionable; the mention handle was left unchanged", group.DisplayName, group.Id), nil
-		}
-		return "", nil
+	group, err := requireCustomGroup(mcpContext, args.GroupID, "deleted")
+	if err != nil {
+		return "", err
 	}
+	if _, _, err := mcpContext.Client.DeleteGroup(mcpContext.Ctx, args.GroupID); err != nil {
+		return "", fmt.Errorf("error deleting group: %w", err)
+	}
+	return fmt.Sprintf("Successfully deleted custom group '%s' (ID: %s)", group.DisplayName, group.Id), nil
+}
 
-	name := group.GetName()
-	patch.Name = &name
-	return "", nil
+// requireCustomGroup fetches a group and refuses any that is not a custom group.
+// A failed lookup is returned as an error so the caller never acts on an
+// unverified group.
+func requireCustomGroup(mcpContext *MCPToolContext, groupID, action string) (*model.Group, error) {
+	group, _, err := mcpContext.Client.GetGroup(mcpContext.Ctx, groupID, "")
+	if err != nil {
+		return nil, fmt.Errorf("error fetching group: %w", err)
+	}
+	if group.Source != model.GroupSourceCustom {
+		return nil, fmt.Errorf("group %s has source %q; only custom groups can be %s with this tool", group.Id, group.Source, action)
+	}
+	return group, nil
 }
 
 func validateGroupDisplayName(displayName string) error {

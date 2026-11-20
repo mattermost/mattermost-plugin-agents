@@ -57,7 +57,7 @@ Documentation is in the [`docs`](docs/) directory. The same pages are published 
 **For developers**
 
 - [Mattermost MCP server](docs/mcp_server.md): Connect Claude Code, Claude Desktop, Cursor, VS Code, and other MCP clients to Mattermost
-- [Mattermost MCP tool reference](docs/mcp_tools.md): All 123 built-in tools
+- [Mattermost MCP tool reference](docs/mcp_tools.md): All 124 built-in tools
 - [LLM Bridge for plugins](docs/llm_bridge.md): Call agents and services from another plugin
 - [Load testing](docs/load-testing.md): Configure the in-process mock LLM and the load-test-ng Agents controller
 

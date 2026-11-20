@@ -6,9 +6,11 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -174,193 +176,216 @@ func TestToolCreateGroupAPIError(t *testing.T) {
 	assert.Contains(t, err.Error(), "error creating group")
 }
 
-func TestToolUpdateGroup(t *testing.T) {
-	displayName := "Platform Engineering"
-	name := "platform-eng"
-	allow := true
-	deny := false
-	cleared := ""
+// groupAPIRecorder is a fake group endpoint that records the write requests it receives.
+type groupAPIRecorder struct {
+	mu      sync.Mutex
+	patches []map[string]any
+	deletes int
+}
+
+func (r *groupAPIRecorder) snapshot() (patches []map[string]any, deletes int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]map[string]any(nil), r.patches...), r.deletes
+}
+
+// newGroupAPI serves GET, PUT /patch and DELETE for one group. A zero
+// lookupStatus returns the stored group; any other value fails the lookup.
+func newGroupAPI(t *testing.T, stored model.Group, lookupStatus, writeStatus int) (*groupAPIRecorder, *httptest.Server) {
+	t.Helper()
+	rec := &groupAPIRecorder{}
+	respond := func(w http.ResponseWriter, status int, body any) {
+		w.Header().Set("Content-Type", "application/json")
+		if status != 0 {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"id":"api.error","message":"upstream detail","status_code":` + fmt.Sprint(status) + `}`))
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(body))
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/groups/"+stored.Id, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			respond(w, lookupStatus, &stored)
+		case http.MethodDelete:
+			rec.mu.Lock()
+			rec.deletes++
+			rec.mu.Unlock()
+			respond(w, writeStatus, &stored)
+		default:
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+		}
+	})
+	mux.HandleFunc("/api/v4/groups/"+stored.Id+"/patch", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		var body map[string]any
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		// GroupPatch encodes unset fields as null, which the server treats as unchanged.
+		maps.DeleteFunc(body, func(_ string, v any) bool { return v == nil })
+		rec.mu.Lock()
+		rec.patches = append(rec.patches, body)
+		rec.mu.Unlock()
+
+		patched := stored
+		if v, ok := body["display_name"].(string); ok {
+			patched.DisplayName = v
+		}
+		respond(w, writeStatus, &patched)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return rec, ts
+}
+
+func newRegisteredProvider(t *testing.T, serverURL string) *MattermostToolProvider {
+	t.Helper()
+	provider := newTestProvider(t, serverURL)
+	provider.accessMode = AccessModeRemote
+	return provider
+}
+
+// callRegisteredTool runs a tool through the provider's registration, so the
+// registered name, schema and argument decoding are all exercised.
+func callRegisteredTool(t *testing.T, provider *MattermostToolProvider, mcpCtx *MCPToolContext, name string, args map[string]any) (string, error) {
+	t.Helper()
+	raw, err := json.Marshal(args)
+	require.NoError(t, err)
+	for _, tool := range provider.mcpTools() {
+		if tool.Name == name {
+			return tool.Resolver(mcpCtx, func(dst any) error { return json.Unmarshal(raw, dst) })
+		}
+	}
+	require.Failf(t, "tool not registered", "%s", name)
+	return "", nil
+}
+
+func TestGroupWriteToolsRegistration(t *testing.T) {
+	provider := newRegisteredProvider(t, "https://mm.example.com")
+	tools := map[string]MCPTool{}
+	for _, tool := range provider.mcpTools() {
+		tools[tool.Name] = tool
+	}
+
+	tests := []struct {
+		name          string
+		wantRequired  []string
+		wantAbsent    []string
+		wantPropCount int
+	}{
+		{"create_group", []string{"display_name", "name"}, []string{"allow_reference", "group_id"}, 3},
+		{"update_group", []string{"group_id"}, []string{"allow_reference"}, 4},
+		{"delete_group", []string{"group_id"}, []string{"allow_reference", "display_name", "name"}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, ok := tools[tt.name]
+			require.True(t, ok, "tool is not registered")
+			assert.False(t, tool.ReadOnly, "group write tools must stay state-changing so they require approval")
+			require.NotNil(t, tool.Schema)
+			assert.ElementsMatch(t, tt.wantRequired, tool.Schema.Required)
+			assert.Len(t, tool.Schema.Properties, tt.wantPropCount)
+			for _, absent := range tt.wantAbsent {
+				assert.NotContains(t, tool.Schema.Properties, absent)
+			}
+		})
+	}
+}
+
+func TestUpdateGroupTool(t *testing.T) {
+	customGroup := func(id string) model.Group {
+		name := "platform-eng"
+		return model.Group{Id: id, Name: &name, DisplayName: "Engineering", Source: model.GroupSourceCustom, AllowReference: true}
+	}
+	withSource := func(source model.GroupSource) func(string) model.Group {
+		return func(id string) model.Group {
+			g := customGroup(id)
+			g.Source = source
+			return g
+		}
+	}
 
 	tests := []struct {
 		name         string
-		stored       *model.Group
-		args         UpdateGroupArgs
+		stored       func(id string) model.Group
+		lookupStatus int
+		writeStatus  int
+		args         map[string]any
 		wantErr      string
-		wantNoPatch  bool
+		wantPatch    map[string]any
 		wantText     string
-		wantName     string
-		wantNameNil  bool
-		wantAllow    *bool
-		wantAllowNil bool
-		wantDisplay  string
-		wantDescNil  bool
-		wantDesc     *string
-		wantExact    bool
 	}{
 		{
-			name:        "patches supplied fields",
-			args:        UpdateGroupArgs{DisplayName: &displayName, Name: &name, AllowReference: &allow},
-			wantText:    "Successfully updated group 'Platform Engineering'",
-			wantName:    "platform-eng",
-			wantAllow:   &allow,
-			wantDisplay: displayName,
-			wantDescNil: true,
+			name:      "patches supplied fields without mentionability",
+			stored:    customGroup,
+			args:      map[string]any{"display_name": "Platform Engineering", "name": "platform", "description": "Platform team"},
+			wantPatch: map[string]any{"display_name": "Platform Engineering", "name": "platform", "description": "Platform team"},
+			wantText:  "Successfully updated group 'Platform Engineering'",
 		},
 		{
-			name:      "clears description",
-			args:      UpdateGroupArgs{Description: &cleared},
+			name:      "clears the description",
+			stored:    customGroup,
+			args:      map[string]any{"description": ""},
+			wantPatch: map[string]any{"description": ""},
 			wantText:  "Successfully updated group",
-			wantExact: true,
 		},
 		{
-			name: "enabling mentions keeps the stored handle",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    displayName,
-				Source:         model.GroupSourceLdap,
-				AllowReference: false,
-			},
-			args:        UpdateGroupArgs{AllowReference: &allow},
-			wantText:    "Successfully updated group",
-			wantName:    "platform-eng",
-			wantAllow:   &allow,
-			wantDescNil: true,
+			name:      "allow_reference is not forwarded",
+			stored:    customGroup,
+			args:      map[string]any{"display_name": "Platform", "allow_reference": false},
+			wantPatch: map[string]any{"display_name": "Platform"},
+			wantText:  "Successfully updated group",
 		},
 		{
-			name: "already mentionable does not rewrite the handle",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    displayName,
-				Source:         model.GroupSourceCustom,
-				AllowReference: true,
-			},
-			args:        UpdateGroupArgs{AllowReference: &allow},
-			wantNoPatch: true,
-			wantText:    "already mentionable",
+			name:    "ldap group is refused",
+			stored:  withSource(model.GroupSourceLdap),
+			args:    map[string]any{"display_name": "Platform"},
+			wantErr: "only custom groups can be updated",
 		},
 		{
-			name: "other field updates do not resend mentionability",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    "Engineering",
-				Source:         model.GroupSourceCustom,
-				AllowReference: true,
-			},
-			args:         UpdateGroupArgs{DisplayName: &displayName, AllowReference: &allow},
-			wantText:     "Successfully updated group 'Platform Engineering'",
-			wantNameNil:  true,
-			wantAllowNil: true,
-			wantDisplay:  displayName,
+			name:    "plugin group is refused",
+			stored:  withSource(model.GroupSource("plugin_example")),
+			args:    map[string]any{"display_name": "Platform"},
+			wantErr: "only custom groups can be updated",
 		},
 		{
-			name: "repeating the current handle still applies other fields",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    "Engineering",
-				Source:         model.GroupSourceCustom,
-				AllowReference: true,
-			},
-			args:         UpdateGroupArgs{Name: &name, AllowReference: &allow, Description: &cleared},
-			wantText:     "Successfully updated group",
-			wantNameNil:  true,
-			wantAllowNil: true,
-			wantDesc:     &cleared,
+			name:         "failed lookup fails closed",
+			stored:       customGroup,
+			lookupStatus: http.StatusInternalServerError,
+			args:         map[string]any{"display_name": "Platform"},
+			wantErr:      "error fetching group",
 		},
 		{
-			name: "repeating only the current handle does not patch",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    displayName,
-				Source:         model.GroupSourceCustom,
-				AllowReference: true,
-			},
-			args:        UpdateGroupArgs{Name: &name, AllowReference: &allow},
-			wantNoPatch: true,
-			wantText:    "already mentionable",
+			name:         "missing group fails closed",
+			stored:       customGroup,
+			lookupStatus: http.StatusNotFound,
+			args:         map[string]any{"display_name": "Platform"},
+			wantErr:      "error fetching group",
 		},
 		{
-			name: "custom group cannot turn mentions off",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    displayName,
-				Source:         model.GroupSourceCustom,
-				AllowReference: true,
-			},
-			args:        UpdateGroupArgs{AllowReference: &deny},
-			wantErr:     "must remain mentionable",
-			wantNoPatch: true,
-		},
-		{
-			name: "ldap group can turn mentions off",
-			stored: &model.Group{
-				Name:           &name,
-				DisplayName:    displayName,
-				Source:         model.GroupSourceLdap,
-				AllowReference: true,
-			},
-			args:        UpdateGroupArgs{AllowReference: &deny},
-			wantText:    "Successfully updated group",
-			wantNameNil: true,
-			wantAllow:   &deny,
-		},
-		{
-			name: "enabling mentions without a handle asks for one",
-			stored: &model.Group{
-				DisplayName:    "All",
-				Source:         model.GroupSourceLdap,
-				AllowReference: false,
-			},
-			args:        UpdateGroupArgs{AllowReference: &allow},
-			wantErr:     "name is required to allow mentions",
-			wantNoPatch: true,
+			name:        "patch permission error is returned",
+			stored:      customGroup,
+			writeStatus: http.StatusForbidden,
+			args:        map[string]any{"display_name": "Platform"},
+			wantErr:     "error updating group",
+			wantPatch:   map[string]any{"display_name": "Platform"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			groupID := model.NewId()
-			var got *model.GroupPatch
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/v4/groups/"+groupID, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, http.MethodGet, r.Method)
-				stored := model.Group{Id: groupID, DisplayName: "Engineering", Source: model.GroupSourceCustom}
-				if tt.stored != nil {
-					stored = *tt.stored
-					stored.Id = groupID
-				}
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.NewEncoder(w).Encode(&stored))
-			})
-			mux.HandleFunc("/api/v4/groups/"+groupID+"/patch", func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, http.MethodPut, r.Method)
-				var body model.GroupPatch
-				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				got = &body
-				patchedName := "engineering"
-				if body.Name != nil {
-					patchedName = *body.Name
-				}
-				patchedDisplay := "Engineering"
-				if body.DisplayName != nil {
-					patchedDisplay = *body.DisplayName
-				}
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.NewEncoder(w).Encode(&model.Group{
-					Id:          groupID,
-					Name:        &patchedName,
-					DisplayName: patchedDisplay,
-					Source:      model.GroupSourceCustom,
-				}))
-			})
-			ts := httptest.NewServer(mux)
-			defer ts.Close()
+			rec, ts := newGroupAPI(t, tt.stored(groupID), tt.lookupStatus, tt.writeStatus)
+			provider := newRegisteredProvider(t, ts.URL)
+			mcpCtx := &MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context(), AccessMode: AccessModeRemote}
 
-			provider := newTestProvider(t, ts.URL)
-			mcpCtx := &MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context()}
-			args := tt.args
-			args.GroupID = groupID
+			args := map[string]any{"group_id": groupID}
+			maps.Copy(args, tt.args)
+			out, err := callRegisteredTool(t, provider, mcpCtx, "update_group", args)
 
-			out, err := provider.toolUpdateGroup(mcpCtx, args)
+			patches, deletes := rec.snapshot()
+			assert.Zero(t, deletes)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
@@ -369,38 +394,64 @@ func TestToolUpdateGroup(t *testing.T) {
 				assert.Contains(t, out, tt.wantText)
 				assert.Contains(t, out, groupID)
 			}
-			if tt.wantNoPatch {
-				assert.Nil(t, got)
+			if tt.wantPatch == nil {
+				assert.Empty(t, patches)
 				return
 			}
-			require.NotNil(t, got)
-			if tt.wantExact {
-				assert.Equal(t, model.GroupPatch{Description: &cleared}, *got)
+			require.Len(t, patches, 1)
+			assert.Equal(t, tt.wantPatch, patches[0])
+		})
+	}
+}
+
+func TestDeleteGroupTool(t *testing.T) {
+	groupWithSource := func(source model.GroupSource) func(string) model.Group {
+		return func(id string) model.Group {
+			name := "platform-eng"
+			return model.Group{Id: id, Name: &name, DisplayName: "Engineering", Source: source, AllowReference: true}
+		}
+	}
+
+	tests := []struct {
+		name         string
+		stored       func(id string) model.Group
+		lookupStatus int
+		writeStatus  int
+		args         map[string]any
+		wantErr      string
+		wantDeletes  int
+	}{
+		{name: "deletes a custom group", stored: groupWithSource(model.GroupSourceCustom), wantDeletes: 1},
+		{name: "ldap group is refused", stored: groupWithSource(model.GroupSourceLdap), wantErr: "only custom groups can be deleted"},
+		{name: "plugin group is refused", stored: groupWithSource(model.GroupSource("plugin_example")), wantErr: "only custom groups can be deleted"},
+		{name: "failed lookup fails closed", stored: groupWithSource(model.GroupSourceCustom), lookupStatus: http.StatusInternalServerError, wantErr: "error fetching group"},
+		{name: "missing group fails closed", stored: groupWithSource(model.GroupSourceCustom), lookupStatus: http.StatusNotFound, wantErr: "error fetching group"},
+		{name: "delete permission error is returned", stored: groupWithSource(model.GroupSourceCustom), writeStatus: http.StatusForbidden, wantErr: "error deleting group", wantDeletes: 1},
+		{name: "malformed id is rejected before any request", stored: groupWithSource(model.GroupSourceCustom), args: map[string]any{"group_id": "bad"}, wantErr: "must be a valid ID"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groupID := model.NewId()
+			rec, ts := newGroupAPI(t, tt.stored(groupID), tt.lookupStatus, tt.writeStatus)
+			provider := newRegisteredProvider(t, ts.URL)
+			mcpCtx := &MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context(), AccessMode: AccessModeRemote}
+
+			args := map[string]any{"group_id": groupID}
+			maps.Copy(args, tt.args)
+			out, err := callRegisteredTool(t, provider, mcpCtx, "delete_group", args)
+
+			patches, deletes := rec.snapshot()
+			assert.Empty(t, patches)
+			assert.Equal(t, tt.wantDeletes, deletes)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
 				return
 			}
-			if tt.wantNameNil {
-				assert.Nil(t, got.Name)
-			} else if tt.wantName != "" {
-				require.NotNil(t, got.Name)
-				assert.Equal(t, tt.wantName, *got.Name)
-			}
-			if tt.wantAllowNil {
-				assert.Nil(t, got.AllowReference)
-			} else if tt.wantAllow != nil {
-				require.NotNil(t, got.AllowReference)
-				assert.Equal(t, *tt.wantAllow, *got.AllowReference)
-			}
-			if tt.wantDisplay != "" {
-				require.NotNil(t, got.DisplayName)
-				assert.Equal(t, tt.wantDisplay, *got.DisplayName)
-			}
-			if tt.wantDescNil {
-				assert.Nil(t, got.Description)
-			}
-			if tt.wantDesc != nil {
-				require.NotNil(t, got.Description)
-				assert.Equal(t, *tt.wantDesc, *got.Description)
-			}
+			require.NoError(t, err)
+			assert.Contains(t, out, "Successfully deleted custom group 'Engineering'")
+			assert.Contains(t, out, groupID)
 		})
 	}
 }
