@@ -36,6 +36,26 @@ type EvalLogLine struct {
 	// on the file's other lines instead.
 	Complete    bool `json:"complete,omitempty"`
 	RunComplete bool `json:"-"`
+	// Usage is the token usage of a whole trial, set on its last line.
+	Usage *TrialUsage `json:"usage,omitempty"`
+}
+
+// TrialUsage matches evals.TrialUsage.
+type TrialUsage struct {
+	Agent  RoleUsage `json:"agent"`
+	Grader RoleUsage `json:"grader"`
+}
+
+// RoleUsage matches evals.RoleUsage.
+type RoleUsage struct {
+	Model             string  `json:"model,omitempty"`
+	Calls             int     `json:"calls"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedReadTokens  int64   `json:"cached_read_tokens,omitempty"`
+	CachedWriteTokens int64   `json:"cached_write_tokens,omitempty"`
+	OutputTokens      int64   `json:"output_tokens"`
+	ReasoningTokens   int64   `json:"reasoning_tokens,omitempty"`
+	CostUSD           float64 `json:"cost_usd,omitempty"`
 }
 
 var (

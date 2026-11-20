@@ -77,3 +77,45 @@ func TestRunSummaryCountsFailures(t *testing.T) {
 		t.Errorf("pre-existing = %+v, regressions = %+v; want the failure to be pre-existing", s.PreExisting, s.Regressions)
 	}
 }
+
+func TestUsageIsSummedPerProvider(t *testing.T) {
+	withUsage := func(line EvalLogLine, agent, grader RoleUsage) EvalLogLine {
+		line.Usage = &TrialUsage{Agent: agent, Grader: grader}
+		return line
+	}
+	r := buildReport(buildResultSet([]EvalLogLine{
+		withUsage(graded(catOpenAI, "is a cat", 0, true),
+			RoleUsage{InputTokens: 1_000_000, CachedReadTokens: 500_000, OutputTokens: 2_000, CostUSD: 0.60},
+			RoleUsage{InputTokens: 1_000, OutputTokens: 100, CostUSD: 0.01}),
+		withUsage(graded(catOpenAI, "is a cat", 1, true),
+			RoleUsage{InputTokens: 1_000_000, CachedReadTokens: 500_000, OutputTokens: 2_000, CostUSD: 0.60},
+			RoleUsage{InputTokens: 1_000, OutputTokens: 100, CostUSD: 0.01}),
+		// A model without a known price has tokens but no cost.
+		withUsage(graded(catAnthropic, "is a cat", 0, true),
+			RoleUsage{InputTokens: 10_000, OutputTokens: 500},
+			RoleUsage{InputTokens: 1_000, OutputTokens: 100, CostUSD: 0.01}),
+	}), nil, []string{"openai", "anthropic"})
+
+	summary := r.summaryMarkdown()
+	for _, want := range []string{
+		"| OpenAI | ✅ Passing | 1/1 | 2.0M in / 4.0K out (50% cached) | $1.22 ($1.20 + $0.02 grading) |",
+		"| Anthropic | ✅ Passing | 1/1 | 10.0K in / 500 out | $0.01+ ($0.00+ + $0.01 grading) |",
+		"Total cost at list prices: $1.23+ ($1.20+ + $0.03 grading)",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary is missing %q:\n%s", want, summary)
+		}
+	}
+
+	data, err := json.Marshal(r.runSummary(time.Now(), "abcdef1234", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored runSummary
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if trend := trendMarkdown([]runSummary{stored}, 0); !strings.Contains(trend, "| 1/1 | $1.22 ($1.20 + $0.02 grading) |") {
+		t.Errorf("trend is missing the OpenAI cost:\n%s", trend)
+	}
+}
