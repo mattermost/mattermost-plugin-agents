@@ -20,6 +20,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -255,6 +256,7 @@ type fakePlatform struct {
 	deactivated   []string
 	posts         []*model.Post
 	events        int
+	addMemberErr  map[string]error
 }
 
 func (f *fakePlatform) GetUser(id string) (*model.User, error) {
@@ -286,19 +288,39 @@ func (f *fakePlatform) RemoveTeamMember(teamID, _ string) error {
 	f.removedTeams = append(f.removedTeams, teamID)
 	return nil
 }
-func (f *fakePlatform) AddChannelMember(string, string) error { return nil }
+func (f *fakePlatform) AddChannelMember(channelID, userID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.addMemberErr[userID]; err != nil {
+		return err
+	}
+	if !slices.Contains(f.members[channelID], userID) {
+		f.members[channelID] = append(f.members[channelID], userID)
+	}
+	return nil
+}
 
 // RemoveChannelMember refuses the default channel, as Mattermost does.
-func (f *fakePlatform) RemoveChannelMember(channelID, _ string) error {
+func (f *fakePlatform) RemoveChannelMember(channelID, userID string) error {
 	if channelID == model.DefaultChannelName {
 		return errors.New("unable to remove user from the default channel")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.botChannels = slices.DeleteFunc(f.botChannels, func(id string) bool { return id == channelID })
+	if userID == "botuser" {
+		f.botChannels = slices.DeleteFunc(f.botChannels, func(id string) bool { return id == channelID })
+	}
+	f.members[channelID] = slices.DeleteFunc(f.members[channelID], func(id string) bool { return id == userID })
 	return nil
 }
+func (f *fakePlatform) ChannelMemberIDs(channelID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.members[channelID]), nil
+}
 func (f *fakePlatform) GetChannelMember(channelID, userID string) (*model.ChannelMember, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if slices.Contains(f.members[channelID], userID) {
 		return &model.ChannelMember{ChannelId: channelID, UserId: userID}, nil
 	}
@@ -1017,7 +1039,13 @@ func TestProjectAgentsGetTheirEmbeddedTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t, true, nil)
 			f.store.agents = []llm.BotConfig{tt.agent}
-			require.NoError(t, f.svc.BackfillAgentTools())
+			_, err := BackfillAgentTools(f.store)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, f.store.agents[0].EnabledMCPTools)
+
+			updated, err := BackfillAgentTools(f.store)
+			require.NoError(t, err)
+			assert.Zero(t, updated, "a peer activating later finds nothing left to write")
 			assert.Equal(t, tt.want, f.store.agents[0].EnabledMCPTools)
 		})
 	}
@@ -1030,4 +1058,116 @@ func TestProjectAgentsGetTheirEmbeddedTools(t *testing.T) {
 		assert.Equal(t, ProjectEmbeddedTools(), f.store.agents[0].EnabledMCPTools)
 		assert.Contains(t, f.store.agents[0].EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "create_channel_bookmark"})
 	})
+}
+
+func TestBoardCreationAddsTheProjectMembers(t *testing.T) {
+	f := newFixture(t, true, activeProject())
+	f.platform.addMemberErr = map[string]error{"other": errors.New("add failed")}
+	tool := llm.Tool{
+		Name:         "boards__com_mattermost_boardsv2__create_board",
+		ServerOrigin: BoardsOrigin,
+		Schema:       map[string]any{"type": "object", "properties": map[string]any{}},
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return `{"board":{"channel_id":"NEWB"}}`, nil
+		},
+	}
+	bound := NewBinder(activeProject(), false, f.svc.binderCallbacks(f.bot)).Bind([]llm.Tool{tool})
+	require.Len(t, bound, 1)
+
+	_, err := callTool(t, bound[0], map[string]any{})
+	require.NoError(t, err)
+	members, err := f.platform.ChannelMemberIDs("NEWB")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"botuser", "lead", "guest"}, members, "the bot's grant and everyone else in P join B, past one member's failure")
+}
+
+func TestBoardMembershipFollowsTheProjectChannel(t *testing.T) {
+	withBoard := func(p *store.Project) { p.BoardChannelID = "B" }
+	tests := []struct {
+		name     string
+		enabled  bool
+		project  func(*store.Project)
+		channel  string
+		user     string
+		left     bool
+		startInB []string
+		wantInB  []string
+	}{
+		{name: "joining P joins B", enabled: true, project: withBoard, channel: "P", user: "newcomer", wantInB: []string{"newcomer"}},
+		{name: "leaving P leaves B", enabled: true, project: withBoard, channel: "P", user: "other", left: true, startInB: []string{"other", "lead"}, wantInB: []string{"lead"}},
+		{name: "the bot stays in B", enabled: true, project: withBoard, channel: "P", user: "botuser", left: true, startInB: []string{"botuser"}, wantInB: []string{"botuser"}},
+		{name: "no board yet", enabled: true, project: func(*store.Project) {}, channel: "P", user: "newcomer"},
+		{name: "ended project", enabled: true, project: func(p *store.Project) { withBoard(p); p.State = store.ProjectStateEnded }, channel: "P", user: "newcomer"},
+		{name: "feature off", project: withBoard, channel: "P", user: "newcomer"},
+		{name: "another channel", enabled: true, project: withBoard, channel: "elsewhere", user: "newcomer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := activeProject()
+			tt.project(project)
+			f := newFixture(t, tt.enabled, project)
+			f.platform.members["B"] = slices.Clone(tt.startInB)
+			if tt.left {
+				require.NoError(t, f.svc.OnChannelMemberLeft(tt.channel, tt.user))
+			} else {
+				require.NoError(t, f.svc.OnChannelMemberJoined(tt.channel, tt.user))
+			}
+			members, err := f.platform.ChannelMemberIDs("B")
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.wantInB, members)
+		})
+	}
+}
+
+type fakeArtifacts struct {
+	channels map[string]string
+}
+
+func (fakeArtifacts) SaveMarkdown(context.Context, channelartifacts.Actor, string, string, []byte) (string, error) {
+	return "", errors.New("not used")
+}
+
+func (a fakeArtifacts) ChannelOf(_ context.Context, _ channelartifacts.Actor, id string) (string, error) {
+	if channelID, ok := a.channels[id]; ok {
+		return channelID, nil
+	}
+	return "", channelartifacts.ErrNotFound
+}
+
+func TestLinkProjectCharter(t *testing.T) {
+	tests := []struct {
+		name       string
+		artifactID string
+		want       string
+		wantErr    bool
+	}{
+		{name: "artifact in the project channel", artifactID: "charter", want: "charter"},
+		{name: "artifact in another channel", artifactID: "elsewhere", wantErr: true},
+		{name: "unknown artifact", artifactID: "missing", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, true, activeProject())
+			f.svc.deps.Artifacts = fakeArtifacts{channels: map[string]string{"charter": "P", "elsewhere": "OTHER"}}
+			llmCtx := &llm.Context{Channel: &model.Channel{Id: "P"}, RequestingUser: &model.User{Id: "lead"}}
+			var link llm.Tool
+			for _, tool := range f.svc.ToolsForRequest(f.bot, llmCtx) {
+				if tool.Name == ToolLinkCharter {
+					link = tool
+				}
+			}
+			require.NotNil(t, link.Resolver, "project turns offer the charter link")
+
+			_, err := callTool(t, link, map[string]any{"artifact_id": tt.artifactID})
+			project, getErr := f.store.GetProject("P")
+			require.NoError(t, getErr)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Empty(t, project.CharterArtifactID)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, project.CharterArtifactID)
+		})
+	}
 }

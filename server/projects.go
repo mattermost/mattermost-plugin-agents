@@ -73,6 +73,22 @@ func (p projectPlatform) RemoveChannelMember(channelID, userID string) error {
 func (p projectPlatform) GetChannelMember(channelID, userID string) (*model.ChannelMember, error) {
 	return p.client.Channel.GetMember(channelID, userID)
 }
+func (p projectPlatform) ChannelMemberIDs(channelID string) ([]string, error) {
+	const perPage = 200
+	var ids []string
+	for page := 0; ; page++ {
+		members, err := p.client.Channel.ListMembers(channelID, page, perPage)
+		if err != nil {
+			return nil, err
+		}
+		for _, member := range members {
+			ids = append(ids, member.UserId)
+		}
+		if len(members) < perPage {
+			return ids, nil
+		}
+	}
+}
 func (p projectPlatform) SetChannelAdmin(channelID, userID string, admin bool) error {
 	roles := model.ChannelUserRoleId
 	if admin {
@@ -184,6 +200,36 @@ func (a projectArtifacts) SaveMarkdown(ctx context.Context, actor channelartifac
 	return entry.ID, nil
 }
 
+func (a projectArtifacts) ChannelOf(ctx context.Context, actor channelartifacts.Actor, artifactID string) (string, error) {
+	entry, err := a.library.Get(ctx, actor, artifactID)
+	if err != nil {
+		return "", err
+	}
+	return entry.ChannelID, nil
+}
+
+// UserHasJoinedChannel adds people who join a project channel to its board
+// channel.
+func (p *Plugin) UserHasJoinedChannel(_ *plugin.Context, member *model.ChannelMember, _ *model.User) {
+	if p.projects == nil || member == nil {
+		return
+	}
+	if err := p.projects.OnChannelMemberJoined(member.ChannelId, member.UserId); err != nil {
+		p.pluginAPI.Log.Error("Failed to add a project member to the board channel", "channel_id", member.ChannelId, "user_id", member.UserId, "error", err)
+	}
+}
+
+// UserHasLeftChannel removes people who leave a project channel from its
+// board channel.
+func (p *Plugin) UserHasLeftChannel(_ *plugin.Context, member *model.ChannelMember, _ *model.User) {
+	if p.projects == nil || member == nil {
+		return
+	}
+	if err := p.projects.OnChannelMemberLeft(member.ChannelId, member.UserId); err != nil {
+		p.pluginAPI.Log.Error("Failed to remove a former project member from the board channel", "channel_id", member.ChannelId, "user_id", member.UserId, "error", err)
+	}
+}
+
 // ChannelWillBeArchived ends the project of an archived project channel. It
 // never blocks the archive.
 func (p *Plugin) ChannelWillBeArchived(c *plugin.Context, channel *model.Channel) string {
@@ -195,6 +241,10 @@ func (p *Plugin) ChannelWillBeArchived(c *plugin.Context, channel *model.Channel
 	}
 	return ""
 }
+
+// playbooksActingUserHeader names the user a plugin acts for; Playbooks
+// trusts it alongside the Mattermost-Plugin-ID header core sets.
+const playbooksActingUserHeader = "Mattermost-Plugin-Acting-User-Id"
 
 // projectPlaybooks reads and finishes checklist runs through the Playbooks
 // plugin's REST API, as the given user.
@@ -218,7 +268,7 @@ func (p projectPlaybooks) do(ctx context.Context, method, path, userID string) (
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Mattermost-User-Id", userID)
+	req.Header.Set(playbooksActingUserHeader, userID)
 	resp := p.api.PluginHTTP(req)
 	if resp == nil {
 		return nil, errors.New("the Playbooks plugin is not available")

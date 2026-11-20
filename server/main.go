@@ -238,6 +238,13 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Error("Failed to backfill versions of some agents", "error", backfillErr.Error())
 	}
 
+	// Runs before agents are first loaded, so this node loads the result
+	// whether it or a peer wrote it.
+	projectToolsBackfilled, projectToolsErr := projects.BackfillAgentTools(p.store)
+	if projectToolsErr != nil {
+		pluginAPI.Log.Error("Failed to give project agents their tools", "error", projectToolsErr.Error())
+	}
+
 	// Runs after the ID migration (it matches agents to services by ID) and
 	// before runtime config is loaded, so every node — including a follower
 	// that found nothing left to migrate — loads the migrated policies and
@@ -341,6 +348,10 @@ func (p *Plugin) OnActivate() error {
 		// If we fail to ensure bots, we log the error but do not return
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
+	} else if projectToolsBackfilled > 0 {
+		if pubErr := p.PublishAgentUpdate(""); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
+		}
 	}
 	migrateAndRefresh("activation")
 
@@ -740,9 +751,6 @@ func (p *Plugin) OnActivate() error {
 	apiService.AgentConfigService().SetAuthorizer(projectsService.Authorizer(apiService.AgentConfigService().Authorizer()))
 	apiService.SetProjects(projectsService)
 	p.projects = projectsService
-	if err := projectsService.BackfillAgentTools(); err != nil {
-		p.API.LogError("Failed to give project agents their tools", "error", err.Error())
-	}
 	projectsService.StartCheckinTicker()
 
 	// Apply OpenTelemetry config now and re-apply on every config change so

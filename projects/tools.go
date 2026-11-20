@@ -22,6 +22,7 @@ const (
 	ToolProposeProjectEnd = "propose_project_end"
 	ToolStartCursorThread = "start_cursor_thread"
 	ToolStartProject      = "start_project"
+	ToolLinkCharter       = "link_project_charter"
 )
 
 // ProjectEndProposalProp marks the post in which the agent proposes ending
@@ -32,6 +33,10 @@ const maxStatusNoteLength = 500
 
 type statusNoteArgs struct {
 	Note string `json:"note" jsonschema:"One or two sentences on where the project stands."`
+}
+
+type linkCharterArgs struct {
+	ArtifactID string `json:"artifact_id" jsonschema:"The ID of the charter in the project channel's artifact library."`
 }
 
 type proposeEndArgs struct {
@@ -74,7 +79,7 @@ func (s *Service) ToolsForRequest(bot *bots.Bot, llmCtx *llm.Context) []llm.Tool
 	if err != nil || !project.Live() || project.AgentID != cfg.ID {
 		return nil
 	}
-	tools := []llm.Tool{s.statusNoteTool(project), s.proposeEndTool(project)}
+	tools := []llm.Tool{s.statusNoteTool(project), s.linkCharterTool(project), s.proposeEndTool(project)}
 	if llmCtx.ToolCatalog.InteractiveUserPresent && llmCtx.RequestingUser != nil {
 		tools = append(tools, s.startCursorThreadTool(bot, project))
 	}
@@ -105,6 +110,39 @@ func (s *Service) statusNoteTool(project *store.Project) llm.Tool {
 			}
 			s.broadcast(channelID)
 			return "Status note updated.", nil
+		},
+	}
+}
+
+func (s *Service) linkCharterTool(project *store.Project) llm.Tool {
+	channelID := project.ChannelID
+	actor := s.ArtifactActor(project)
+	return llm.Tool{
+		Name:        ToolLinkCharter,
+		Description: "Record an artifact saved in the project channel's artifact library as the project charter, so the project panel links to it.",
+		Schema:      llm.NewJSONSchemaFromStruct[linkCharterArgs](),
+		AutoExecute: true,
+		Resolver: func(ctx context.Context, _ *llm.Context, get llm.ToolArgumentGetter) (string, error) {
+			var args linkCharterArgs
+			if err := get(&args); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			if s.deps.Artifacts == nil {
+				return "", errors.New("the artifact library is not available")
+			}
+			artifactID := strings.TrimSpace(args.ArtifactID)
+			artifactChannelID, err := s.deps.Artifacts.ChannelOf(ctx, actor, artifactID)
+			if err != nil {
+				return "", fmt.Errorf("failed to find the artifact: %w", err)
+			}
+			if artifactChannelID != channelID {
+				return "", errors.New("the charter must be an artifact in the project channel")
+			}
+			if err := s.deps.Store.SetProjectArtifact(channelID, false, artifactID); err != nil {
+				return "", fmt.Errorf("failed to link the charter: %w", err)
+			}
+			s.broadcast(channelID)
+			return "Charter linked.", nil
 		},
 	}
 }

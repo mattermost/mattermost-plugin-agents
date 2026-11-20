@@ -135,7 +135,8 @@ func TestProjectTurnCatalog(t *testing.T) {
 			if tt.agentCfg != nil {
 				tt.agentCfg(&cfg)
 				f.store.agents = []llm.BotConfig{cfg}
-				require.NoError(t, f.svc.BackfillAgentTools())
+				_, err := BackfillAgentTools(f.store)
+				require.NoError(t, err)
 				cfg = f.store.agents[0]
 			}
 			bot := bots.NewBot(cfg, llm.ServiceConfig{}, &model.Bot{UserId: botUserID}, nil)

@@ -76,8 +76,6 @@ type Store interface {
 	ListProjectGrants(channelID string) ([]store.ProjectGrant, error)
 	RevokeProjectGrant(channelID, targetType, targetID string) error
 	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
-	ListAgents() ([]*llm.BotConfig, error)
-	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
 }
 
@@ -92,6 +90,7 @@ type Platform interface {
 	AddChannelMember(channelID, userID string) error
 	RemoveChannelMember(channelID, userID string) error
 	GetChannelMember(channelID, userID string) (*model.ChannelMember, error)
+	ChannelMemberIDs(channelID string) ([]string, error)
 	SetChannelAdmin(channelID, userID string, admin bool) error
 	// BotChannels returns every channel, on every team, userID belongs to.
 	BotChannels(userID string) ([]*model.Channel, error)
@@ -136,6 +135,8 @@ type WrapUps interface {
 // Artifacts saves Markdown to a channel's artifact library.
 type Artifacts interface {
 	SaveMarkdown(ctx context.Context, actor channelartifacts.Actor, channelID, title string, body []byte) (string, error)
+	// ChannelOf returns the channel of an artifact the actor may read.
+	ChannelOf(ctx context.Context, actor channelartifacts.Actor, artifactID string) (string, error)
 }
 
 // ChecklistSummary is the linked checklist run, as the viewer sees it.
@@ -912,30 +913,35 @@ func (s *Service) CheckTurn(_ context.Context, bot *bots.Bot, channel *model.Cha
 	return nil
 }
 
+// AgentStore reads and updates stored agents.
+type AgentStore interface {
+	ListAgents() ([]*llm.BotConfig, error)
+	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
+}
+
 // BackfillAgentTools gives project agents created before their embedded
-// Mattermost tools were seeded those tools. An agent with any MCP tool, or
-// with tools turned off, is left alone.
-func (s *Service) BackfillAgentTools() error {
-	agents, err := s.deps.Store.ListAgents()
+// Mattermost tools were seeded those tools, and returns how many it updated.
+// An agent with any MCP tool, or with tools turned off, is left alone. It
+// runs at activation before agents are loaded, so every node loads the
+// result.
+func BackfillAgentTools(agents AgentStore) (int, error) {
+	all, err := agents.ListAgents()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	updated := false
-	for _, agent := range agents {
+	updated := 0
+	for _, agent := range all {
 		if !agent.IsProjectAgent() || agent.DisableTools || agent.AutoEnableNewMCPTools || len(agent.EnabledMCPTools) > 0 {
 			continue
 		}
 		next := *agent
 		next.EnabledMCPTools = ProjectEmbeddedTools()
-		if err := s.deps.Store.UpdateAgent(&next, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem}); err != nil {
-			return fmt.Errorf("failed to give project agent %s its tools: %w", agent.ID, err)
+		if err := agents.UpdateAgent(&next, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem}); err != nil {
+			return updated, fmt.Errorf("failed to give project agent %s its tools: %w", agent.ID, err)
 		}
-		updated = true
+		updated++
 	}
-	if updated {
-		return s.deps.Bots.EnsureBots()
-	}
-	return nil
+	return updated, nil
 }
 
 // AgentRetired reports whether agent no longer leads a live project.
@@ -1016,6 +1022,9 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 			if err := s.grantChannelAdmin(project.ChannelID, boardChannelID, bot.BotUserID()); err != nil {
 				return err
 			}
+			if err := s.addBoardMembers(project.ChannelID, boardChannelID, bot.BotUserID()); err != nil {
+				return err
+			}
 			s.broadcast(project.ChannelID)
 			return nil
 		},
@@ -1027,6 +1036,64 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 			return nil
 		},
 	}
+}
+
+// addBoardMembers adds the members of the project channel to the board
+// channel, which Boards requires to read the board. One member failing
+// doesn't stop the rest.
+func (s *Service) addBoardMembers(channelID, boardChannelID, botUserID string) error {
+	members, err := s.deps.Platform.ChannelMemberIDs(channelID)
+	if err != nil {
+		return fmt.Errorf("failed to list the project channel's members: %w", err)
+	}
+	for _, userID := range members {
+		if userID == botUserID {
+			continue
+		}
+		if err := s.deps.Platform.AddChannelMember(boardChannelID, userID); err != nil {
+			s.deps.Platform.LogError("Failed to add a project member to the board channel", "channel_id", channelID, "board_channel_id", boardChannelID, "user_id", userID, "error", err)
+		}
+	}
+	return nil
+}
+
+// OnChannelMemberJoined adds whoever joins a live project channel to its
+// board channel.
+func (s *Service) OnChannelMemberJoined(channelID, userID string) error {
+	project, err := s.boardProject(channelID, userID)
+	if project == nil || err != nil {
+		return err
+	}
+	return s.deps.Platform.AddChannelMember(project.BoardChannelID, userID)
+}
+
+// OnChannelMemberLeft removes whoever leaves a live project channel from its
+// board channel.
+func (s *Service) OnChannelMemberLeft(channelID, userID string) error {
+	project, err := s.boardProject(channelID, userID)
+	if project == nil || err != nil {
+		return err
+	}
+	return s.deps.Platform.RemoveChannelMember(project.BoardChannelID, userID)
+}
+
+// boardProject returns the live project of channelID when it has a board
+// and userID isn't its agent, or nil.
+func (s *Service) boardProject(channelID, userID string) (*store.Project, error) {
+	if !s.enabled() {
+		return nil, nil
+	}
+	project, err := s.deps.Store.GetProject(channelID)
+	if errors.Is(err, store.ErrProjectNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !project.Live() || project.BoardChannelID == "" || userID == project.AgentBotUserID {
+		return nil, nil
+	}
+	return project, nil
 }
 
 // linkOnce records id with set, and accepts a link that already holds the

@@ -26,7 +26,7 @@ Cursor cloud agents:
 
 // setupInstructions are added to the setup conversation of a project agent.
 const setupInstructions = `You are setting up a new project channel with the people who started it. Work in this order:
-1. Charter first. Ask what the project is for, who it is for, what done looks like, and any deadline. Keep it to a few questions. Then write a short Markdown charter and save it to the channel's artifact library.
+1. Charter first. Ask what the project is for, who it is for, what done looks like, and any deadline. Keep it to a few questions. Then write a short Markdown charter, save it to the channel's artifact library, and link it with link_project_charter.
 2. Seed the work. If there is no board yet, create the project board once and add the first cards from the charter. If there is no checklist yet, create the project checklist once with the first milestones.
 3. Bookmark the charter, the board and the checklist in the project channel so everyone can find them.
 4. Write your own instructions and name from the charter: a display name that says what the project is, and instructions that keep you focused on it.
