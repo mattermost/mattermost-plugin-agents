@@ -69,6 +69,11 @@ describe('channel artifact bookmark helpers', () => {
         expect(libraryUrlAwaitingChannelSwitch('/other/channels/off-topic', 'test', 'off-topic')).toBe(true);
         expect(libraryUrlAwaitingChannelSwitch('/test/channels/off%20topic', 'test', 'off topic')).toBe(false);
         expect(libraryUrlAwaitingChannelSwitch('/test/messages/@ada', 'test', 'off-topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/channels/channels/off-topic', 'channels', 'off-topic')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/channels/channels/town-square', 'channels', 'off-topic')).toBe(true);
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/channels', 'test', 'channels')).toBe(false);
+        expect(libraryUrlAwaitingChannelSwitch('/test/channels/channels', 'test', 'off-topic')).toBe(true);
+        expect(libraryUrlAwaitingChannelSwitch('/mm/channels/channels/off-topic', 'channels', 'off-topic')).toBe(false);
         expect(libraryUrlAwaitingChannelSwitch('/test/channels/off-topic', '', 'off-topic')).toBe(false);
         expect(libraryUrlAwaitingChannelSwitch('/test/channels/off-topic', 'test', '')).toBe(false);
     });

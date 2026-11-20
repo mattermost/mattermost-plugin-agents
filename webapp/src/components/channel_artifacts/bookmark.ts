@@ -332,16 +332,24 @@ export function libraryUrlAwaitingChannelSwitch(pathname: string, teamName: stri
     if (!teamName || !channelName) {
         return false;
     }
-    const marker = '/channels/';
-    const index = pathname.indexOf(marker);
+
+    // The route is <team>/channels/<channel>, optionally behind a server
+    // subpath. A team or channel may itself be named "channels", so the marker
+    // is the last "channels" segment that has a team before it and a channel
+    // after it.
+    const segments = pathname.split('/').filter(Boolean);
+    let index = -1;
+    for (let i = segments.length - 2; i >= 1; i--) {
+        if (segments[i] === 'channels') {
+            index = i;
+            break;
+        }
+    }
     if (index < 0) {
         return false;
     }
-    const channelSegment = pathname.slice(index + marker.length).split('/')[0];
-    const teamSegment = pathname.slice(0, index).split('/').filter(Boolean).pop() || '';
-    if (!channelSegment || !teamSegment) {
-        return false;
-    }
+    const channelSegment = segments[index + 1];
+    const teamSegment = segments[index - 1];
     return decodePathSegment(teamSegment) !== teamName || decodePathSegment(channelSegment) !== channelName;
 }
 
