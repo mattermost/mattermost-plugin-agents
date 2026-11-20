@@ -55,7 +55,9 @@ jobs:
   evals-comment:
     runs-on: ubuntu-latest
     needs: [eval-packages, evals]
-    if: always() && needs.eval-packages.result == 'success'
+    # Runs when evals fail, so a crashed run never looks like a fix, but not
+    # when a newer push or removing the label cancelled them.
+    if: ${{ !cancelled() && needs.eval-packages.result == 'success' }}
     permissions:
       actions: read
       contents: read
