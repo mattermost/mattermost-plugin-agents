@@ -80,6 +80,7 @@ type testConfigImpl struct {
 	services                        []llm.ServiceConfig
 	defaultBotUserID                string
 	defaultBotName                  string
+	settingsAccess                  config.SettingsAccess
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {
@@ -120,6 +121,10 @@ func (tc *testConfigImpl) EnableAmbientAutoReply() bool {
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
 	return false
+}
+
+func (tc *testConfigImpl) SettingsAccess() config.SettingsAccess {
+	return tc.settingsAccess
 }
 
 func (tc *testConfigImpl) GetServices() []llm.ServiceConfig {
@@ -559,6 +564,50 @@ func (m *mockConversationStore) CompareAndSwapTurnContent(id string, expected, c
 		}
 	}
 	return false, nil
+}
+
+func (m *mockConversationStore) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	return m.updateTurn(id, func(turn *store.Turn) bool {
+		if turn.Status != expectedStatus || !bytes.Equal(turn.Content, expectedContent) {
+			return false
+		}
+		turn.Content = content
+		turn.Status = status
+		return true
+	}), nil
+}
+
+func (m *mockConversationStore) TouchStreamingTurn(id string) (bool, error) {
+	return m.TransitionTurnStatus(id, store.TurnStatusStreaming, store.TurnStatusStreaming)
+}
+
+func (m *mockConversationStore) TransitionTurnStatus(id, from, to string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	return m.updateTurn(id, func(turn *store.Turn) bool {
+		if turn.Status != from {
+			return false
+		}
+		turn.Status = to
+		return true
+	}), nil
+}
+
+// updateTurn applies a conditional update to turn id and reports whether it
+// applied.
+func (m *mockConversationStore) updateTurn(id string, update func(*store.Turn) bool) bool {
+	for convID, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				return update(&m.turns[convID][i])
+			}
+		}
+	}
+	return false
 }
 
 func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {

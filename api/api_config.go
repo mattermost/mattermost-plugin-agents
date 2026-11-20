@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,10 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 // configErrorInvalidLinkDomains: the allowedLinkDomains setting has an entry
 // that is not a valid hostname.
 const configErrorInvalidLinkDomains agentErrorCode = "invalid_allowed_link_domains"
+
+// configErrorUnresolvedCredentials: a credential field holds the mask and no
+// stored credential stands behind it.
+const configErrorUnresolvedCredentials agentErrorCode = "unresolved_credentials"
 
 // validateServiceStructuredOutputPolicies rejects a service whose
 // structured-output policy is not a value the runtime understands. Persisting a
@@ -110,13 +115,23 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
+	c.JSON(http.StatusOK, adminConfigResponse(normalizeAdminConfig(*cfg.Clone())))
+}
+
+// adminConfigResponse shapes a configuration for the admin console. Credentials
+// are masked; the console sends the mask back unchanged for the ones it does not
+// edit. Nobody gets the delegation lists, which have their own system admin
+// route.
+func adminConfigResponse(cfg config.Config) config.Config {
+	cfg = config.RedactSecrets(cfg)
+	cfg.SettingsAccess = nil
+	return cfg
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
-// It responds with the normalized saved config so clients can adopt
-// server-minted service/MCP server IDs without a refetch.
+// It responds with the normalized saved config, credentials masked as in GET,
+// so clients can adopt server-minted service/MCP server IDs without a refetch.
 // PUT /admin/config
 func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
@@ -159,6 +174,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 	resolvedAgentNames := a.resolveAgentReferenceUsernames(cfg)
+	systemAdmin := settingsCallerIsSystemAdmin(c)
 
 	// Read-previous → identity checks → mint empty IDs → save runs atomically
 	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
@@ -167,7 +183,13 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	var changedKeys []string
 	var prevServers []config.MCPServerConfig
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
-		next := config.ReconcileAgentReferences(prev, cfg)
+		// A masked credential means "keep the stored one"; any other value is what
+		// the admin typed, including an empty one that clears it.
+		restored := config.RestoreSecrets(cfg, prev)
+		if fields := config.MaskedCredentialFields(restored); len(fields) > 0 {
+			return config.Config{}, fmt.Errorf("%w: %s", config.ErrUnresolvedSecret, strings.Join(fields, ", "))
+		}
+		next := config.ReconcileAgentReferences(prev, restored)
 		next, _ = next.MigrateAgentReferences(resolvedAgentNames)
 		if err := config.ValidateServiceIDUniqueness(next.Services); err != nil {
 			return config.Config{}, err
@@ -183,6 +205,19 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 		next.MCP = reconciledMCP
 		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
+		// The delegation lists change only through their own route. Legacy
+		// file bots are live agents whose access, ownership and service
+		// account use are system admin decisions, so delegates cannot change them.
+		normalized.SettingsAccess = nil
+		if prev != nil {
+			normalized.SettingsAccess = prev.SettingsAccess
+		}
+		if !systemAdmin {
+			normalized.Bots = nil
+			if prev != nil {
+				normalized.Bots = prev.Bots
+			}
+		}
 		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
 			return config.Config{}, err
 		}
@@ -192,6 +227,12 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	switch {
 	case errors.Is(err, enterprise.ErrNotLicensed):
 		abortNotLicensed(c, err)
+		return
+	case errors.Is(err, config.ErrUnresolvedSecret):
+		// The mask is not a credential and has nothing stored to stand for, e.g. a
+		// System Console page left open across an upgrade or another admin's change.
+		abortAgentRequestWithCode(c, http.StatusBadRequest, configErrorUnresolvedCredentials,
+			fmt.Errorf("the configuration was not saved because these credentials hold a mask with no stored value to restore: %s. Reload the System Console to load the current configuration, then re-enter them", strings.TrimPrefix(err.Error(), config.ErrUnresolvedSecret.Error()+": ")))
 		return
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
 		// Duplicate payload IDs, or an embedded server ID that does not match storage.
@@ -235,7 +276,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, saved)
+	c.JSON(http.StatusOK, adminConfigResponse(saved))
 }
 
 // clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP

@@ -20,7 +20,8 @@ import (
 // logged, so the names stay unprefixed.
 const (
 	// Config.
-	AuditEventSaveConfig = "saveConfig"
+	AuditEventSaveConfig         = "saveConfig"
+	AuditEventSaveSettingsAccess = "saveSettingsAccess"
 
 	// Admin operations.
 	AuditEventReindexPosts          = "reindexPosts"
@@ -109,7 +110,8 @@ func handlerFuncName(h gin.HandlerFunc) string {
 func buildAuditEventRegistry(a *API) map[string]string {
 	return map[string]string{
 		// Config.
-		handlerFuncName(a.handleSaveConfig): AuditEventSaveConfig,
+		handlerFuncName(a.handleSaveConfig):        AuditEventSaveConfig,
+		handlerFuncName(a.handlePutSettingsAccess): AuditEventSaveSettingsAccess,
 
 		// Admin operations.
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,

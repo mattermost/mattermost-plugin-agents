@@ -158,7 +158,7 @@ func (a *API) canCreateOrManageAnyAgent(userID string) (bool, error) {
 		return false, fmt.Errorf("failed to list agents: %w", err)
 	}
 	for _, agent := range agents {
-		if canManageAgent(a.pluginAPI, agent, userID) {
+		if a.canManageAgent(agent, userID) {
 			return true, nil
 		}
 	}

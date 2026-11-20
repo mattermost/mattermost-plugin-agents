@@ -137,6 +137,7 @@ function hostTsconfig(host) {
             skipLibCheck: true,
             types: [],
             paths: {
+                '*': [path.join(host, 'channels', 'src', '*')],
                 'mattermost-redux/*': [path.join(host, 'channels', 'src', 'packages', 'mattermost-redux', 'src', '*')],
                 '@mui/styled-engine': [path.join(host, 'channels', 'node_modules', '@mui', 'styled-engine-sc')],
                 '@mattermost/types/*': [path.join(host, 'platform', 'types', 'src', '*')],

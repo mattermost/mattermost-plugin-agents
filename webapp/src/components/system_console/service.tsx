@@ -19,6 +19,7 @@ import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
+import {useSettingsReadOnly} from './settings_read_only';
 
 export type LLMService = {
     id: string
@@ -151,6 +152,9 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }, [props.service.tokenLimit, props.service.outputTokenLimit]);
 
+    // Listing models sends the service's credentials upstream, which read-only
+    // viewers do not have.
+    const readOnly = useSettingsReadOnly();
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex' || type === 'north';
 
     useEffect(() => {
@@ -180,12 +184,15 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             hasRequiredCredentials = Boolean(props.service.apiKey);
         }
 
-        if (!supportsModelFetching || !hasRequiredCredentials) {
+        if (readOnly || !supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
             setModelsFetchError('');
-            return;
+            setLoadingModels(false);
+            return () => null;
         }
 
+        // A response for settings the admin has since changed must not replace newer state.
+        let superseded = false;
         const loadModels = async () => {
             setLoadingModels(true);
             setModelsFetchError('');
@@ -201,19 +208,33 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         vertexProjectID: props.service.vertexProjectID || '',
                         vertexProjectNumber: props.service.vertexProjectNumber || '',
                         vertexAuthCredentials: props.service.vertexAuthCredentials || '',
+
+                        // Once the service is saved its credentials are read
+                        // server-side; a service still being entered sends them
+                        // inline above.
+                        serviceID: props.service.id,
                     },
                 );
-                setAvailableModels(data);
+                if (!superseded) {
+                    setAvailableModels(data);
+                }
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
-                setAvailableModels([]);
+                if (!superseded) {
+                    setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                    setAvailableModels([]);
+                }
             } finally {
-                setLoadingModels(false);
+                if (!superseded) {
+                    setLoadingModels(false);
+                }
             }
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
+        return () => {
+            superseded = true;
+        };
+    }, [type, props.service.id, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -510,11 +531,15 @@ type Props = {
     services: LLMService[]
     onChange: (service: LLMService) => void
     onDelete: () => void
+
+    // Starts with the settings shown, for a service the admin is about to fill in.
+    defaultOpen?: boolean
 }
 
 const Service = (props: Props) => {
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(Boolean(props.defaultOpen));
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
 
     return (
         <ServiceContainer>
@@ -536,16 +561,18 @@ const Service = (props: Props) => {
                 </Title>
                 <Spacer/>
                 <HeaderActions>
-                    <IconButton
-                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                        aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
-                        size='small'
-                        destructive={true}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            props.onDelete();
-                        }}
-                    />
+                    {!readOnly && (
+                        <IconButton
+                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                            aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
+                            size='small'
+                            destructive={true}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                props.onDelete();
+                            }}
+                        />
+                    )}
                     <IconButton
                         icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
                         aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse service'}) : intl.formatMessage({defaultMessage: 'Expand service'})}

@@ -678,6 +678,6 @@ func TestAgentDocumentsHiddenFromNonManagers(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, mock.Anything).Return(false)
 
 	cfg := &llm.BotConfig{ID: "agent-1", CreatorID: otherUserID, Documents: []llm.AgentDocument{{ID: "doc-1", Name: "secret.pdf"}}}
-	assert.Equal(t, []llm.AgentDocument{}, sanitizeAgentForUser(e.api.pluginAPI, cfg, testUserID).Documents)
-	assert.Equal(t, cfg.Documents, sanitizeAgentForUser(e.api.pluginAPI, cfg, otherUserID).Documents)
+	assert.Equal(t, []llm.AgentDocument{}, e.api.sanitizeAgentForUser(cfg, testUserID).Documents)
+	assert.Equal(t, cfg.Documents, e.api.sanitizeAgentForUser(cfg, otherUserID).Documents)
 }
