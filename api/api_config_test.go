@@ -512,6 +512,88 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "saves dictation on an openai service separate from the agents' service",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-anthropic", Name: "Claude", Type: llm.ServiceTypeAnthropic},
+					{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai"},
+				},
+				Bots:      []llm.BotConfig{{ID: "bot-1", Name: "ai", ServiceID: "svc-anthropic"}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"}, store.cfg.Dictation)
+			},
+		},
+		{
+			name: "rejects dictation on a service of the wrong type",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-anthropic", Name: "Claude", Type: llm.ServiceTypeAnthropic}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-anthropic", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+		},
+		{
+			name: "rejects dictation on a missing service",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-gone", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation on a service without an API key",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation on a service whose API URL carries credentials",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{{
+					ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai",
+					APIURL: "https://user:secret@proxy.example.com",
+				}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation without a model",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai"}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
 			name:           "rejects invalid JSON",
 			requestBody:    "not-json",
 			expectedStatus: http.StatusBadRequest,
