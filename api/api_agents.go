@@ -656,6 +656,9 @@ func (a *API) handleListAgents(c *gin.Context) {
 
 	accessible := make([]agentListItem, 0, len(agents))
 	for _, cfg := range agents {
+		if cfg.IsProjectAgent() {
+			continue
+		}
 		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 			canManage := a.canManageAgent(cfg, userID)
 			accessible = append(accessible, agentListItem{

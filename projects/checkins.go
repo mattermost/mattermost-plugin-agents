@@ -230,9 +230,6 @@ func (s *Service) runCheckin(ctx context.Context, project *store.Project, now ti
 		Message:     "Project check-in",
 		Instruction: checkinPrompt,
 		RootProps:   map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectCheckin},
-		SystemPrompt: func(*llm.Context) (string, error) {
-			return s.SystemPromptSuffix(ctx, bot), nil
-		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start the check-in: %w", err)

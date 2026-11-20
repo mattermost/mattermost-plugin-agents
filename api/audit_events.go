@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 36
+// Audit event names for every state-changing operation in the plugin: 40
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -40,6 +40,12 @@ const (
 	// Agent auto-setup: opening a setup conversation. Each write the agent
 	// then makes is audited by the agentsetup package as agentSelfSetup.
 	AuditEventStartAgentSetup = "startAgentSetup"
+
+	// Project channels. Reading projects and checklists is not audited.
+	AuditEventCreateProject         = "createProject"
+	AuditEventEndProject            = "endProject"
+	AuditEventTransferProjectLead   = "transferProjectLead"
+	AuditEventUpdateProjectSchedule = "updateProjectSchedule"
 
 	// Agent versioning. Listing and viewing versions are read-only and are not audited.
 	AuditEventRestoreAgentVersion = "restoreAgentVersion"
@@ -137,6 +143,12 @@ func buildAuditEventRegistry(a *API) map[string]string {
 
 		// Agent auto-setup.
 		handlerFuncName(a.handleStartAgentSetup): AuditEventStartAgentSetup,
+
+		// Project channels.
+		handlerFuncName(a.handleCreateProject):         AuditEventCreateProject,
+		handlerFuncName(a.handleEndProject):            AuditEventEndProject,
+		handlerFuncName(a.handleTransferProjectLead):   AuditEventTransferProjectLead,
+		handlerFuncName(a.handleUpdateProjectSchedule): AuditEventUpdateProjectSchedule,
 
 		// Agent versioning.
 		handlerFuncName(a.handleRestoreAgentVersion): AuditEventRestoreAgentVersion,

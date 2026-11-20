@@ -34,10 +34,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/projects"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
@@ -63,6 +65,7 @@ type Plugin struct {
 	pluginAPI            *pluginapi.Client
 	apiService           *api.API
 	agentSetup           *agentsetup.Service
+	projects             *projects.Service
 	bots                 *bots.MMBots
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
@@ -492,10 +495,27 @@ func (p *Plugin) OnActivate() error {
 		}
 	})
 	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelLibrary, &p.configuration, mmClient)
+	var projectsService *projects.Service
 	toolProvider.SetChannelArtifactTools(&mmtools.ChannelArtifactTools{
 		Library: channelLibrary,
 		Enabled: p.configuration.EnableChannelArtifacts,
 		Audit:   p.auditChannelArtifactTool,
+		ActorFor: func(ctx context.Context, llmCtx *llm.Context) (channelartifacts.Actor, bool) {
+			if llmCtx.RequestingUser != nil {
+				return channelartifacts.Actor{UserID: llmCtx.RequestingUser.Id, BotUserID: llmCtx.BotUserID, SessionID: auth.SessionIDFromContext(ctx)}, true
+			}
+			if projectsService == nil || llmCtx.Channel == nil {
+				return channelartifacts.Actor{}, false
+			}
+			project, err := projectsService.LiveProject(bots.GetBotByID(llmCtx.BotUserID))
+			if err != nil || project.ChannelID != llmCtx.Channel.Id {
+				return channelartifacts.Actor{}, false
+			}
+			return projectsService.ArtifactActor(project), true
+		},
+		AutoExecuteFor: func(llmCtx *llm.Context, _ string) bool {
+			return projectsService != nil && projectsService.ArtifactAutoExecute(bots.GetBotByID(llmCtx.BotUserID), llmCtx)
+		},
 	})
 	var (
 		embeddedMu     sync.Mutex
@@ -692,6 +712,32 @@ func (p *Plugin) OnActivate() error {
 	conversationsService.RegisterOperation(llm.OperationAgentSetup, agentSetupService)
 	apiService.SetAgentSetup(agentSetupService)
 
+	projectsService = projects.New(projects.Deps{
+		Store:             p.store,
+		Platform:          projectPlatform{api: p.API, client: pluginAPI},
+		Bots:              bots,
+		Threads:           conversationsService,
+		Config:            &p.configuration,
+		AutoReply:         projectAutoReply{service: autoreplyService},
+		WrapUps:           projectWrapUps{client: pluginAPI, projects: func() *projects.Service { return projectsService }},
+		Artifacts:         projectArtifacts{library: channelLibrary},
+		SetupSystemPrompt: agentSetupService.SystemPrompt,
+	})
+	contextBuilder.SetProjectRuntime(projectsService)
+	conversationsService.SetProjectGate(projectsService)
+	for _, operation := range []string{llm.OperationProjectSetup, llm.OperationProjectCheckin, llm.OperationProjectRun} {
+		conversationsService.RegisterOperation(operation, projectsService)
+	}
+	convService.SetSystemPromptSuffix(func(conv *store.Conversation) string {
+		return conversationsService.ProjectSystemPromptSuffix(context.Background(), conv.BotID)
+	})
+	toolProvider.AddToolSource(projectsService.ToolsForRequest)
+	agentSetupService.RegisterExtension(projectsService)
+	apiService.AgentConfigService().SetAuthorizer(projectsService.Authorizer(apiService.AgentConfigService().Authorizer()))
+	apiService.SetProjects(projectsService)
+	p.projects = projectsService
+	projectsService.StartCheckinTicker()
+
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
 	p.applyTelemetryConfig()
@@ -729,6 +775,9 @@ func (p *Plugin) OnActivate() error {
 }
 
 func (p *Plugin) OnDeactivate() error {
+	if p.projects != nil {
+		p.projects.StopCheckinTicker()
+	}
 	// Must run before bifrost/MCP shutdown so in-flight streams can finalize.
 	p.stopStreamsForShutdown()
 

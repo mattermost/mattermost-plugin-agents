@@ -5,6 +5,7 @@ package projects
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -283,9 +284,7 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 		Message:     "Let's set up this project. Tell me what it is for and what done looks like.",
 		Instruction: "Start the project setup with the people in this channel.",
 		RootProps:   map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectSetup},
-		SystemPrompt: func(llmCtx *llm.Context) (string, error) {
-			return s.setupSystemPrompt(ctx, bot, llmCtx)
-		},
+		SystemPrompt: s.setupSystemPrompt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to start the setup thread: %w", err)
@@ -302,12 +301,13 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 	return created, nil
 }
 
-func (s *Service) setupSystemPrompt(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context) (string, error) {
-	suffix := s.SystemPromptSuffix(ctx, bot)
+// setupSystemPrompt renders the setup prompt. The project block is appended
+// to every project turn by the conversation service, so it is not added here.
+func (s *Service) setupSystemPrompt(llmCtx *llm.Context) (string, error) {
 	if s.deps.SetupSystemPrompt == nil {
-		return suffix + "\n\n" + setupInstructions, nil
+		return setupInstructions, nil
 	}
-	return s.deps.SetupSystemPrompt(llmCtx, setupInstructions+"\n\n"+suffix)
+	return s.deps.SetupSystemPrompt(llmCtx, setupInstructions)
 }
 
 // projectChannel creates the project channel, or returns the channel the
@@ -772,39 +772,18 @@ func (s *Service) publish(project *store.Project) {
 	if project == nil {
 		return
 	}
-	payload := map[string]any{
-		"channel_id":            project.ChannelID,
-		"team_id":               project.TeamID,
-		"agent_id":              project.AgentID,
-		"agent_bot_user_id":     project.AgentBotUserID,
-		"state":                 project.State,
-		"lead_user_id":          project.LeadUserID,
-		"reply_mode":            project.ReplyMode,
-		"setup_root_post_id":    project.SetupRootPostID,
-		"board_channel_id":      project.BoardChannelID,
-		"playbook_run_id":       project.PlaybookRunID,
-		"charter_artifact_id":   project.CharterArtifactID,
-		"wrap_up_artifact_id":   project.WrapUpArtifactID,
-		"status_note":           project.StatusNote,
-		"status_update_at":      project.StatusUpdateAt,
-		"checkin_cron":          project.CheckinCron,
-		"checkin_timezone":      project.CheckinTimezone,
-		"next_checkin_at":       project.NextCheckinAt,
-		"last_checkin_at":       project.LastCheckinAt,
-		"last_checkin_post_id":  project.LastCheckinPostID,
-		"created_by":            project.CreatedBy,
-		"created_from":          project.CreatedFrom,
-		"create_at":             project.CreateAt,
-		"update_at":             project.UpdateAt,
-		"ended_by":              project.EndedBy,
-		"ended_at":              project.EndedAt,
-		"ended_without_wrap_up": project.EndedWithoutWrapUp,
+	// Plugin RPC gob-encodes the payload, so it carries only plain values.
+	raw, err := json.Marshal(s.ProjectResponse(project))
+	if err != nil {
+		s.deps.Platform.LogError("Failed to encode project update", "channel_id", project.ChannelID, "error", err)
+		return
 	}
-	if bot := s.deps.Bots.GetBotByID(project.AgentBotUserID); bot != nil {
-		cfg := bot.GetConfig()
-		payload["agent_display_name"] = cfg.DisplayName
-		payload["agent_username"] = cfg.Name
+	var flat map[string]any
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		s.deps.Platform.LogError("Failed to encode project update", "channel_id", project.ChannelID, "error", err)
+		return
 	}
+	payload := map[string]any{"project": flat}
 	s.deps.Platform.PublishWebSocketEvent(WebSocketEventProjectUpdated, payload, &model.WebsocketBroadcast{ChannelId: project.ChannelID})
 }
 

@@ -179,9 +179,6 @@ func (s *Service) startCursorThreadTool(bot *bots.Bot, project *store.Project) l
 				Message:     "Cursor run: " + title,
 				Instruction: "Plan this Cursor run and ask the requester to confirm it here before you start the Cursor agent:\n\n" + args.Description,
 				RootProps:   map[string]any{conversations.ProjectThreadOperationProp: llm.OperationProjectRun},
-				SystemPrompt: func(llmCtx *llm.Context) (string, error) {
-					return s.SystemPromptSuffix(ctx, bot), nil
-				},
 			})
 			if err != nil {
 				return "", fmt.Errorf("failed to start the run thread: %w", err)

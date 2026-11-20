@@ -174,6 +174,12 @@ func (s *Service) Start(ctx context.Context, actor *model.User, agentID string) 
 	})
 }
 
+// SystemPrompt renders the setup system prompt with extra instructions, for
+// setup conversations started outside the requester's DM.
+func (s *Service) SystemPrompt(llmCtx *llm.Context, extraInstructions string) (string, error) {
+	return s.systemPrompt(llmCtx, extraInstructions)
+}
+
 func (s *Service) systemPrompt(llmCtx *llm.Context, extraInstructions string) (string, error) {
 	if extraInstructions != "" {
 		if llmCtx.Parameters == nil {

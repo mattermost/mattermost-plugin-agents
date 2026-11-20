@@ -488,7 +488,7 @@ func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]
 // getBotByAgent finds a bot by its Bot ID
 func (a *API) getBotByAgent(agent string) (*bots.Bot, error) {
 	bot := a.bots.GetBotByID(agent)
-	if bot == nil {
+	if bot == nil || bot.IsProjectAgent() {
 		return nil, fmt.Errorf("bot not found with ID: %s", agent)
 	}
 	return bot, nil
@@ -788,6 +788,9 @@ func (a *API) handleGetAgents(c *gin.Context) {
 	defaultBotID := a.defaultBotUserID()
 
 	for _, bot := range allBots {
+		if bot.IsProjectAgent() {
+			continue
+		}
 		// If user_id is provided, filter by permissions
 		if userID != "" {
 			if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {

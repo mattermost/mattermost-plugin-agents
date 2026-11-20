@@ -231,6 +231,7 @@ type API struct {
 	channelLibrary        channelartifacts.Manager
 	agentConfig           *agentconfig.Service
 	agentSetup            AgentSetup
+	projects              Projects
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -472,6 +473,15 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
+
+	projectRouter := router.Group("/projects")
+	projectRouter.POST("", a.handleCreateProject)
+	projectRouter.GET("", a.handleListProjects)
+	projectRouter.GET("/:channelid", a.handleGetProject)
+	projectRouter.POST("/:channelid/end", a.handleEndProject)
+	projectRouter.POST("/:channelid/transfer-lead", a.handleTransferProjectLead)
+	projectRouter.PUT("/:channelid/schedule", a.handleUpdateProjectSchedule)
+	projectRouter.GET("/:channelid/checklist", a.handleGetProjectChecklist)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks. Semantic search is
@@ -868,6 +878,11 @@ type AIBotsResponse struct {
 	// ScopedSessionsSupported reports whether this server can create the
 	// scoped sessions scoped channel mode runs on.
 	ScopedSessionsSupported bool `json:"scopedSessionsSupported"`
+	// ProjectChannelsEnabled reports whether users can create project channels.
+	ProjectChannelsEnabled bool `json:"projectChannelsEnabled"`
+	// ProjectAgents are the hidden agents of the project channels the user
+	// can read, so their posts render as agent posts. Never listed in pickers.
+	ProjectAgents []AIBotInfo `json:"projectAgents"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -900,13 +915,14 @@ func (a *API) defaultBotUserID() string {
 	return ""
 }
 
-// getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo, error) {
+// getAIBotsForUser returns the AI bots available to a user, and separately
+// the hidden project agents of the project channels the user can read.
+func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo, []AIBotInfo, error) {
 	allBots := a.bots.GetAllBots()
 
 	chattedBotIDs, err := a.conversationStore.GetBotDMBotIDsForUser(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get the agents the user has chats with: %w", err)
+		return nil, nil, fmt.Errorf("failed to get the agents the user has chats with: %w", err)
 	}
 	chatted := make(map[string]bool, len(chattedBotIDs))
 	for _, id := range chattedBotIDs {
@@ -916,8 +932,21 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo,
 	// Get the info from all the bots.
 	// Put the default bot first.
 	bots := make([]AIBotInfo, 0, len(allBots))
+	projectAgents := []AIBotInfo{}
 	defaultBotID := a.defaultBotUserID()
 	for _, bot := range allBots {
+		if bot.IsProjectAgent() {
+			if a.projects != nil && a.projects.Available() &&
+				a.pluginAPI.User.HasPermissionToChannel(userID, bot.GetConfig().ProjectChannelID, model.PermissionReadChannelContent) {
+				projectAgents = append(projectAgents, AIBotInfo{
+					ID:             bot.GetMMBot().UserId,
+					DisplayName:    bot.GetMMBot().DisplayName,
+					Username:       bot.GetMMBot().Username,
+					LastIconUpdate: bot.GetMMBot().LastIconUpdate,
+				})
+			}
+			continue
+		}
 		// Don't return bots the user is excluded from using.
 		if a.bots.CheckUsageRestrictionsForUser(ctx, bot, userID) != nil {
 			continue
@@ -957,12 +986,12 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo,
 		}
 	}
 
-	return bots, nil
+	return bots, projectAgents, nil
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(c.Request.Context(), userID)
+	bots, projectAgents, err := a.getAIBotsForUser(c.Request.Context(), userID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -979,6 +1008,8 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
 		ChannelArtifactsEnabled: a.config.EnableChannelArtifacts(),
 		ScopedSessionsSupported: a.contextBuilder.ServerSupportsScopedSessions(),
+		ProjectChannelsEnabled:  a.projects != nil && a.projects.Available() && a.contextBuilder.ServerSupportsScopedSessions(),
+		ProjectAgents:           projectAgents,
 	})
 }
 
