@@ -5,6 +5,7 @@ import React, {useCallback, useId, useMemo, useState} from 'react';
 import {useIntl} from 'react-intl';
 import AccountMultipleOutlineIcon from '@mattermost/compass-icons/components/account-multiple-outline';
 import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
+import FormatListBulletedIcon from '@mattermost/compass-icons/components/format-list-bulleted';
 import MessagePlusOutlineIcon from '@mattermost/compass-icons/components/message-plus-outline';
 import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
 import PencilOutlineIcon from '@mattermost/compass-icons/components/pencil-outline';
@@ -52,6 +53,9 @@ interface AgentChatNameMenuProps {
     onNewChat: () => void;
     onViewAll: () => void;
 
+    // Opens every agent's chats. Omitted outside the RHS title menu.
+    onShowAllChats?: () => void;
+
     // Offers a "Switch agent" submenu, which starts a new chat with the agent picked. Passed in a new
     // chat only: an open chat belongs to its agent.
     agents?: {bots: LLMBot[]; onSwitch: (bot: LLMBot) => void};
@@ -65,7 +69,7 @@ type Submenu = {kind: 'chats' | 'agents'; focus: boolean};
 // The agent chat's name menu: recent chats, the chat actions (new, rename, archive), switching
 // agents where offered, and the way to the agent pages. Shared by the Agents product header and the
 // RHS title, with the rename and archive dialogs it opens.
-const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat, onViewAll, agents, renderTrigger}: AgentChatNameMenuProps) => {
+const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat, onViewAll, onShowAllChats, agents, renderTrigger}: AgentChatNameMenuProps) => {
     const intl = useIntl();
     const [nameMenuOpen, setNameMenuOpen] = useState(false);
     const nameMenu = useMenuTransition(nameMenuOpen);
@@ -102,6 +106,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
     const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});
     const newChatLabel = intl.formatMessage({defaultMessage: 'New chat'});
     const chatsLabel = intl.formatMessage({defaultMessage: 'Recent chats'});
+    const allChatsLabel = intl.formatMessage({defaultMessage: 'All agent chats'});
     const switchable = agents && agents.bots.length > 1 ? agents : null;
     const agentsLabel = intl.formatMessage({defaultMessage: 'Switch agent'});
 
@@ -138,7 +143,7 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                     aria-label={nameMenuLabel}
                     onKeyDown={handleMenuNavigation}
                 >
-                    {(chats.length > 0 || switchable) && (
+                    {(chats.length > 0 || switchable || onShowAllChats) && (
                         <>
                             <PopoverMenuGroup>
                                 {switchable && (
@@ -194,6 +199,13 @@ const AgentChatNameMenu = ({bot, rootId, onOpenSettings, onSelectChat, onNewChat
                                             </PopoverMenuGroup>
                                         </PopoverMenuScroll>
                                     </Submenu>
+                                )}
+                                {onShowAllChats && (
+                                    <IconMenuItem
+                                        icon={<FormatListBulletedIcon/>}
+                                        label={allChatsLabel}
+                                        onClick={closing(onShowAllChats)}
+                                    />
                                 )}
                             </PopoverMenuGroup>
                             <PopoverMenuDivider/>

@@ -6,8 +6,6 @@ package conversations
 import (
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 // Limits are per node; a cluster of N nodes allows up to N times as much.
@@ -21,6 +19,32 @@ const (
 	ambientMaxTrackedChannels = 1024
 )
 
+type channelBucket struct {
+	tokens float64
+	last   time.Time
+}
+
+func (b *channelBucket) tokensAt(now time.Time) float64 {
+	if !now.After(b.last) {
+		return b.tokens
+	}
+	refill := float64(now.Sub(b.last)) / float64(ambientChannelInterval)
+	return min(b.tokens+refill, float64(ambientChannelBurst))
+}
+
+func (b *channelBucket) allow(now time.Time) bool {
+	tokens := b.tokensAt(now)
+	if now.After(b.last) {
+		b.last = now
+	}
+	if tokens < 1 {
+		b.tokens = tokens
+		return false
+	}
+	b.tokens = tokens - 1
+	return true
+}
+
 // ambientLimiter bounds ambient classifier calls: a concurrency cap shared by
 // every channel and a rate limit per channel. Every check is non-blocking, and
 // a call over any limit is skipped rather than queued.
@@ -28,13 +52,13 @@ type ambientLimiter struct {
 	slots chan struct{}
 
 	mu       sync.Mutex
-	channels map[string]*rate.Limiter
+	channels map[string]*channelBucket
 }
 
 func newAmbientLimiter() *ambientLimiter {
 	return &ambientLimiter{
 		slots:    make(chan struct{}, ambientMaxConcurrentClassifications),
-		channels: make(map[string]*rate.Limiter),
+		channels: make(map[string]*channelBucket),
 	}
 }
 
@@ -63,7 +87,7 @@ func (l *ambientLimiter) allowChannel(channelID string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	limiter, tracked := l.channels[channelID]
+	bucket, tracked := l.channels[channelID]
 	if !tracked {
 		if len(l.channels) >= ambientMaxTrackedChannels {
 			l.pruneIdle(now)
@@ -71,17 +95,20 @@ func (l *ambientLimiter) allowChannel(channelID string) bool {
 				return false
 			}
 		}
-		limiter = rate.NewLimiter(rate.Every(ambientChannelInterval), ambientChannelBurst)
-		l.channels[channelID] = limiter
+		bucket = &channelBucket{
+			tokens: ambientChannelBurst,
+			last:   now,
+		}
+		l.channels[channelID] = bucket
 	}
-	return limiter.AllowN(now, 1)
+	return bucket.allow(now)
 }
 
 // pruneIdle drops channels whose limiter has refilled to its full burst; a
 // fresh limiter behaves the same, so dropping them changes no decision.
 func (l *ambientLimiter) pruneIdle(now time.Time) {
-	for channelID, limiter := range l.channels {
-		if limiter.TokensAt(now) >= ambientChannelBurst {
+	for channelID, bucket := range l.channels {
+		if bucket.tokensAt(now) >= ambientChannelBurst {
 			delete(l.channels, channelID)
 		}
 	}

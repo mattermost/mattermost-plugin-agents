@@ -32,10 +32,6 @@ jest.mock('react-redux', () => ({
     useDispatch: () => jest.fn(),
 }));
 
-jest.mock('react-bootstrap', () => ({
-    Overlay: () => null,
-}), {virtual: true});
-
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children, title}: {children: React.ReactNode; title: string}) => (
         <div
@@ -124,9 +120,85 @@ describe('AskChannelButton toggle', () => {
         fireEvent.click(button);
         expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('true');
         expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('');
+        expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
 
         fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
         expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('false');
         expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('Ask Agents about this channel');
+        expect(screen.queryByTestId('channel-summarize-popover')).toBeNull();
+    });
+
+    test('closes the popover on Escape and outside click', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        const button = screen.getByRole('button', {name: 'Ask Agents about this channel'});
+        fireEvent.click(button);
+        expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+        expect(screen.queryByTestId('channel-summarize-popover')).toBeNull();
+
+        fireEvent.click(button);
+        expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
+
+        fireEvent.mouseDown(document.body);
+        expect(screen.queryByTestId('channel-summarize-popover')).toBeNull();
+    });
+
+    test('keeps the popover open when clicking inside a nested portaled popup or dialog', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
+        expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
+
+        const nestedPopup = document.createElement('div');
+        nestedPopup.setAttribute('data-open-popup', '');
+        const popupOption = document.createElement('button');
+        nestedPopup.appendChild(popupOption);
+        document.body.appendChild(nestedPopup);
+
+        try {
+            fireEvent.mouseDown(popupOption);
+            expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
+        } finally {
+            document.body.removeChild(nestedPopup);
+        }
+    });
+
+    test('closes on Escape when only a hidden dialog is in the DOM', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
+        expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
+
+        const hiddenDialog = document.createElement('div');
+        hiddenDialog.setAttribute('role', 'dialog');
+        hiddenDialog.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(hiddenDialog);
+
+        try {
+            fireEvent.keyDown(document, {key: 'Escape'});
+            expect(screen.queryByTestId('channel-summarize-popover')).toBeNull();
+        } finally {
+            document.body.removeChild(hiddenDialog);
+        }
     });
 });

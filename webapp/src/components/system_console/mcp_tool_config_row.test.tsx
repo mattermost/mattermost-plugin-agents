@@ -23,11 +23,6 @@ jest.mock('@/license', () => ({
     requiredLevelFor: jest.fn(() => 2),
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 const testTool: MCPToolInfo = {
     name: 'get_issue',
     description: 'Upstream issue description',

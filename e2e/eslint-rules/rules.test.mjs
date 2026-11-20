@@ -65,3 +65,20 @@ tester.run('container-start-in-fixture', plugin.rules['container-start-in-fixtur
         {code: 'test.describe("x", () => { test.beforeAll(async () => { await Promise.all([1].map(() => startAIMockCitationStack())); }); });', errors: [{messageId: 'inHook'}]},
     ],
 });
+
+tester.run('no-arbitrary-wait', plugin.rules['no-arbitrary-wait'], {
+    valid: [
+        'await page.waitForLoadState("domcontentloaded");',
+        'await page.waitForLoadState("load");',
+        'await page.goto(url, {waitUntil: "domcontentloaded"});',
+        'await page.reload({waitUntil: "domcontentloaded"});',
+        'await expect(locator).toBeVisible({timeout: 5000});',
+    ],
+    invalid: [
+        {code: 'await page.waitForTimeout(1000);', errors: [{messageId: 'timeout'}]},
+        {code: 'await this.page.waitForTimeout(250);', errors: [{messageId: 'timeout'}]},
+        {code: 'await page.waitForLoadState("networkidle");', errors: [{messageId: 'networkidle'}]},
+        {code: 'await page.goto(url, {waitUntil: "networkidle"});', errors: [{messageId: 'networkidle'}]},
+        {code: 'await page.reload({waitUntil: "networkidle"});', errors: [{messageId: 'networkidle'}]},
+    ],
+});
