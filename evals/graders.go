@@ -32,14 +32,32 @@ type rubricVerdicts struct {
 	Verdicts []rubricVerdict `json:"verdicts"`
 }
 
-const llmRubricSystem = `You are grading the output of an AI agent that runs inside Mattermost against numbered rubrics. Each rubric is a statement about the output; the output passes a rubric when the statement is true.
+const llmRubricSystem = `You are grading the output of an AI agent that runs inside Mattermost against a rubric. The rubric is a statement about the output; the output passes when the statement is true.
 
-- Judge each rubric on its own, as if it were the only one. Do not let one rubric's verdict influence another's.
-- Judge only what each rubric states. Ignore qualities it does not mention.
+- Judge only what the rubric states. Ignore qualities it does not mention.
 - Read the output as a Mattermost user would see it: Markdown is rendered, and an emoji name such as "thumbsup" or ":heart_eyes_cat:" stands for the emoji it names.
 - An output that refuses, errors, or asks for more information instead of doing the task fails any rubric about the task's content.
 
-Respond with a JSON object with this structure: {verdicts: [{rubric: number, reasoning: string, score: number, pass: boolean}]}, with one verdict per rubric, in order. Write each verdict's reasoning before deciding; score is between 0 and 1.
+Respond with a JSON object with this structure: {reasoning: string, score: number, pass: boolean}. Write the reasoning before deciding; score is between 0 and 1.
+Examples:
+<Output>The steamclock is broken</Output>
+<Rubric>The content contains the state of the clock</Rubric>
+{"reasoning": "The output says the clock is broken", "score": 1.0, "pass": true}
+
+<Output>I am sorry I can not find the thread you referenced</Output>
+<Rubric>Contains a reference to the mentos project</Rubric>
+{"reasoning": "The output contains a failure message instead of a reference to the mentos project", "score": 0.0, "pass": false}`
+
+// llmRubricsSystem grades several rubrics in one request. A verdict inside a
+// list is graded more strictly than a single top-level verdict on borderline
+// outputs, so a single rubric uses llmRubricSystem instead.
+const llmRubricsSystem = `You are grading the output of an AI agent that runs inside Mattermost against numbered rubrics. Each rubric is a statement about the output; the output passes a rubric when the statement is true. Grade every rubric independently of the others.
+
+- Judge only what the rubric states. Ignore qualities it does not mention.
+- Read the output as a Mattermost user would see it: Markdown is rendered, and an emoji name such as "thumbsup" or ":heart_eyes_cat:" stands for the emoji it names.
+- An output that refuses, errors, or asks for more information instead of doing the task fails any rubric about the task's content.
+
+Respond with a JSON object with this structure: {verdicts: [{rubric: number, reasoning: string, score: number, pass: boolean}]}, with one verdict per rubric. Write the reasoning before deciding; score is between 0 and 1.
 Example:
 <Output>The steamclock is broken</Output>
 <Rubrics>
@@ -63,35 +81,64 @@ func withVerdictsOutput(cfg *llm.LanguageModelConfig) {
 // so the output is sent once rather than once per rubric. Results are in the
 // order of rubrics.
 func (e *Eval) LLMRubrics(rubrics []string, output string) ([]RubricResult, error) {
+	if len(rubrics) == 1 {
+		result, err := e.gradeOne(rubrics[0], output)
+		if err != nil {
+			return nil, err
+		}
+		return []RubricResult{*result}, nil
+	}
+
 	var numbered strings.Builder
 	for i, rubric := range rubrics {
 		fmt.Fprintf(&numbered, "%d. %s\n", i+1, rubric)
 	}
-	req := llm.CompletionRequest{
+	req := gradingRequest(llmRubricsSystem, fmt.Sprintf("<Output>%s</Output>\n<Rubrics>\n%s</Rubrics>", output, numbered.String()))
+
+	// The grader occasionally drops or repeats a verdict; one retry is cheaper
+	// than failing the eval.
+	var err error
+	for range 2 {
+		var llmResult string
+		llmResult, err = e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(500+500*len(rubrics)), withVerdictsOutput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to grade with llm: %w", err)
+		}
+		var parsed rubricVerdicts
+		if err = json.Unmarshal([]byte(llmResult), &parsed); err != nil {
+			err = fmt.Errorf("failed to unmarshal llm result: %w", err)
+			continue
+		}
+		var results []RubricResult
+		if results, err = verdictsInOrder(parsed.Verdicts, len(rubrics)); err == nil {
+			return results, nil
+		}
+	}
+	return nil, err
+}
+
+func (e *Eval) gradeOne(rubric, output string) (*RubricResult, error) {
+	req := gradingRequest(llmRubricSystem, fmt.Sprintf("<Output>%s</Output>\n<Rubric>%s</Rubric>", output, rubric))
+	llmResult, err := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
+	if err != nil {
+		return nil, fmt.Errorf("failed to grade with llm: %w", err)
+	}
+	result := RubricResult{}
+	if err := json.Unmarshal([]byte(llmResult), &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal llm result: %w", err)
+	}
+	return &result, nil
+}
+
+func gradingRequest(system, user string) llm.CompletionRequest {
+	return llm.CompletionRequest{
 		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: llmRubricSystem,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: fmt.Sprintf("<Output>%s</Output>\n<Rubrics>\n%s</Rubrics>", output, numbered.String()),
-			},
+			{Role: llm.PostRoleSystem, Message: system},
+			{Role: llm.PostRoleUser, Message: user},
 		},
 		Context:   llm.NewContext(),
 		Operation: llm.OperationEvalGrading,
 	}
-
-	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(500+500*len(rubrics)), withVerdictsOutput)
-	if gradeErr != nil {
-		return nil, fmt.Errorf("failed to grade with llm: %w", gradeErr)
-	}
-
-	var parsed rubricVerdicts
-	if err := json.Unmarshal([]byte(llmResult), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal llm result: %w", err)
-	}
-	return verdictsInOrder(parsed.Verdicts, len(rubrics))
 }
 
 // verdictsInOrder matches verdicts to rubrics by number and fails unless every
