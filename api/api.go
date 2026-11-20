@@ -633,7 +633,15 @@ func (a *API) recovery(serverCtx context.Context) gin.HandlerFunc {
 			if rec == nil {
 				return
 			}
-			if (serverCtx != nil && serverCtx.Err() != nil) || c.Request.Context().Err() != nil {
+			// Check the server request context rather than c.Request.Context():
+			// ServeHTTP detaches c.Request.Context() with context.WithoutCancel
+			// for background streams, while inner middleware (such as /mcp-server)
+			// cancels its derived context in a defer during panic unwinding.
+			clientCtx := serverCtx
+			if clientCtx == nil {
+				clientCtx = c.Request.Context()
+			}
+			if clientCtx.Err() != nil {
 				a.pluginAPI.Log.Debug("client disconnected before response",
 					"method", c.Request.Method,
 					"path", c.FullPath(),

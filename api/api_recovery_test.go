@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -52,26 +54,31 @@ func TestServeHTTPRecovery(t *testing.T) {
 		cancelContext  bool
 		nilHeader      bool
 		panicAfterBody bool
+		mcpServerPanic bool
 		wantStatus     int
 		wantErrorLogs  int
 		wantDebugLogs  int
 		wantBody       string
+		wantPath       string
 	}{
 		{
 			name:          "live context returns 500 and logs panic without request secrets",
 			wantStatus:    http.StatusInternalServerError,
 			wantErrorLogs: 1,
+			wantPath:      "/ai_bots",
 		},
 		{
 			name:          "canceled context logs debug only and does not write 500",
 			cancelContext: true,
 			wantDebugLogs: 1,
+			wantPath:      "/ai_bots",
 		},
 		{
 			name:          "canceled context nil header panic from c.JSON logs debug only",
 			cancelContext: true,
 			nilHeader:     true,
 			wantDebugLogs: 1,
+			wantPath:      "/ai_bots",
 		},
 		{
 			name:           "live context panic after response started keeps original status",
@@ -79,6 +86,21 @@ func TestServeHTTPRecovery(t *testing.T) {
 			wantStatus:     http.StatusOK,
 			wantErrorLogs:  1,
 			wantBody:       "partial",
+			wantPath:       "/test-panic-after-body",
+		},
+		{
+			name:           "live MCP server panic returns 500 despite inner context cancel defer",
+			mcpServerPanic: true,
+			wantStatus:     http.StatusInternalServerError,
+			wantErrorLogs:  1,
+			wantPath:       "/mcp-server/mcp",
+		},
+		{
+			name:           "canceled MCP server panic logs debug only",
+			mcpServerPanic: true,
+			cancelContext:  true,
+			wantDebugLogs:  1,
+			wantPath:       "/mcp-server/mcp",
 		},
 	}
 
@@ -112,6 +134,8 @@ func TestServeHTTPRecovery(t *testing.T) {
 			path := "/ai_bots?token=" + sentinelQuery
 			if tt.panicAfterBody {
 				path = "/test-panic-after-body?token=" + sentinelQuery
+			} else if tt.mcpServerPanic {
+				path = "/mcp-server/mcp?token=" + sentinelQuery
 			}
 			req := httptest.NewRequestWithContext(reqCtx, http.MethodGet, path, nil)
 			req.Header.Set("Mattermost-User-Id", testUserID)
@@ -120,6 +144,23 @@ func TestServeHTTPRecovery(t *testing.T) {
 			req.Header.Set("X-Forwarded-For", sentinelIP)
 
 			switch {
+			case tt.mcpServerPanic:
+				e.config.mcpConfig.EnablePluginServer = true
+				e.mockAPI.On("KVGet", mock.Anything).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
+				e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+				e.api.mcpHandlers = &mcpserver.PluginMCPHandlers{
+					MCPHandler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+						panic("boom in mcp handler")
+					}),
+				}
+				rec := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, rec, req)
+				if tt.wantStatus != 0 {
+					assert.Equal(t, tt.wantStatus, rec.Code)
+				} else {
+					assert.NotEqual(t, http.StatusInternalServerError, rec.Code)
+					assert.Empty(t, rec.Body.String())
+				}
 			case tt.nilHeader:
 				w := &nilHeaderResponseWriter{}
 				e.api.ServeHTTP(&plugin.Context{}, w, req)
@@ -173,11 +214,11 @@ func TestServeHTTPRecovery(t *testing.T) {
 				assert.Contains(t, args, "method")
 				assert.Contains(t, args, http.MethodGet)
 				assert.Contains(t, args, "stack")
+				assert.Contains(t, args, tt.wantPath)
 				if tt.panicAfterBody {
-					assert.Contains(t, args, "/test-panic-after-body")
 					assert.Contains(t, args, "boom after write")
-				} else {
-					assert.Contains(t, args, "/ai_bots")
+				} else if tt.mcpServerPanic {
+					assert.Contains(t, args, "boom in mcp handler")
 				}
 			}
 
@@ -186,7 +227,7 @@ func TestServeHTTPRecovery(t *testing.T) {
 				assert.Equal(t, "client disconnected before response", debugCalls[0].Arguments[0])
 				args := fmt.Sprint(debugCalls[0].Arguments)
 				assert.Contains(t, args, http.MethodGet)
-				assert.Contains(t, args, "/ai_bots")
+				assert.Contains(t, args, tt.wantPath)
 			}
 
 			assert.Empty(t, ginStderr.String(), "gin default error writer must not receive recovery output")
