@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -258,6 +259,9 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 			c.postMultiplayerChannelsUnavailable(bot, channel, post)
 			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 		}
+		if errors.Is(policyErr, llmcontext.ErrScopedRequesterCannotReadTeamChannels) {
+			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
+		}
 		return policyErr
 	}
 
@@ -302,6 +306,13 @@ func (c *Conversations) handleMentionViaConversation(
 	if err != nil {
 		return err
 	}
+	// The run owns the scoped session until its stream finishes.
+	scopedHandedOff := false
+	defer func() {
+		if !scopedHandedOff {
+			llmContext.ReleaseScopedSession()
+		}
+	}()
 	progress.Advance(responseProgressLoadingConversation)
 
 	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
@@ -330,6 +341,7 @@ func (c *Conversations) handleMentionViaConversation(
 		return claimErr
 	}
 	llmContext.ResponsePostID = responsePost.Id
+	llmContext.SetScopedTurnConversation(convResult.Conversation.ID)
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.Conversation.ID,
@@ -386,6 +398,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, func() {
 		cancelLoop()
 		c.awaitToolRunner(result.Done, responsePost.Id)
+		llmContext.ReleaseScopedSession()
 		runSpan.End()
 		releaseRun()
 	}); streamErr != nil {
@@ -394,6 +407,7 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 	runHandedOff = true
+	scopedHandedOff = true
 
 	if convResult.IsNew {
 		titleCtx := telemetry.DetachContext(ctx)
@@ -411,6 +425,23 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	return nil
+}
+
+// existingThreadConversationID returns the ID of the conversation the thread
+// rooted at rootID already has with bot, or "" when there is none yet.
+func (c *Conversations) existingThreadConversationID(bot *bots.Bot, user *model.User, rootID string) string {
+	if c.convService == nil || rootID == "" {
+		return ""
+	}
+	conv, err := c.convService.GetConversationByThread(rootID, bot.GetMMBot().UserId, user.Id)
+	if err != nil {
+		c.mmClient.LogWarn("Failed to look up the thread's conversation for a scoped turn", "root_id", rootID, "error", err.Error())
+		return ""
+	}
+	if conv == nil {
+		return ""
+	}
+	return conv.ID
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) (err error) {

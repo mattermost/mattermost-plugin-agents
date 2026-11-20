@@ -398,13 +398,26 @@ const openTeamSQL = `SELECT t.Id FROM Teams t
 	AND COALESCE(t.AllowedDomains, '') = ''
 	AND NOT EXISTS (SELECT 1 FROM AccessControlPolicies tp WHERE tp.ID = t.Id AND tp.Type = 'team')`
 
+// listedTeamSQL selects the listed teams whose public channels a scope grants:
+// any team that is not deleted or under an access policy, open or not. It must
+// match model.SessionScopeGrantsTeamPublicChannels.
+const listedTeamSQL = `SELECT t.Id FROM Teams t
+	WHERE t.Id = ANY(?::text[])
+	AND t.DeleteAt = 0
+	AND NOT EXISTS (SELECT 1 FROM AccessControlPolicies tp WHERE tp.ID = t.Id AND tp.Type = 'team')`
+
 // scopedChannelsCondition limits a search to the channels a scoped session
-// can read: the listed channels plus, when enabled, public channels on open
-// teams. Membership is not consulted. DMs, group messages, and channels under
-// an access policy are never in scope.
+// can read: the listed channels, plus the public channels of the listed teams
+// (live teams without an access policy, open or not), plus, when enabled,
+// public channels on open teams. Membership is not consulted. DMs, group
+// messages, and channels under an access policy are never in scope. It must
+// match model.SessionScopeAllowsChannel.
 func scopedChannelsCondition(scope model.SessionScopeResources) sq.Sqlizer {
 	inScope := sq.Or{
 		sq.Expr("(c.Id = ANY(?::text[]) AND c.Type IN ('O', 'P'))", pq.Array(scope.ChannelIDs)),
+	}
+	if len(scope.PublicChannelTeamIDs) > 0 {
+		inScope = append(inScope, sq.Expr("(c.Type = 'O' AND c.TeamId IN ("+listedTeamSQL+"))", pq.Array(scope.PublicChannelTeamIDs)))
 	}
 	if scope.OpenTeamPublicChannels {
 		inScope = append(inScope, sq.Expr("(c.Type = 'O' AND c.TeamId IN ("+openTeamSQL+"))"))

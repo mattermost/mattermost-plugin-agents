@@ -102,6 +102,30 @@ func TestSearchWithScope(t *testing.T) {
 			expected: []string{"trigger_private", "extra_private", "open_public"},
 		},
 		{
+			name:     "public channels of a listed team, open or not",
+			scope:    model.SessionScopeResources{PublicChannelTeamIDs: []string{"invite_only", "domains"}},
+			expected: []string{"invite_only_public", "domains_public"},
+		},
+		{
+			name: "listed team beside the other grants",
+			scope: model.SessionScopeResources{
+				ChannelIDs:             []string{"trigger_private"},
+				OpenTeamPublicChannels: true,
+				PublicChannelTeamIDs:   []string{"invite_only"},
+			},
+			expected: []string{"trigger_private", "invite_only_public", "open_public"},
+		},
+		{
+			name:     "listed team that is deleted or under an access policy",
+			scope:    model.SessionScopeResources{PublicChannelTeamIDs: []string{"deleted_team", "team_policy"}},
+			expected: nil,
+		},
+		{
+			name:     "listed team never exposes its private channels or those under a policy",
+			scope:    model.SessionScopeResources{PublicChannelTeamIDs: []string{"open"}},
+			expected: []string{"open_public"},
+		},
+		{
 			name:     "listed channels only",
 			scope:    model.SessionScopeResources{ChannelIDs: []string{"trigger_private"}},
 			expected: []string{"trigger_private"},

@@ -236,11 +236,11 @@ require (
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
 
 // TEMPORARY: pins server/public to the head of the unmerged server PR
-// https://github.com/mattermost/mattermost/pull/39367 (branch
-// cursor/scoped-sessions-enforcement-88d9) for CreateScopedSession and
-// model.SessionScope. Remove it and require a released server/public once that
-// PR merges.
-replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155611-04b3cd62e445
+// https://github.com/mattermost/mattermost/pull/39368, stacked on
+// https://github.com/mattermost/mattermost/pull/39367, for CreateScopedSession,
+// model.SessionScope and its limits. Remove it and require a released
+// server/public once those PRs merge.
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155907-e4fd62b3fe64
 
 // TEMPORARY, with the server/public replace above: that server/public needs
 // testcontainers-go v0.44, which github.com/mattermost/testcontainers-mattermost-go

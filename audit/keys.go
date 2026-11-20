@@ -46,6 +46,13 @@ const (
 	KeyScopeExtraChannelCount      = "agents.scope.extra_channel_count"
 	KeyScopeOpenTeamPublicChannels = "agents.scope.open_team_public_channels"
 
+	// KeyScopeTriggeringTeamPublicChannels is whether a scoped session covers
+	// every public channel on the team of the channel that triggered it.
+	KeyScopeTriggeringTeamPublicChannels = "agents.scope.triggering_team_public_channels"
+
+	// KeyMCPServerKind is where a tool ran: builtin, embedded, plugin, or remote.
+	KeyMCPServerKind = "agents.mcp.server_kind"
+
 	// KeyMCPSignInsClearedServerIDs lists the remote MCP servers whose users'
 	// saved sign-ins a configuration change removed.
 	KeyMCPSignInsClearedServerIDs = "agents.mcp_server.signins_cleared.ids"

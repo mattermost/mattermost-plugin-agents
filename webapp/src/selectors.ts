@@ -14,6 +14,7 @@ interface PluginState {
     showCustomPromptsModal: boolean;
     linkPolicy: LinkPolicy;
     htmlArtifactsEnabled?: boolean;
+    scopedSessionsSupported?: boolean | null;
 }
 
 type AppState = GlobalState & {
@@ -45,3 +46,7 @@ export const getLinkPolicy = (state: AppState): LinkPolicy =>
 
 export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.htmlArtifactsEnabled);
+
+// Null until /ai_bots has answered.
+export const getScopedSessionsSupported = (state: AppState): boolean | null =>
+    state[`plugins-${manifest.id}`]?.scopedSessionsSupported ?? null;

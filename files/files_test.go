@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession/scopedtest"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -392,7 +393,7 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 
 	scope := &model.SessionScope{
 		Permissions: model.ScopeReadPermissions,
-		Resources:   model.SessionScopeResources{ChannelIDs: []string{trigger.Id}, OpenTeamPublicChannels: true},
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{trigger.Id}, OpenTeamPublicChannels: true, PublicChannelTeamIDs: []string{closedTeam.Id}},
 	}
 
 	tests := []struct {
@@ -405,7 +406,9 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 	}{
 		{name: "triggering private channel the bot is not in", channel: trigger, team: closedTeam, allowed: true},
 		{name: "public channel on an open team", channel: openPublic, team: openTeam, allowed: true},
-		{name: "public channel on an invite-only team", channel: closedPublic, team: closedTeam},
+		{name: "public channel on the triggering team, which is invite-only", channel: closedPublic, team: closedTeam, allowed: true},
+		{name: "public channel on the triggering team with compliance mode on", channel: closedPublic, team: closedTeam, compliance: true},
+		{name: "public channel on the triggering team when system_user cannot join public teams", channel: closedPublic, team: closedTeam, noJoin: true, allowed: true},
 		{name: "private channel the bot was added to", channel: memberPrivate, team: openTeam},
 		{name: "the bot's DM with a user", channel: botDM},
 		{name: "open-team public channel with compliance mode on", channel: openPublic, team: openTeam, compliance: true},
@@ -424,7 +427,7 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 			if tt.team != nil {
 				m.EXPECT().GetTeam(tt.team.Id).Return(tt.team, nil)
 			}
-			m.EXPECT().GetConfig().Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+			m.EXPECT().GetConfig().Return(scopedtest.RPCConfig(t, &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}}))
 			if !tt.compliance {
 				m.EXPECT().RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
 			}

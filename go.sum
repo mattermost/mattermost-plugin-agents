@@ -323,8 +323,8 @@ github.com/mattermost/ldap v3.0.4+incompatible h1:SOeNnz+JNR+foQ3yHkYqijb9MLPhXN
 github.com/mattermost/ldap v3.0.4+incompatible/go.mod h1:b4reDCcGpBxJ4WX0f224KFY+OR0npin7or7EFpeIko4=
 github.com/mattermost/logr/v2 v2.0.25 h1:p/FXdVyZnC8ttUBB7/RD11aghQEzU1zMRxFPPB114Fk=
 github.com/mattermost/logr/v2 v2.0.25/go.mod h1:0sUKpO+XNMZApeumaid7PYaUZPBIydfuWZ0dqixXo+s=
-github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155611-04b3cd62e445 h1:/59p7juMaV4cHtUnRD0w5DtXy4iTGYi5wjVcvS6RYlM=
-github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155611-04b3cd62e445/go.mod h1:uSssXp9OP2ffdxBIa3pg48lV5h720tE7eBnGNvw6syo=
+github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155907-e4fd62b3fe64 h1:Hj/03rvh8jNmeTR+CF6nryc54a7tiMnzsDdHu1MPMgs=
+github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155907-e4fd62b3fe64/go.mod h1:uSssXp9OP2ffdxBIa3pg48lV5h720tE7eBnGNvw6syo=
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b h1:6u1c1jRNWu9M8WWU805gFSYnunlbAswxqx9O62nZRHs=
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b/go.mod h1:RGV7xzsCHZZYz+9ohTNzmZyRJlhCSt0gcqDiJUOjgT4=
 github.com/mattermost/morph v1.1.0 h1:Q9vrJbeM3s2jfweGheq12EFIzdNp9a/6IovcbvOQ6Cw=
