@@ -322,7 +322,7 @@ test.describe('Dictation', () => {
         const sessionRequest = page.waitForRequest((request) => request.url().endsWith('/dictation/session') && request.method() === 'POST');
         await dictationButton(center).click();
         const townSquare = await getTownSquareChannel(mattermost, username, password);
-        expect(JSON.parse((await sessionRequest).postData() ?? '{}')).toEqual({ sdp: STUB_OFFER_SDP, channel_id: townSquare.id });
+        expect(JSON.parse((await sessionRequest).postData() ?? '{}')).toEqual({ sdp: STUB_OFFER_SDP, channelId: townSquare.id });
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'listening', { timeout: 30000 });
 
         // The plugin made the provider call with the service key and the

@@ -89,7 +89,7 @@ func (c contextChannel) mock(e *dictationEnv) {
 }
 
 func sessionBody(channelID string) string {
-	b, _ := json.Marshal(map[string]string{"sdp": testOffer, "channel_id": channelID})
+	b, _ := json.Marshal(map[string]string{"sdp": testOffer, "channelId": channelID})
 	return string(b)
 }
 

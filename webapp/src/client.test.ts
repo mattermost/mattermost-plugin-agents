@@ -552,7 +552,7 @@ describe('getAIThreads', () => {
 
 describe('createDictationSession', () => {
     test.each([
-        {name: 'with a channel', channelId: 'channel1', want: {sdp: 'OFFER', channel_id: 'channel1'}},
+        {name: 'with a channel', channelId: 'channel1', want: {sdp: 'OFFER', channelId: 'channel1'}},
         {name: 'without a channel', channelId: '', want: {sdp: 'OFFER'}},
     ])('sends the offer as JSON to the plugin route, refusing redirects ($name)', async ({channelId, want}) => {
         mockFetch.mockResolvedValue({ok: true, status: 201, json: () => Promise.resolve({sdp: 'ANSWER', sessionId: 's'})} as unknown as Response);

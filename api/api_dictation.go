@@ -54,10 +54,10 @@ var errDictationOfferTooLarge = errors.New("the SDP offer is too large")
 type createDictationSessionRequest struct {
 	SDP string `json:"sdp"`
 	// ChannelID is the channel the user dictates into, for channel context.
-	ChannelID string `json:"channel_id"`
+	ChannelID string `json:"channelId"`
 }
 
-var errDictationInvalidChannel = errors.New("channel_id is not a valid ID")
+var errDictationInvalidChannel = errors.New("channelId is not a valid ID")
 
 // POST /dictation/session exchanges the browser's SDP offer for an answer on
 // a call the server creates and watches.

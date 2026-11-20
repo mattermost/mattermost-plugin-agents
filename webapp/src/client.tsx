@@ -632,7 +632,7 @@ export async function createDictationSession(offerSDP: string, channelId: string
             response = await fetch(url, {
                 ...Client4.getOptions({
                     method: 'POST',
-                    body: JSON.stringify(channelId ? {sdp: offerSDP, channel_id: channelId} : {sdp: offerSDP}),
+                    body: JSON.stringify(channelId ? {sdp: offerSDP, channelId} : {sdp: offerSDP}),
                     headers: {'Content-Type': 'application/json'},
                 }),
                 redirect: 'error',
