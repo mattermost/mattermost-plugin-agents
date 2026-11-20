@@ -257,6 +257,40 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Equal(t, agent.CreateAt, fetched.CreateAt)
 }
 
+func TestAgentUpdateIfUnchanged(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	agent := testAgent("creator-1", "agent-1", "Agent 1")
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	stale, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+
+	edited := *stale
+	edited.DisplayName = "Edited meanwhile"
+	require.NoError(t, s.UpdateAgent(&edited, SystemAgentVersionMeta()))
+
+	backfill := *stale
+	backfill.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: "embedded://mattermost", ToolName: "read_channel"}}
+	ok, err := s.UpdateAgentIfUnchanged(&backfill, SystemAgentVersionMeta(), stale.UpdateAt)
+	require.NoError(t, err)
+	assert.False(t, ok, "a stale snapshot is not written")
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Edited meanwhile", fetched.DisplayName, "the concurrent edit survives")
+	assert.Equal(t, stale.EnabledMCPTools, fetched.EnabledMCPTools)
+
+	fresh := *fetched
+	fresh.EnabledMCPTools = backfill.EnabledMCPTools
+	ok, err = s.UpdateAgentIfUnchanged(&fresh, SystemAgentVersionMeta(), fetched.UpdateAt)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	fetched, err = s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backfill.EnabledMCPTools, fetched.EnabledMCPTools)
+	assert.Equal(t, "Edited meanwhile", fetched.DisplayName)
+}
+
 func TestAgentUpdateNonexistent(t *testing.T) {
 	s := setupTestStore(t)
 	err := s.RunMigrations()

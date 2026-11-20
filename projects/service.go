@@ -916,12 +916,13 @@ func (s *Service) CheckTurn(_ context.Context, bot *bots.Bot, channel *model.Cha
 // AgentStore reads and updates stored agents.
 type AgentStore interface {
 	ListAgents() ([]*llm.BotConfig, error)
-	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
+	UpdateAgentIfUnchanged(cfg *llm.BotConfig, meta store.AgentVersionMeta, expectedUpdateAt int64) (bool, error)
 }
 
 // BackfillAgentTools gives project agents created before their embedded
 // Mattermost tools were seeded those tools, and returns how many it updated.
-// An agent with any MCP tool, or with tools turned off, is left alone. It
+// An agent with any MCP tool, or with tools turned off, is left alone, and so
+// is one edited since it was read. It
 // runs at activation before agents are loaded, so every node loads the
 // result.
 func BackfillAgentTools(agents AgentStore) (int, error) {
@@ -936,10 +937,13 @@ func BackfillAgentTools(agents AgentStore) (int, error) {
 		}
 		next := *agent
 		next.EnabledMCPTools = ProjectEmbeddedTools()
-		if err := agents.UpdateAgent(&next, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem}); err != nil {
+		ok, err := agents.UpdateAgentIfUnchanged(&next, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem}, agent.UpdateAt)
+		if err != nil {
 			return updated, fmt.Errorf("failed to give project agent %s its tools: %w", agent.ID, err)
 		}
-		updated++
+		if ok {
+			updated++
+		}
 	}
 	return updated, nil
 }
@@ -1050,9 +1054,22 @@ func (s *Service) addBoardMembers(channelID, boardChannelID, botUserID string) e
 		if userID == botUserID {
 			continue
 		}
-		if err := s.deps.Platform.AddChannelMember(boardChannelID, userID); err != nil {
+		if err := s.addBoardMember(channelID, boardChannelID, userID); err != nil {
 			s.deps.Platform.LogError("Failed to add a project member to the board channel", "channel_id", channelID, "board_channel_id", boardChannelID, "user_id", userID, "error", err)
 		}
+	}
+	return nil
+}
+
+// addBoardMember adds userID to the board channel, then takes them out again
+// if they left the project channel meanwhile, so a leave that raced the add
+// doesn't leave them with board access.
+func (s *Service) addBoardMember(channelID, boardChannelID, userID string) error {
+	if err := s.deps.Platform.AddChannelMember(boardChannelID, userID); err != nil {
+		return err
+	}
+	if _, err := s.deps.Platform.GetChannelMember(channelID, userID); err != nil {
+		return s.deps.Platform.RemoveChannelMember(boardChannelID, userID)
 	}
 	return nil
 }
@@ -1060,15 +1077,18 @@ func (s *Service) addBoardMembers(channelID, boardChannelID, botUserID string) e
 // OnChannelMemberJoined adds whoever joins a live project channel to its
 // board channel.
 func (s *Service) OnChannelMemberJoined(channelID, userID string) error {
+	if !s.enabled() {
+		return nil
+	}
 	project, err := s.boardProject(channelID, userID)
 	if project == nil || err != nil {
 		return err
 	}
-	return s.deps.Platform.AddChannelMember(project.BoardChannelID, userID)
+	return s.addBoardMember(channelID, project.BoardChannelID, userID)
 }
 
 // OnChannelMemberLeft removes whoever leaves a live project channel from its
-// board channel.
+// board channel, also while project channels are turned off.
 func (s *Service) OnChannelMemberLeft(channelID, userID string) error {
 	project, err := s.boardProject(channelID, userID)
 	if project == nil || err != nil {
@@ -1080,9 +1100,6 @@ func (s *Service) OnChannelMemberLeft(channelID, userID string) error {
 // boardProject returns the live project of channelID when it has a board
 // and userID isn't its agent, or nil.
 func (s *Service) boardProject(channelID, userID string) (*store.Project, error) {
-	if !s.enabled() {
-		return nil, nil
-	}
 	project, err := s.deps.Store.GetProject(channelID)
 	if errors.Is(err, store.ErrProjectNotFound) {
 		return nil, nil

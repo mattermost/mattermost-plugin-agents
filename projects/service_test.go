@@ -221,16 +221,20 @@ func (m *memStore) ListAgents() ([]*llm.BotConfig, error) {
 	}
 	return out, nil
 }
-func (m *memStore) UpdateAgent(cfg *llm.BotConfig, _ store.AgentVersionMeta) error {
+func (m *memStore) UpdateAgentIfUnchanged(cfg *llm.BotConfig, _ store.AgentVersionMeta, expectedUpdateAt int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.agents {
 		if m.agents[i].ID == cfg.ID {
+			if m.agents[i].UpdateAt != expectedUpdateAt {
+				return false, nil
+			}
 			m.agents[i] = *cfg
-			return nil
+			m.agents[i].UpdateAt++
+			return true, nil
 		}
 	}
-	return errors.New("no such agent")
+	return false, errors.New("no such agent")
 }
 func (m *memStore) DeleteAgent(id string) error {
 	m.mu.Lock()
@@ -257,6 +261,8 @@ type fakePlatform struct {
 	posts         []*model.Post
 	events        int
 	addMemberErr  map[string]error
+	// leavesOnAdd names users who leave P while being added elsewhere.
+	leavesOnAdd map[string]bool
 }
 
 func (f *fakePlatform) GetUser(id string) (*model.User, error) {
@@ -296,6 +302,9 @@ func (f *fakePlatform) AddChannelMember(channelID, userID string) error {
 	}
 	if !slices.Contains(f.members[channelID], userID) {
 		f.members[channelID] = append(f.members[channelID], userID)
+	}
+	if f.leavesOnAdd[userID] {
+		f.members["P"] = slices.DeleteFunc(f.members["P"], func(id string) bool { return id == userID })
 	}
 	return nil
 }
@@ -1063,6 +1072,7 @@ func TestProjectAgentsGetTheirEmbeddedTools(t *testing.T) {
 func TestBoardCreationAddsTheProjectMembers(t *testing.T) {
 	f := newFixture(t, true, activeProject())
 	f.platform.addMemberErr = map[string]error{"other": errors.New("add failed")}
+	f.platform.leavesOnAdd = map[string]bool{"guest": true}
 	tool := llm.Tool{
 		Name:         "boards__com_mattermost_boardsv2__create_board",
 		ServerOrigin: BoardsOrigin,
@@ -1078,20 +1088,21 @@ func TestBoardCreationAddsTheProjectMembers(t *testing.T) {
 	require.NoError(t, err)
 	members, err := f.platform.ChannelMemberIDs("NEWB")
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"botuser", "lead", "guest"}, members, "the bot's grant and everyone else in P join B, past one member's failure")
+	assert.ElementsMatch(t, []string{"botuser", "lead"}, members, "the bot's grant and everyone still in P join B, past one member's failure")
 }
 
 func TestBoardMembershipFollowsTheProjectChannel(t *testing.T) {
 	withBoard := func(p *store.Project) { p.BoardChannelID = "B" }
 	tests := []struct {
-		name     string
-		enabled  bool
-		project  func(*store.Project)
-		channel  string
-		user     string
-		left     bool
-		startInB []string
-		wantInB  []string
+		name      string
+		enabled   bool
+		project   func(*store.Project)
+		channel   string
+		user      string
+		left      bool
+		goneFromP bool
+		startInB  []string
+		wantInB   []string
 	}{
 		{name: "joining P joins B", enabled: true, project: withBoard, channel: "P", user: "newcomer", wantInB: []string{"newcomer"}},
 		{name: "leaving P leaves B", enabled: true, project: withBoard, channel: "P", user: "other", left: true, startInB: []string{"other", "lead"}, wantInB: []string{"lead"}},
@@ -1099,6 +1110,8 @@ func TestBoardMembershipFollowsTheProjectChannel(t *testing.T) {
 		{name: "no board yet", enabled: true, project: func(*store.Project) {}, channel: "P", user: "newcomer"},
 		{name: "ended project", enabled: true, project: func(p *store.Project) { withBoard(p); p.State = store.ProjectStateEnded }, channel: "P", user: "newcomer"},
 		{name: "feature off", project: withBoard, channel: "P", user: "newcomer"},
+		{name: "leaving P leaves B with the feature off", project: withBoard, channel: "P", user: "other", left: true, startInB: []string{"other"}},
+		{name: "a leave that races the join", enabled: true, project: withBoard, channel: "P", user: "newcomer", goneFromP: true},
 		{name: "another channel", enabled: true, project: withBoard, channel: "elsewhere", user: "newcomer"},
 	}
 	for _, tt := range tests {
@@ -1107,6 +1120,9 @@ func TestBoardMembershipFollowsTheProjectChannel(t *testing.T) {
 			tt.project(project)
 			f := newFixture(t, tt.enabled, project)
 			f.platform.members["B"] = slices.Clone(tt.startInB)
+			if !tt.left && !tt.goneFromP {
+				f.platform.members["P"] = append(f.platform.members["P"], tt.user)
+			}
 			if tt.left {
 				require.NoError(t, f.svc.OnChannelMemberLeft(tt.channel, tt.user))
 			} else {
@@ -1170,4 +1186,27 @@ func TestLinkProjectCharter(t *testing.T) {
 			assert.Equal(t, tt.want, project.CharterArtifactID)
 		})
 	}
+}
+
+// staleAgents lists agents as they were before a concurrent edit.
+type staleAgents struct {
+	*memStore
+	stale []*llm.BotConfig
+}
+
+func (s staleAgents) ListAgents() ([]*llm.BotConfig, error) { return s.stale, nil }
+
+func TestBackfillLeavesAConcurrentEditAlone(t *testing.T) {
+	f := newFixture(t, true, nil)
+	f.store.agents = []llm.BotConfig{{ID: "a", ProjectChannelID: "P", UpdateAt: 1}}
+	stale, err := f.store.ListAgents()
+	require.NoError(t, err)
+	f.store.agents[0].DisableTools = true
+	f.store.agents[0].UpdateAt = 2
+
+	updated, err := BackfillAgentTools(staleAgents{memStore: f.store, stale: stale})
+	require.NoError(t, err)
+	assert.Zero(t, updated)
+	assert.True(t, f.store.agents[0].DisableTools, "the edit made after the read survives")
+	assert.Empty(t, f.store.agents[0].EnabledMCPTools)
 }
