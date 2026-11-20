@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +13,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -684,6 +687,665 @@ func mustMarshalBlocks(t *testing.T, blocks []conversation.ContentBlock) json.Ra
 	return data
 }
 
+// Text stored in the seeded turns and carried by the posts they are anchored
+// to. The stored values are what the assertions look for in the response body.
+const (
+	storedUserTurnText      = "stored original text"
+	storedAssistantTurnText = "assistant reply text"
+	currentUserPostMessage  = "current text"
+	flaggedPostMessage      = "message carried by the post flagged deleted"
+	edgePostMessage         = "help me"
+	edgeMentionedAgent      = "@agent "
+	textlessTurnPostMessage = "the message the post now carries"
+)
+
+// IDs of the posts the seeded turns are anchored to, and of the files the edge
+// conversation's turn carries.
+const (
+	anchoredUserPostID      = "userpost1234567890123456a"
+	anchoredAssistantPostID = "botpost01234567890123456a"
+	edgeAnchorPostID        = "edgepost1234567890123456a"
+	edgeAnchorFileID        = "edgefile1234567890123456a"
+	edgeAnchorImageID       = "edgeimg01234567890123456a"
+	edgeConversationID      = "conv-edge"
+)
+
+// seedAnchoredConversation stores a channel-bound conversation owned by
+// testUserID with a user turn and an assistant turn, both anchored to posts.
+func seedAnchoredConversation(t *testing.T, e *TestEnvironment, conversationID string) {
+	t.Helper()
+
+	channelID := testChannelID
+	userPostID := anchoredUserPostID
+	assistantPostID := anchoredAssistantPostID
+
+	e.conversationStore.conversations[conversationID] = &store.Conversation{
+		ID:        conversationID,
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+		Title:     "Anchored Conversation",
+		Operation: "conversation",
+	}
+	e.conversationStore.turns[conversationID] = []store.Turn{
+		{
+			ID:             "turn-user-1",
+			ConversationID: conversationID,
+			PostID:         &userPostID,
+			Role:           "user",
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: storedUserTurnText},
+			}),
+			Sequence: 1,
+		},
+		{
+			ID:             "turn-assistant-1",
+			ConversationID: conversationID,
+			PostID:         &assistantPostID,
+			Role:           "assistant",
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: storedAssistantTurnText},
+			}),
+			Sequence: 2,
+		},
+	}
+}
+
+// seedUnanchoredConversation stores a channel-bound conversation owned by
+// testUserID whose turns carry no post anchor.
+func seedUnanchoredConversation(t *testing.T, e *TestEnvironment, conversationID string) {
+	t.Helper()
+
+	channelID := testChannelID
+
+	e.conversationStore.conversations[conversationID] = &store.Conversation{
+		ID:        conversationID,
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+		Title:     "Unanchored Conversation",
+		Operation: "conversation",
+	}
+	e.conversationStore.turns[conversationID] = []store.Turn{
+		{
+			ID:             "turn-user-1",
+			ConversationID: conversationID,
+			Role:           "user",
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: storedUserTurnText},
+			}),
+			Sequence: 1,
+		},
+		{
+			ID:             "turn-assistant-1",
+			ConversationID: conversationID,
+			Role:           "assistant",
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: storedAssistantTurnText},
+			}),
+			Sequence: 2,
+		},
+	}
+}
+
+// armAnchoredConversation arms the post lookups and the channel permission the
+// conversation seeded by seedAnchoredConversation needs. A nil userPost reports
+// the post the user turn is anchored to as not found; the post the assistant
+// turn is anchored to always carries the message that turn was stored with.
+func armAnchoredConversation(e *TestEnvironment, requesterID string, userPost *model.Post) {
+	if userPost == nil {
+		e.mockAPI.On("GetPost", anchoredUserPostID).Return(nil, &model.AppError{
+			Id:         "app.post.get.app_error",
+			StatusCode: http.StatusNotFound,
+		}).Maybe()
+	} else {
+		e.mockAPI.On("GetPost", anchoredUserPostID).Return(userPost, nil).Maybe()
+	}
+	e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+		Id:        anchoredAssistantPostID,
+		UserId:    testBotUserID,
+		ChannelId: testChannelID,
+		Message:   storedAssistantTurnText,
+	}, nil).Maybe()
+	allowAnyPostLookup(e.mockAPI)
+	e.mockAPI.On("HasPermissionToChannel", requesterID, testChannelID, model.PermissionReadChannel).Return(true)
+}
+
+// setupEdgeTurn stores a channel-bound conversation owned by testUserID whose
+// single user turn holds blocks and is anchored to edgeAnchorPostID, and arms
+// the lookup of that post. A nil anchored post is reported as not found.
+func setupEdgeTurn(t *testing.T, e *TestEnvironment, blocks []conversation.ContentBlock, anchored *model.Post) {
+	t.Helper()
+
+	channelID := testChannelID
+	postID := edgeAnchorPostID
+
+	e.conversationStore.conversations[edgeConversationID] = &store.Conversation{
+		ID:        edgeConversationID,
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+		Title:     "Edge Conversation",
+		Operation: "conversation",
+	}
+	e.conversationStore.turns[edgeConversationID] = []store.Turn{{
+		ID:             "turn-edge-1",
+		ConversationID: edgeConversationID,
+		PostID:         &postID,
+		Role:           "user",
+		Content:        mustMarshalBlocks(t, blocks),
+		Sequence:       1,
+	}}
+
+	if anchored == nil {
+		e.mockAPI.On("GetPost", edgeAnchorPostID).Return(nil, &model.AppError{
+			Id:         "app.post.get.app_error",
+			StatusCode: http.StatusNotFound,
+		}).Maybe()
+	} else {
+		e.mockAPI.On("GetPost", edgeAnchorPostID).Return(anchored, nil).Maybe()
+	}
+	allowAnyPostLookup(e.mockAPI)
+	e.mockAPI.On("HasPermissionToChannel", testOtherUserID, channelID, model.PermissionReadChannel).Return(true)
+}
+
+// edgeAnchorPost builds the post the edge conversation's turn is anchored to,
+// carrying message and living in the conversation's channel.
+func edgeAnchorPost(message string) *model.Post {
+	return &model.Post{
+		Id:        edgeAnchorPostID,
+		UserId:    testUserID,
+		ChannelId: testChannelID,
+		Message:   message,
+	}
+}
+
+// allowAnyPostLookup registers a fallback post lookup reporting the post as
+// not found. Testify matches the earliest registered expectation, so this only
+// applies to IDs a test did not register explicitly.
+func allowAnyPostLookup(mockAPI *plugintest.API) {
+	mockAPI.On("GetPost", mock.Anything).Return(nil, &model.AppError{
+		Id:         "app.post.get.app_error",
+		StatusCode: http.StatusNotFound,
+	}).Maybe()
+}
+
+// turnByRole returns the first turn with the given role. The test fails if
+// that role is absent, so an empty-text assertion cannot pass on a dropped turn.
+func turnByRole(t *testing.T, body []byte, role string) TurnResponse {
+	t.Helper()
+
+	var response ConversationResponse
+	require.NoError(t, json.Unmarshal(body, &response))
+	for _, turn := range response.Turns {
+		if turn.Role == role {
+			return turn
+		}
+	}
+	require.FailNowf(t, "missing turn", "response has no %q turn", role)
+	return TurnResponse{}
+}
+
+// textOfTurn returns the concatenated text of every text block on the turn.
+func textOfTurn(t *testing.T, turn TurnResponse) string {
+	t.Helper()
+
+	var blocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turn.Content, &blocks))
+	return conversation.TextContent(blocks)
+}
+
+// turnTextByRole decodes the response and returns the concatenated text of
+// every text block on the first turn with the given role.
+func turnTextByRole(t *testing.T, body []byte, role string) string {
+	t.Helper()
+	return textOfTurn(t, turnByRole(t, body, role))
+}
+
+// turnBlocks decodes the content blocks of the single turn in the response.
+func turnBlocks(t *testing.T, body []byte) []conversation.ContentBlock {
+	t.Helper()
+
+	var response ConversationResponse
+	require.NoError(t, json.Unmarshal(body, &response))
+	require.Len(t, response.Turns, 1)
+
+	var blocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(response.Turns[0].Content, &blocks))
+	return blocks
+}
+
+// blocksOfType returns the blocks with the given type.
+func blocksOfType(blocks []conversation.ContentBlock, blockType string) []conversation.ContentBlock {
+	var result []conversation.ContentBlock
+	for _, block := range blocks {
+		if block.Type == blockType {
+			result = append(result, block)
+		}
+	}
+	return result
+}
+
+// getConversationBody issues GET /conversations/{path} as userID and returns
+// the body of the response.
+func getConversationBody(t *testing.T, e *TestEnvironment, path, userID string) []byte {
+	t.Helper()
+
+	request := httptest.NewRequest(http.MethodGet, "/conversations/"+path, nil)
+	request.Header.Add("Mattermost-User-ID", userID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	return body
+}
+
+// TestGetConversationTurnTextReflectsAnchoredPost covers the text a turn is
+// served with: for a request from someone other than the conversation owner,
+// the text of a turn anchored to a post is the message that post currently
+// carries in the conversation's channel.
+func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	// rereadAnchorPost is the post the re-read case returns from its lookup;
+	// its second request runs after the message has been changed.
+	rereadAnchorPost := edgeAnchorPost(edgePostMessage)
+
+	tests := []struct {
+		name           string
+		userID         string
+		conversationID string
+		// requestPath, when set, replaces the conversation ID in the request
+		// path with an alternate spelling of the same ID.
+		requestPath string
+		setup       func(t *testing.T, e *TestEnvironment)
+		validate    func(t *testing.T, body []byte)
+		// secondRequest, when set, re-arms the anchored post lookup and the
+		// case issues the same request again, validated by validateSecond.
+		secondRequest  func(e *TestEnvironment)
+		validateSecond func(t *testing.T, body []byte)
+	}{
+		{
+			name:           "anchored post message differs from stored user turn text",
+			userID:         testOtherUserID,
+			conversationID: "conv-anchor-changed",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				seedAnchoredConversation(t, e, "conv-anchor-changed")
+				armAnchoredConversation(e, testOtherUserID, &model.Post{
+					Id:        anchoredUserPostID,
+					UserId:    testUserID,
+					ChannelId: testChannelID,
+					Message:   currentUserPostMessage,
+				})
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, string(body), storedUserTurnText,
+					"user turn text must match the current content of the post it is anchored to")
+				assert.Equal(t, currentUserPostMessage, turnTextByRole(t, body, "user"))
+			},
+		},
+		{
+			name:           "anchored post lookup reports not found",
+			userID:         testOtherUserID,
+			conversationID: "conv-anchor-missing",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				seedAnchoredConversation(t, e, "conv-anchor-missing")
+				armAnchoredConversation(e, testOtherUserID, nil)
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, string(body), storedUserTurnText,
+					"user turn text requires a retrievable anchored post")
+				assert.Empty(t, textOfTurn(t, turnByRole(t, body, "user")))
+			},
+		},
+		{
+			name:           "anchored post is flagged deleted",
+			userID:         testOtherUserID,
+			conversationID: "conv-anchor-deleted",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				seedAnchoredConversation(t, e, "conv-anchor-deleted")
+				armAnchoredConversation(e, testOtherUserID, &model.Post{
+					Id:        anchoredUserPostID,
+					UserId:    testUserID,
+					ChannelId: testChannelID,
+					Message:   flaggedPostMessage,
+					DeleteAt:  model.GetMillis(),
+				})
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, string(body), storedUserTurnText,
+					"user turn text requires a live anchored post")
+				assert.NotContains(t, string(body), flaggedPostMessage,
+					"a post flagged deleted supplies no text to the response")
+				assert.Empty(t, textOfTurn(t, turnByRole(t, body, "user")))
+			},
+		},
+		{
+			name:           "anchored post message equals stored user turn text",
+			userID:         testOtherUserID,
+			conversationID: "conv-anchor-match",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				seedAnchoredConversation(t, e, "conv-anchor-match")
+				armAnchoredConversation(e, testOtherUserID, &model.Post{
+					Id:        anchoredUserPostID,
+					UserId:    testUserID,
+					ChannelId: testChannelID,
+					Message:   storedUserTurnText,
+				})
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.Contains(t, string(body), storedUserTurnText,
+					"user turn text is returned when it matches the anchored post")
+				assert.Equal(t, storedUserTurnText, turnTextByRole(t, body, "user"))
+				assert.Equal(t, storedAssistantTurnText, turnTextByRole(t, body, "assistant"),
+					"assistant turn text is returned alongside the user turn")
+			},
+		},
+		{
+			name:           "owner request succeeds when anchored post message differs",
+			userID:         testUserID,
+			conversationID: "conv-anchor-owner",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				seedAnchoredConversation(t, e, "conv-anchor-owner")
+				armAnchoredConversation(e, testUserID, &model.Post{
+					Id:        anchoredUserPostID,
+					UserId:    testUserID,
+					ChannelId: testChannelID,
+					Message:   currentUserPostMessage,
+				})
+			},
+			validate: func(t *testing.T, body []byte) {
+				var response ConversationResponse
+				require.NoError(t, json.Unmarshal(body, &response))
+				assert.Equal(t, "conv-anchor-owner", response.ID)
+				assert.Len(t, response.Turns, 2)
+			},
+		},
+		{
+			name:           "turns without a post anchor are returned as stored",
+			userID:         testOtherUserID,
+			conversationID: "conv-no-anchor",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				seedUnanchoredConversation(t, e, "conv-no-anchor")
+				allowAnyPostLookup(e.mockAPI)
+				e.mockAPI.On("HasPermissionToChannel", testOtherUserID, testChannelID, model.PermissionReadChannel).Return(true)
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.Equal(t, storedUserTurnText, turnTextByRole(t, body, "user"))
+				assert.Equal(t, storedAssistantTurnText, turnTextByRole(t, body, "assistant"))
+			},
+		},
+		{
+			name:           "stored text carries the agent mention the plugin prepends",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: edgeMentionedAgent + edgePostMessage},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.Equal(t, edgePostMessage, conversation.TextContent(turnBlocks(t, body)),
+					"the text served for the turn is the message a channel member can read on the post itself")
+			},
+		},
+		{
+			name:           "attachments outlive the text of a turn whose post changed",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: "stale question"},
+					{Type: conversation.BlockTypeImage, FileID: edgeAnchorImageID, Filename: "shot.png", MimeType: "image/png"},
+					{Type: conversation.BlockTypeFile, FileID: edgeAnchorFileID, Filename: "notes.txt", MimeType: "text/plain"},
+					{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "search", Shared: new(true), Input: json.RawMessage(`{"q":"x"}`)},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				blocks := turnBlocks(t, body)
+				assert.NotContains(t, conversation.TextContent(blocks), "stale question")
+
+				images := blocksOfType(blocks, conversation.BlockTypeImage)
+				require.Len(t, images, 1)
+				assert.Equal(t, edgeAnchorImageID, images[0].FileID)
+				assert.Equal(t, "shot.png", images[0].Filename)
+
+				files := blocksOfType(blocks, conversation.BlockTypeFile)
+				require.Len(t, files, 1)
+				assert.Equal(t, edgeAnchorFileID, files[0].FileID)
+
+				toolUses := blocksOfType(blocks, conversation.BlockTypeToolUse)
+				require.Len(t, toolUses, 1)
+				assert.Equal(t, "search", toolUses[0].Name)
+				assert.JSONEq(t, `{"q":"x"}`, string(toolUses[0].Input))
+			},
+		},
+		{
+			name:           "citations on text split across blocks that together match the post",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{
+						Type: conversation.BlockTypeText,
+						Text: "help ",
+						Citations: []conversation.Citation{
+							{Type: "url_citation", URL: "https://example.com", Title: "Example", StartIndex: 0, EndIndex: 4},
+						},
+					},
+					{Type: conversation.BlockTypeText, Text: "me"},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				blocks := turnBlocks(t, body)
+				assert.Equal(t, edgePostMessage, conversation.TextContent(blocks))
+
+				texts := blocksOfType(blocks, conversation.BlockTypeText)
+				require.Len(t, texts, 2,
+					"a turn whose text is the message of its post is served with the blocks it was stored with")
+				assert.Equal(t, "help ", texts[0].Text)
+				assert.Equal(t, "me", texts[1].Text)
+
+				require.Len(t, texts[0].Citations, 1,
+					"citations stay with the text they index into")
+				assert.Equal(t, "https://example.com", texts[0].Citations[0].URL)
+			},
+		},
+		{
+			name:           "text split across blocks that together differ from the post",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: "help "},
+					{Type: conversation.BlockTypeText, Text: "me with the secret plan"},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), "secret plan",
+					"no text block survives when the concatenated text differs from the post")
+			},
+		},
+		{
+			name:           "stored text ending in the post message",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: "reveal the pricing change and help me"},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), "pricing change",
+					"only text equal to the whole post message is served")
+			},
+		},
+		{
+			name:           "stored text starting with the post message",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: edgePostMessage + " with the pricing change"},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), "pricing change",
+					"only text equal to the whole post message is served")
+			},
+		},
+		{
+			name:           "citations go with the text they index into",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{
+						Type: conversation.BlockTypeText,
+						Text: "stale question",
+						Citations: []conversation.Citation{
+							{Type: "url_citation", URL: "https://example.com", Title: "Example", StartIndex: 0, EndIndex: 5},
+						},
+					},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				for _, block := range turnBlocks(t, body) {
+					assert.Empty(t, block.Citations,
+						"citations index into text that is no longer served")
+				}
+			},
+		},
+		{
+			name:           "empty stored text alongside an empty post message",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "search", Shared: new(true)},
+				}, edgeAnchorPost(""))
+			},
+			validate: func(t *testing.T, body []byte) {
+				blocks := turnBlocks(t, body)
+				assert.Empty(t, conversation.TextContent(blocks))
+				require.Len(t, blocksOfType(blocks, conversation.BlockTypeToolUse), 1)
+			},
+		},
+		{
+			name:           "anchor post living outside the conversation channel",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: "shared question"},
+				}, &model.Post{
+					Id:        edgeAnchorPostID,
+					UserId:    testUserID,
+					ChannelId: "otherchan123456789012345a",
+					Message:   "confidential note from another channel",
+				})
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), "confidential note",
+					"a post outside the conversation channel never supplies text to the response")
+			},
+		},
+		{
+			name:           "conversation id spelled percent-encoded in the path",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			requestPath:    "conv%2Dedge",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: "stale question"},
+				}, edgeAnchorPost(edgePostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), "stale question")
+			},
+		},
+		{
+			name:           "stored text holding a bidi control character equal to the post",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: "help\u202eme"},
+				}, edgeAnchorPost("help\u202eme"))
+			},
+			validate: func(t *testing.T, body []byte) {
+				assert.Equal(t, "help\u202eme", conversation.TextContent(turnBlocks(t, body)),
+					"the text served is the text compared against the post")
+			},
+		},
+		{
+			name:           "a later request resolves the anchored post again",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				rereadAnchorPost.Message = edgePostMessage
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeText, Text: edgePostMessage},
+				}, rereadAnchorPost)
+			},
+			validate: func(t *testing.T, body []byte) {
+				require.Equal(t, edgePostMessage, conversation.TextContent(turnBlocks(t, body)))
+			},
+			secondRequest: func(e *TestEnvironment) {
+				rereadAnchorPost.Message = "a different question"
+			},
+			validateSecond: func(t *testing.T, body []byte) {
+				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), edgePostMessage,
+					"a later request resolves the anchored post again rather than reusing the earlier read")
+			},
+		},
+		{
+			name:           "anchored turn holding no text is not given the post message",
+			userID:         testOtherUserID,
+			conversationID: edgeConversationID,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				setupEdgeTurn(t, e, []conversation.ContentBlock{
+					{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "search", Shared: new(true)},
+				}, edgeAnchorPost(textlessTurnPostMessage))
+			},
+			validate: func(t *testing.T, body []byte) {
+				blocks := turnBlocks(t, body)
+				assert.Empty(t, blocksOfType(blocks, conversation.BlockTypeText),
+					"a turn stored without a text block is served without one")
+				assert.NotContains(t, string(body), textlessTurnPostMessage)
+				require.Len(t, blocksOfType(blocks, conversation.BlockTypeToolUse), 1,
+					"the blocks the turn does hold are carried over")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			tt.setup(t, e)
+
+			path := tt.conversationID
+			if tt.requestPath != "" {
+				path = tt.requestPath
+			}
+
+			tt.validate(t, getConversationBody(t, e, path, tt.userID))
+
+			if tt.secondRequest != nil {
+				tt.secondRequest(e)
+				tt.validateSecond(t, getConversationBody(t, e, path, tt.userID))
+			}
+		})
+	}
+}
+
 func TestTurnsToResponseIncludesStatus(t *testing.T) {
 	postID := "post-id"
 	turns := []store.Turn{
@@ -691,9 +1353,463 @@ func TestTurnsToResponseIncludesStatus(t *testing.T) {
 		{ID: "complete-turn", Role: "assistant", Content: json.RawMessage(`[]`), Status: store.TurnStatusComplete},
 	}
 
-	resp, err := turnsToResponse(turns, false)
+	resp, _, err := turnsToResponse(turns, false, "", nil)
 	require.NoError(t, err)
 	require.Len(t, resp, 2)
 	require.Equal(t, store.TurnStatusStreaming, resp[0].Status)
 	require.Equal(t, store.TurnStatusComplete, resp[1].Status)
+}
+
+const (
+	secretEditedAway   = "MARKER-ALPHA pasted secret"
+	secretDeletedReply = "MARKER-BETA pasted secret"
+	secretToken        = "MARKER-GAMMA"
+	editedReplacement  = "edited text without the secret"
+	threadRootMessage  = "root question"
+	secretReplyPostID  = "replypost123456789012345a"
+)
+
+// anchoredThread seeds a channel conversation owned by testUserID with one
+// user turn per entry of posts, anchored to that post, and arms the post
+// lookup so each post returns as given.
+func anchoredThread(t *testing.T, e *TestEnvironment, conversationID, title string, stored map[string]string, posts []*model.Post) {
+	t.Helper()
+
+	channelID := testChannelID
+	e.conversationStore.conversations[conversationID] = &store.Conversation{
+		ID:        conversationID,
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+		Title:     title,
+		Operation: "conversation",
+	}
+
+	var turns []store.Turn
+	for i, post := range posts {
+		postID := post.Id
+		turns = append(turns, store.Turn{
+			ID:             fmt.Sprintf("turn-%d", i),
+			ConversationID: conversationID,
+			PostID:         &postID,
+			Role:           "user",
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeText, Text: stored[post.Id]},
+			}),
+			Sequence: i + 1,
+		})
+		e.mockAPI.On("GetPost", post.Id).Return(post, nil).Maybe()
+	}
+	e.conversationStore.turns[conversationID] = turns
+	allowAnyPostLookup(e.mockAPI)
+}
+
+func getConversationResponse(t *testing.T, e *TestEnvironment, conversationID, userID string) (int, []byte) {
+	t.Helper()
+
+	request := httptest.NewRequest(http.MethodGet, "/conversations/"+conversationID, nil)
+	request.Header.Add("Mattermost-User-ID", userID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	resp := recorder.Result()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	return resp.StatusCode, body
+}
+
+func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	livePost := func(id, rootID, message string) *model.Post {
+		return &model.Post{Id: id, UserId: testUserID, ChannelId: testChannelID, RootId: rootID, Message: message}
+	}
+	deletedPost := func(id, rootID, message string) *model.Post {
+		post := livePost(id, rootID, message)
+		post.DeleteAt = model.GetMillis()
+		return post
+	}
+
+	tests := []struct {
+		name           string
+		conversationID string
+		userID         string
+		// member is false for a user without read access to the channel.
+		member bool
+		// agent is the username of the agent the conversation belongs to. It is
+		// left empty when no agent is registered for the conversation.
+		agent  string
+		setup  func(t *testing.T, e *TestEnvironment)
+		status int
+		// absent are strings that must not appear anywhere in the response body.
+		absent []string
+		// texts are the expected turn texts, in order, when the request succeeds.
+		texts []string
+		// wantTitle is the conversation title expected when the request succeeds.
+		wantTitle string
+	}{
+		{
+			name:           "text edited out of the root post is absent from the whole body",
+			conversationID: "conv-edited",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-edited", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: secretEditedAway},
+					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
+			name:           "deleted mid-thread reply is absent while the root stays readable",
+			conversationID: "conv-reply-deleted",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-reply-deleted", "Thread title", map[string]string{
+					anchoredUserPostID: threadRootMessage,
+					secretReplyPostID:  secretDeletedReply,
+				}, []*model.Post{
+					livePost(anchoredUserPostID, "", threadRootMessage),
+					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
+				})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretDeletedReply},
+			texts:     []string{threadRootMessage, ""},
+			wantTitle: "Thread title",
+		},
+		{
+			name:           "reply that no longer exists is absent from the whole body",
+			conversationID: "conv-reply-gone",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-reply-gone", "Thread title", map[string]string{
+					anchoredUserPostID: threadRootMessage,
+					secretReplyPostID:  secretDeletedReply,
+				}, []*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+				postID := secretReplyPostID
+				e.conversationStore.turns["conv-reply-gone"] = append(e.conversationStore.turns["conv-reply-gone"], store.Turn{
+					ID: "turn-gone", ConversationID: "conv-reply-gone", PostID: &postID, Role: "user", Sequence: 2,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: secretDeletedReply}}),
+				})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretDeletedReply},
+			texts:     []string{threadRootMessage, ""},
+			wantTitle: "Thread title",
+		},
+		{
+			name:           "auto-reply thread keeps the post text, not a blank turn",
+			conversationID: "conv-auto-reply",
+			agent:          "agent",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-auto-reply", "Auto reply title", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+			},
+			status:    http.StatusOK,
+			texts:     []string{threadRootMessage},
+			wantTitle: "Auto reply title",
+		},
+		{
+			name:           "loop-in thread keeps the post text, not a blank turn",
+			conversationID: "conv-loop-in",
+			agent:          "other-agent",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-loop-in", "Loop in title", map[string]string{anchoredUserPostID: "@other-agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+			},
+			status:    http.StatusOK,
+			texts:     []string{threadRootMessage},
+			wantTitle: "Loop in title",
+		},
+		{
+			conversationID: "conv-opening-deleted",
+			name:           "title written from a deleted opening post is blanked from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-opening-deleted", "Question about "+secretEditedAway, map[string]string{
+					anchoredUserPostID: secretEditedAway,
+					secretReplyPostID:  threadRootMessage,
+				}, []*model.Post{
+					deletedPost(anchoredUserPostID, "", secretEditedAway),
+					livePost(secretReplyPostID, anchoredUserPostID, threadRootMessage),
+				})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{"", threadRootMessage},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-opening-missing",
+			name:           "title written from a missing opening post is blanked from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-opening-missing", "Question about "+secretEditedAway, nil, nil)
+				postID := anchoredUserPostID
+				e.conversationStore.turns["conv-opening-missing"] = []store.Turn{{
+					ID: "turn-missing", ConversationID: "conv-opening-missing", PostID: &postID, Role: "user", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: secretEditedAway}}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-lookup-fails",
+			name:           "failed post lookup fails the request instead of serving a blanked turn",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredUserPostID).Return(nil, &model.AppError{
+					Id:         "app.post.get.app_error",
+					StatusCode: http.StatusInternalServerError,
+				}).Maybe()
+				anchoredThread(t, e, "conv-lookup-fails", "Lookup", nil, nil)
+				postID := anchoredUserPostID
+				e.conversationStore.turns["conv-lookup-fails"] = []store.Turn{{
+					ID: "turn-lookup", ConversationID: "conv-lookup-fails", PostID: &postID, Role: "user", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: threadRootMessage}}),
+				}}
+			},
+			status: http.StatusInternalServerError,
+			absent: []string{threadRootMessage},
+		},
+		{
+			conversationID: "conv-annotated",
+			name:           "web search results of a replaced answer are absent from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: editedReplacement,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-annotated", "Annotated", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-annotated"] = []store.Turn{{
+					ID: "turn-annotated", ConversationID: "conv-annotated", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeAnnotations, WebSearchContext: &conversation.WebSearchContext{
+							Results: json.RawMessage(`[{"cited_text":"` + secretDeletedReply + `"}]`),
+							Count:   1,
+						}},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-padded-auto-reply",
+			agent:          "agent",
+			name:           "auto-reply thread whose post has surrounding whitespace keeps its title",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-padded-auto-reply", "Padded title", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", "  "+threadRootMessage+"\n")})
+			},
+			status:    http.StatusOK,
+			texts:     []string{"  " + threadRootMessage + "\n"},
+			wantTitle: "Padded title",
+		},
+		{
+			conversationID: "conv-bare-mention",
+			agent:          "agent",
+			name:           "auto-reply thread whose post has no text keeps its title",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-bare-mention", "File only title", map[string]string{anchoredUserPostID: "@agent"},
+					[]*model.Post{livePost(anchoredUserPostID, "", "")})
+			},
+			status:    http.StatusOK,
+			texts:     []string{""},
+			wantTitle: "File only title",
+		},
+		{
+			conversationID: "conv-bare-mention-deleted",
+			agent:          "agent",
+			name:           "title of a deleted post stored as a bare mention is blanked",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-bare-mention-deleted", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: "@agent"},
+					[]*model.Post{deletedPost(anchoredUserPostID, "", "")})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-server-tool",
+			name:           "search activity of a replaced answer is absent from the whole body",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: editedReplacement,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-server-tool", "Search", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-server-tool"] = []store.Turn{{
+					ID: "turn-server-tool", ConversationID: "conv-server-tool", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{ID: "srv1", Tool: "web_search", Status: "completed", Query: secretDeletedReply}},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-thinking-and-unknown",
+			name:           "reasoning and blocks of an unknown type are absent from a replaced answer",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: editedReplacement,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-thinking-and-unknown", "Reasoning", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-thinking-and-unknown"] = []store.Turn{{
+					ID: "turn-thinking", ConversationID: "conv-thinking-and-unknown", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeThinking, Text: secretDeletedReply, Signature: "sig-" + secretToken},
+						{Type: "future_block_type", Text: "FUTURE-" + secretToken},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply, secretToken},
+			texts:     []string{editedReplacement},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-newline-mention",
+			name:           "mention followed by a newline is not the plugin's prefix, so the title is blanked",
+			userID:         testOtherUserID,
+			member:         true,
+			agent:          "agent",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-newline-mention", "Question about "+secretToken, map[string]string{anchoredUserPostID: "@agent\n" + secretToken},
+					[]*model.Post{livePost(anchoredUserPostID, "", "")})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretToken},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-other-mention",
+			name:           "a user's own mention of someone else is not the plugin's prefix, so the title is blanked",
+			userID:         testOtherUserID,
+			member:         true,
+			agent:          "agent",
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-other-mention", "Question about "+secretToken, map[string]string{anchoredUserPostID: "@alice hello"},
+					[]*model.Post{livePost(anchoredUserPostID, "", "hello")})
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretToken},
+			texts:     []string{"hello"},
+			wantTitle: "",
+		},
+		{
+			conversationID: "conv-unknown-agent",
+			name:           "title is blanked when the conversation's agent cannot be found",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-unknown-agent", "Auto reply title", map[string]string{anchoredUserPostID: "@agent " + threadRootMessage},
+					[]*model.Post{livePost(anchoredUserPostID, "", threadRootMessage)})
+			},
+			status:    http.StatusOK,
+			texts:     []string{threadRootMessage},
+			wantTitle: "",
+		},
+		{
+			name:           "non-member gets 403 and no turn text",
+			conversationID: "conv-nonmember",
+			userID:         testOtherUserID,
+			member:         false,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-nonmember", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: secretEditedAway},
+					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
+			},
+			status: http.StatusForbidden,
+			absent: []string{secretEditedAway, editedReplacement},
+		},
+		{
+			name:           "owner still gets the stored text of an edited and a deleted post",
+			conversationID: "conv-owner",
+			userID:         testUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				anchoredThread(t, e, "conv-owner", "Question about "+secretEditedAway, map[string]string{
+					anchoredUserPostID: secretEditedAway,
+					secretReplyPostID:  secretDeletedReply,
+				}, []*model.Post{
+					livePost(anchoredUserPostID, "", editedReplacement),
+					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
+				})
+			},
+			status:    http.StatusOK,
+			texts:     []string{secretEditedAway, secretDeletedReply},
+			wantTitle: "Question about " + secretEditedAway,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			if tt.agent != "" {
+				e.setupTestBot(llm.BotConfig{Name: tt.agent, DisplayName: tt.agent})
+			}
+			tt.setup(t, e)
+			e.mockAPI.On("HasPermissionToChannel", tt.userID, testChannelID, model.PermissionReadChannel).Return(tt.member)
+
+			status, body := getConversationResponse(t, e, tt.conversationID, tt.userID)
+			require.Equal(t, tt.status, status)
+			for _, absent := range tt.absent {
+				assert.NotContains(t, string(body), absent)
+			}
+			if tt.status != http.StatusOK {
+				return
+			}
+
+			var response ConversationResponse
+			require.NoError(t, json.Unmarshal(body, &response))
+			require.Len(t, response.Turns, len(tt.texts))
+			for i, want := range tt.texts {
+				assert.Equal(t, want, textOfTurn(t, response.Turns[i]))
+			}
+			assert.Equal(t, tt.wantTitle, response.Title)
+		})
+	}
 }

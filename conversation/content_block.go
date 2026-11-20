@@ -5,6 +5,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
@@ -148,6 +149,53 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 				result[i].Content = ""
 			}
 		}
+	}
+	return result
+}
+
+// TextContent returns the concatenated text of every text block.
+func TextContent(blocks []ContentBlock) string {
+	var text strings.Builder
+	for _, block := range blocks {
+		if block.Type == BlockTypeText {
+			text.WriteString(block.Text)
+		}
+	}
+	return text.String()
+}
+
+// WithTextContent returns a new slice of content blocks whose entire text
+// content is text: the first text block carries it and every other text block
+// is emptied, so TextContent of the result equals text. Blocks that hold no
+// text block gain a leading one unless text is empty. Only text blocks and the
+// owner-shared items that FilterForNonRequester already vetted (attachments and
+// tool calls and results) survive; every other block type (thinking, server
+// tool activity, annotations, and any type added later) is dropped, so a new
+// block type is withheld by default.
+// The original slice is never mutated; nil in, nil out for empty text.
+func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
+	if blocks == nil && text == "" {
+		return nil
+	}
+	result := make([]ContentBlock, 0, len(blocks)+1)
+	placed := false
+	for _, block := range blocks {
+		switch block.Type {
+		case BlockTypeText:
+			block.Text = ""
+			block.Citations = nil
+			if !placed {
+				block.Text = text
+				placed = true
+			}
+		case BlockTypeFile, BlockTypeImage, BlockTypeToolUse, BlockTypeToolResult:
+		default:
+			continue
+		}
+		result = append(result, block)
+	}
+	if !placed && text != "" {
+		result = append([]ContentBlock{{Type: BlockTypeText, Text: text}}, result...)
 	}
 	return result
 }
