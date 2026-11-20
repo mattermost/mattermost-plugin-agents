@@ -39,6 +39,8 @@ const ENTER_PROMPT = 'new chat sent with enter';
 interface Chat {prompt: string; reply: string; title?: string}
 const SIDEBAR_CHAT: Chat = {prompt: 'product-view-sidebar-008', reply: 'Sidebar chat reply marker.', title: 'Product View Sidebar Chat'};
 const HEADER_CHAT: Chat = {prompt: 'product-view-header-009', reply: 'Header chat reply marker.', title: 'Product View Header Chat'};
+const LONG_TITLE = 'A very long Agents chat title that must ellipsize from the start instead of pushing header actions off the bar';
+const LONG_TITLE_CHAT: Chat = {prompt: 'product-view-long-title-019', reply: 'Long title reply marker.', title: LONG_TITLE};
 const VIEW_CHAT: Chat = {prompt: 'product-view-thread-010', reply: 'Thread view reply marker.'};
 const DM_CHAT: Chat = {prompt: 'product-view-dm-011', reply: 'Channels DM reply marker.'};
 const ENTER_REPLY_CHAT: Chat = {prompt: 'product-view-reply-enter-012', reply: 'Reply composer enter marker.'};
@@ -69,7 +71,7 @@ const chatFixtures = (...chats: Chat[]) => chats.flatMap(({prompt, reply, title}
     ...buildTextResponse({userMessage: prompt, content: reply}).fixtures,
 ]);
 const baseFixtures = () => [
-    ...chatFixtures({prompt: FIRST_PROMPT, reply: FIRST_REPLY, title: THREAD_TITLE}, SIDEBAR_CHAT, HEADER_CHAT, VIEW_CHAT, DM_CHAT, ENTER_REPLY_CHAT, COMPLETE_CHAT, STOP_CHAT, YOUR_AGENTS_CHAT),
+    ...chatFixtures({prompt: FIRST_PROMPT, reply: FIRST_REPLY, title: THREAD_TITLE}, SIDEBAR_CHAT, HEADER_CHAT, LONG_TITLE_CHAT, VIEW_CHAT, DM_CHAT, ENTER_REPLY_CHAT, COMPLETE_CHAT, STOP_CHAT, YOUR_AGENTS_CHAT),
     ...chatFixtures(SIDEBAR_ARCHIVE_CHAT, HEADER_ARCHIVE_CHAT, EMPTY_TITLE_CHAT, KEPT_CHAT),
     ...replyFixtures([ENTER_PROMPT, ATTACH_PROMPT]),
 
@@ -460,6 +462,56 @@ test.describe('Agents product view', () => {
         await replyPost.getByRole('button', {name: 'Copy'}).click();
         await page.mouse.move(0, 0);
         await expect.poll(tint).toBe(idle);
+    });
+
+    test('header: a long chat title ellipsizes and keeps the new-chat action visible', async ({page}) => {
+        const rootId = await startChatViaUi(page, LONG_TITLE_CHAT);
+        await page.setViewportSize({width: 900, height: 800});
+        await page.goto(threadUrl(rootId), {waitUntil: 'domcontentloaded'});
+        const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
+        await expect(chat.getByTestId('agent-chat-thread').getByText(LONG_TITLE_CHAT.reply)).toBeVisible({timeout: 30000});
+
+        const header = chat.locator(`header[aria-label="${botDisplayName}"]`);
+        const trigger = page.getByTestId('agent-chat-menu-button');
+        const newChat = page.getByTestId('agent-chat-new-chat-button');
+        await expect(header.getByRole('heading', {level: 1, name: LONG_TITLE, exact: true})).toBeVisible({timeout: 15000});
+        await expect(trigger).toHaveAttribute('title', LONG_TITLE);
+        await expect(newChat).toBeVisible();
+
+        // Real layout: the label overflows its box and CSS ellipsizes; the new-chat control stays in view.
+        const metrics = await trigger.evaluate((button) => {
+            const label = button.querySelector('[class*="dropdown__label"]') as HTMLElement | null;
+            const heading = button.querySelector('h1');
+            const style = getComputedStyle(button);
+            const labelStyle = label ? getComputedStyle(label) : null;
+            const surface = heading ?? label;
+            return {
+                overflow: style.overflow,
+                textAlign: style.textAlign,
+                minWidth: style.minWidth,
+                labelOverflow: labelStyle?.overflow ?? '',
+                labelTextOverflow: labelStyle?.textOverflow ?? '',
+                surfaceScrollWidth: surface?.scrollWidth ?? 0,
+                surfaceClientWidth: surface?.clientWidth ?? 0,
+                newChatVisible: (() => {
+                    const el = document.querySelector('[data-testid="agent-chat-new-chat-button"]') as HTMLElement | null;
+                    if (!el) {
+                        return false;
+                    }
+                    const box = el.getBoundingClientRect();
+                    return box.width > 0 && box.right <= window.innerWidth;
+                })(),
+            };
+        });
+        expect(metrics.overflow).toBe('hidden');
+        expect(metrics.textAlign).toBe('start');
+        expect(parseFloat(metrics.minWidth)).toBe(0);
+        expect(metrics.labelOverflow).toBe('hidden');
+        expect(metrics.labelTextOverflow).toBe('ellipsis');
+        expect(metrics.surfaceScrollWidth).toBeGreaterThan(metrics.surfaceClientWidth);
+        expect(metrics.newChatVisible).toBe(true);
+
+        await shot(page, 'long_title_truncated_header');
     });
 
     test('header: chat title opens the agent menu; the actions menu switches, renames and creates chats', async ({page}) => {
