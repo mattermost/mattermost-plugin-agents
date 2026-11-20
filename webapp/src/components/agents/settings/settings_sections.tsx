@@ -232,7 +232,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({enableHTMLArtifacts: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'Renders agent-attached HTML files as sandboxed artifacts when a viewer clicks Run. No session access; basic profile requires viewer approval. Full network blocking requires Chromium 152+ (other browsers may leak data via WebRTC), and clipboard contents are untrusted. Site URL must match the address users visit.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Renders agent-attached HTML files as sandboxed artifacts when a viewer clicks Run.'})}
                     />
                     <BooleanItem
                         label={
@@ -286,7 +286,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         label={<FormattedMessage defaultMessage='Limit agent version history'/>}
                         value={(value.agentVersionsToKeep ?? 0) > 0}
                         onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
-                        helpText={intl.formatMessage({defaultMessage: 'Keep only recent versions per agent and permanently delete older ones. Off keeps all versions.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'True keeps only recent versions per agent and permanently deletes older ones. False keeps all versions.'})}
                     />
                     {(value.agentVersionsToKeep ?? 0) > 0 && (
                         <TextItem

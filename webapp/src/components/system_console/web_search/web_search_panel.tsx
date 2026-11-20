@@ -141,7 +141,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             type='password'
                             value={brave.apiKey}
                             onChange={(e) => handleBraveUpdate({apiKey: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: "Requires Brave's Pro AI plan. Using the non-AI Search API violates Brave's Terms of Service and may suspend your account."})}
+                            helptext={intl.formatMessage({defaultMessage: "Requires Brave's Pro AI plan."})}
                             disabled={!value.enabled}
                         />
                         <TextItem
