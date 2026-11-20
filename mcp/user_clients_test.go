@@ -773,3 +773,57 @@ type failingEmbeddedMCPServer struct {
 func (s failingEmbeddedMCPServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, s.err
 }
+
+func TestCollectToolsFromSnapshotsPreservesReadOnlyHintAndSchema(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
+		},
+	}
+
+	userClients := &UserClients{
+		userID: "user-1",
+		clients: map[string]*Client{
+			"Demo": {
+				config: ServerConfig{
+					Name:    "Demo",
+					BaseURL: "https://demo.example.com/mcp",
+				},
+				tools: map[string]*gomcp.Tool{
+					"list_items": {
+						Name:        "list_items",
+						Description: "List items",
+						InputSchema: schema,
+						Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+					},
+					"delete_item": {
+						Name:        "delete_item",
+						Description: "Delete an item",
+						InputSchema: schema,
+						Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: false},
+					},
+					"plain_tool": {
+						Name:        "plain_tool",
+						Description: "No annotations",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	require.Len(t, tools, 3)
+
+	byBareName := make(map[string]llm.Tool, len(tools))
+	for _, tool := range tools {
+		byBareName[llm.BareMCPToolName(tool.Name)] = tool
+	}
+
+	require.True(t, byBareName["list_items"].ReadOnlyHint)
+	require.Equal(t, schema, byBareName["list_items"].Schema)
+	require.False(t, byBareName["delete_item"].ReadOnlyHint)
+	require.Equal(t, schema, byBareName["delete_item"].Schema)
+	require.False(t, byBareName["plain_tool"].ReadOnlyHint)
+	require.Nil(t, byBareName["plain_tool"].Schema)
+}
