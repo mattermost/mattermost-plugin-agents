@@ -48,9 +48,18 @@ type LanguageModelConfig struct {
 	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
 	SkipNativeWebSearch    bool // Omits the provider-native web search tool from the request
 	ReasoningDisabled      bool
+	// ServiceTier requests an OpenAI processing tier such as "flex". Hops on
+	// other providers ignore it.
+	ServiceTier string
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
+
+func WithServiceTier(tier string) LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.ServiceTier = tier
+	}
+}
 
 func WithMaxGeneratedTokens(maxGeneratedTokens int) LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
