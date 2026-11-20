@@ -283,7 +283,7 @@ export function computeRenderedRounds(params: {
     if ((generating || pendingRefetch || !hasConversation || persistedRounds.length === 0) && currentRound) {
         // The persisted copy can land before the end event, so the refetch the
         // end triggers keeps showing it next to the identical live text.
-        const alreadyPersisted = !generating && liveRounds.length === 0 && currentRound.text !== '' &&
+        const alreadyPersisted = !generating && currentRound.text !== '' &&
             persistedRounds[persistedRounds.length - 1]?.text === currentRound.text;
         if (!alreadyPersisted) {
             out.push(currentRound);
