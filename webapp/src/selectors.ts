@@ -4,6 +4,7 @@
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from './manifest';
+import type {ChannelArtifactLibrary, ChannelLibraryState} from './redux';
 import {CustomPrompt} from './types';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
@@ -14,6 +15,10 @@ interface PluginState {
     showCustomPromptsModal: boolean;
     linkPolicy: LinkPolicy;
     htmlArtifactsEnabled?: boolean;
+    channelArtifactsEnabled?: boolean;
+    channelArtifactsLoaded?: boolean;
+    channelArtifactsLoadFailed?: boolean;
+    channelArtifactLibrary?: ChannelArtifactLibrary;
 }
 
 type AppState = GlobalState & {
@@ -45,3 +50,26 @@ export const getLinkPolicy = (state: AppState): LinkPolicy =>
 
 export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.htmlArtifactsEnabled);
+
+export const getChannelArtifactsEnabled = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsEnabled);
+
+export const getChannelArtifactsLoaded = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsLoaded);
+
+export const getChannelArtifactsLoadFailed = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.channelArtifactsLoadFailed);
+
+export const getChannelLibrary = (state: AppState, channelId: string): ChannelLibraryState | undefined =>
+    state[`plugins-${manifest.id}`]?.channelArtifactLibrary?.[channelId];
+
+// Libraries exist only in public and private channels, never in direct or
+// group messages. An unknown channel counts as unsupported.
+export const channelSupportsArtifacts = (state: GlobalState, channelId: string): boolean => {
+    const type = state.entities?.channels?.channels?.[channelId]?.type;
+    return type === 'O' || type === 'P';
+};
+
+/** True when the library is on and the open channel can hold one. */
+export const getChannelArtifactsAvailableHere = (state: AppState): boolean =>
+    getChannelArtifactsEnabled(state) && channelSupportsArtifacts(state, state.entities?.channels?.currentChannelId || '');

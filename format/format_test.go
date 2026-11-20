@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -849,4 +850,51 @@ func TestWriteDraft(t *testing.T) {
 	assert.Contains(t, out, "Root ID: root12345678901234567890ab")
 	assert.Contains(t, out, "Last updated: 2023-11-14T22:13:20Z")
 	assert.Contains(t, out, "Message: draft hello")
+}
+
+func TestWriteChannelArtifact(t *testing.T) {
+	tests := []struct {
+		name        string
+		entry       channelartifacts.Entry
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "line breaks in names cannot forge fields",
+			entry: channelartifacts.Entry{
+				ID: "artifactid012345678901234", Title: "Report\nID: forged", ChannelID: "channelid0123456789012345",
+				SourceAgentDisplayName: "Agent\nID: forged", Available: true,
+			},
+			contains:    []string{"Title: Report ID: forged\n", "Source agent: Agent ID: forged\n"},
+			notContains: []string{"\nID: forged", "Availability:"},
+		},
+		{
+			name:     "the format is reported",
+			entry:    channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Charter", Format: channelartifacts.FormatMarkdown, Available: true},
+			contains: []string{"Format: markdown\n"},
+		},
+		{
+			name:        "rows without a format omit the line",
+			entry:       channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Old", Available: true},
+			notContains: []string{"Format:"},
+		},
+		{
+			name:     "unavailable source is reported",
+			entry:    channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Gone", Available: false},
+			contains: []string{"Availability: unavailable"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			WriteChannelArtifact(&buf, ChannelArtifactEntry{Entry: &tt.entry})
+			out := buf.String()
+			for _, want := range tt.contains {
+				assert.Contains(t, out, want)
+			}
+			for _, unwanted := range tt.notContains {
+				assert.NotContains(t, out, unwanted)
+			}
+		})
+	}
 }

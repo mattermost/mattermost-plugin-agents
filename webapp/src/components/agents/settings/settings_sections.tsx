@@ -71,6 +71,9 @@ export const defaultConfig: PluginConfig = {
     allowUnsafeLinks: false,
     allowedLinkDomains: '',
     enableHTMLArtifacts: false,
+    enableChannelArtifacts: false,
+    channelArtifactsMaxPerChannel: 50,
+    channelArtifactVersionsToKeep: 20,
     enableChannelMentionToolCalling: false,
     enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
@@ -228,6 +231,48 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files that agents attach to their replies are rendered as sandboxed interactive artifacts that run only when a viewer clicks Run. Artifacts have no access to the user\'s Mattermost session, and they read the viewer\'s basic profile only after the viewer explicitly allows it. Network access is blocked, fully only in Chromium 152 or later; in other browsers an artifact can still send its content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC. An artifact can also place content on the clipboard that differs from what it displays, so treat anything copied from an artifact as untrusted. The Site URL must match the address users open Mattermost at, or artifacts fail to load. Enable only where these risks are acceptable.'})}
                     />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable channel artifacts'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableChannelArtifacts)}
+                        onChange={(to) => {
+                            updateConfig({enableChannelArtifacts: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled (and HTML artifacts are enabled), people who may add bookmarks in a channel, and agents on their behalf, can save HTML artifacts to the channel. Members open them from the Channel artifacts panel. The library keeps a link to each artifact\'s original message and file, not a copy: an artifact is available only while that message exists and follows its retention. Channels only: direct and group messages have no library.'})}
+                    />
+                    {Boolean(value.enableChannelArtifacts) && (
+                        <>
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Max artifacts per channel'})}
+                                type='number'
+                                min='1'
+                                value={String(value.channelArtifactsMaxPerChannel || 50)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactsMaxPerChannel: Number.isNaN(parsed) || parsed < 1 ? 50 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of saved artifacts in one channel. Default is 50.'})}
+                            />
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Versions to keep per artifact'})}
+                                type='number'
+                                min='1'
+                                value={String(value.channelArtifactVersionsToKeep || 20)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 20 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'How many versions of one artifact to keep. Older version records are removed when a new version is saved; the original messages are never deleted. Default is 20.'})}
+                            />
+                        </>
+                    )}
                     <BooleanItem
                         label={
                             <Horizontal>

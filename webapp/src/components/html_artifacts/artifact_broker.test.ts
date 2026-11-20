@@ -354,6 +354,20 @@ describe('ArtifactBroker getCurrentUser', () => {
         expect(covered.target.postMessage).toHaveBeenCalledWith(expect.objectContaining({result: user}), '*');
     });
 
+    test('cancelling without a file drops whichever prompt is pending', async () => {
+        const never = () => new Promise<boolean>(() => undefined); // eslint-disable-line no-undefined
+        const inline = setup({fileId: 'source-file', consent: never});
+        inline.send(request);
+        expect(isConsentPromptPending()).toBe(true);
+
+        cancelPendingConsent();
+        await flush();
+
+        expect(inline.dismissConsent).toHaveBeenCalledTimes(1);
+        expect(getConsentDecision('u1', 'source-file')).toBeUndefined();
+        expect(isConsentPromptPending()).toBe(false);
+    });
+
     test('cancelling a pending prompt denies without a decision and frees the prompt for another frame', async () => {
         const never = () => new Promise<boolean>(() => undefined); // eslint-disable-line no-undefined
         const inline = setup({fileId: 'file1', consent: never});

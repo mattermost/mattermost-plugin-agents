@@ -1,0 +1,135 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import {useCallback, useEffect, useRef} from 'react';
+import {useDispatch, useSelector} from 'react-redux';
+
+import {GlobalState} from '@mattermost/types/store';
+
+import {ChannelArtifactEntry} from '@/client';
+import {channelSupportsArtifacts, getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
+
+import {unpinLibraryArtifactBookmark} from './bookmark';
+import {getChannelLibraryClient} from './library_client';
+
+type LibraryDispatch = (action: Record<string, unknown>) => unknown;
+
+const inflight = new Map<string, Promise<void>>();
+
+/**
+ * Loads a channel's library into the shared cache. Concurrent callers for the
+ * same channel share one request, so a thread full of artifact cards, the
+ * panel, and the count badge cost one list call.
+ */
+export function loadChannelLibrary(dispatch: LibraryDispatch, channelId: string): Promise<void> {
+    const pending = inflight.get(channelId);
+    if (pending) {
+        return pending;
+    }
+    dispatch({type: 'CHANNEL_ARTIFACTS_LOADING', channelId});
+    const request = getChannelLibraryClient().list(channelId).then(
+        (list) => {
+            inflight.delete(channelId);
+            dispatch({type: 'CHANNEL_ARTIFACTS_LOADED', channelId, list});
+        },
+        () => {
+            inflight.delete(channelId);
+            dispatch({type: 'CHANNEL_ARTIFACTS_FAILED', channelId});
+        },
+    );
+    inflight.set(channelId, request);
+    return request;
+}
+
+export type ChannelLibrary = {
+
+    // 'unsupported' is a direct or group message, which never has a library.
+    status: 'loading' | 'ready' | 'error' | 'unsupported';
+    entries: ChannelArtifactEntry[];
+    canAdd: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+    maxPerChannel: number;
+    reload: () => Promise<void>;
+};
+
+/**
+ * The cached library of a channel. The first consumer to ask loads it; a failed
+ * load is retried by the next consumer that mounts or calls reload. Websocket
+ * events and local changes keep it current afterwards.
+ */
+export function useChannelLibrary(channelId: string): ChannelLibrary {
+    const dispatch = useDispatch();
+    const featureEnabled = useSelector(getChannelArtifactsEnabled);
+    const supported = useSelector((state: GlobalState) => channelSupportsArtifacts(state, channelId));
+    const enabled = featureEnabled && supported;
+    const cached = useSelector((state: GlobalState) => getChannelLibrary(state as never, channelId));
+    const status = cached?.status;
+
+    // The channel this consumer has already asked the server for. A failed load
+    // changes the status again, so without this a server that keeps failing
+    // would be asked in a loop; each consumer retries a failure once.
+    const requestedFor = useRef('');
+
+    useEffect(() => {
+        if (!enabled || !channelId) {
+            requestedFor.current = '';
+            return;
+        }
+        if (status === 'loading' || status === 'ready') {
+            return;
+        }
+        if (status === 'error' && requestedFor.current === channelId) {
+            return;
+        }
+        requestedFor.current = channelId;
+        loadChannelLibrary(dispatch as LibraryDispatch, channelId);
+    }, [enabled, channelId, status, dispatch]);
+
+    const reload = useCallback(() => {
+        if (!channelId || !supported) {
+            return Promise.resolve();
+        }
+        return loadChannelLibrary(dispatch as LibraryDispatch, channelId);
+    }, [dispatch, channelId, supported]);
+
+    return {
+        status: featureEnabled && !supported ? 'unsupported' : (cached?.status ?? 'loading'),
+        entries: supported ? (cached?.entries ?? NO_ENTRIES) : NO_ENTRIES,
+        canAdd: supported && Boolean(cached?.canAdd),
+        canEdit: supported && Boolean(cached?.canEdit),
+        canDelete: supported && Boolean(cached?.canDelete),
+        maxPerChannel: cached?.maxPerChannel ?? 0,
+        reload,
+    };
+}
+
+const NO_ENTRIES: ChannelArtifactEntry[] = [];
+
+type LibraryStore = {dispatch: LibraryDispatch; getState: () => unknown};
+
+/**
+ * Applies a library websocket event to the cache. A removed entry also drops
+ * its channel bookmark pin on this client when the user may delete bookmarks,
+ * so a removal by an agent or another member does not leave a dead pin.
+ */
+export function applyLibraryEvent(store: LibraryStore, event: string, data: Record<string, unknown> | undefined) {
+    const {dispatch} = store;
+    if (!data) {
+        return;
+    }
+    const channelId = typeof data.channel_id === 'string' ? data.channel_id : '';
+    if (event === 'deleted') {
+        if (channelId && typeof data.id === 'string') {
+            dispatch({type: 'CHANNEL_ARTIFACT_REMOVE', channelId, id: data.id});
+            unpinLibraryArtifactBookmark(store.getState() as GlobalState, channelId, data.id, dispatch as never).catch(() => {
+                // The entry is already gone; a leftover pin explains itself when opened.
+            });
+        }
+        return;
+    }
+    const entry = data.artifact as ChannelArtifactEntry | undefined;
+    if (entry && typeof entry.id === 'string' && typeof entry.channel_id === 'string') {
+        dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
+    }
+}

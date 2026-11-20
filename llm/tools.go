@@ -61,6 +61,8 @@ type Tool struct {
 	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
 	// scheduling a later resume). Only honored for tools with an empty
 	// ServerOrigin — MCP tools must never auto-execute through this flag.
+	// A provider that sets it per request, such as the channel artifact
+	// tools' AutoExecuteFor hook, must default to false.
 	AutoExecute bool
 }
 

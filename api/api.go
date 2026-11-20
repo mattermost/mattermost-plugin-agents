@@ -25,6 +25,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -66,6 +67,9 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
+	EnableChannelArtifacts() bool
+	ChannelArtifactsMaxPerChannel() int
+	ChannelArtifactVersionsToKeep() int
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
@@ -223,6 +227,7 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+	channelLibrary        channelartifacts.Manager
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -417,6 +422,21 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/artifacts/:fileid", a.handleGetArtifact)
 	router.GET("/artifacts/:fileid/token", a.handleGetArtifactToken)
+	router.GET("/channel-artifacts", a.handleListChannelArtifacts)
+	router.POST("/channel-artifacts", a.handleCreateChannelArtifact)
+	// MCP callbacks must be registered before /channel-artifacts/:id so "mcp" is not captured as an id.
+	router.POST("/channel-artifacts/mcp/list", a.handleMCPListChannelArtifacts)
+	router.POST("/channel-artifacts/mcp/get", a.handleMCPGetChannelArtifact)
+	router.PATCH("/channel-artifacts/:id", a.handlePatchChannelArtifact)
+	router.POST("/channel-artifacts/:id/rollback", a.handleRollbackChannelArtifact)
+	router.DELETE("/channel-artifacts/:id", a.handleDeleteChannelArtifact)
+	router.DELETE("/channel-artifacts/:id/versions/:version", a.handleDeleteChannelArtifactVersion)
+	router.GET("/channel-artifacts/:id", a.handleGetChannelArtifact)
+	router.GET("/channel-artifacts/:id/info", a.handleGetChannelArtifactInfo)
+	router.GET("/channel-artifacts/:id/versions", a.handleListChannelArtifactVersions)
+	router.GET("/channel-artifacts/:id/token", a.handleGetChannelArtifactToken)
+	router.GET("/channel-artifacts/:id/content", a.handleGetChannelArtifactContent)
+	router.GET("/channel-artifacts/:id/download", a.handleDownloadChannelArtifact)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)
 	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
@@ -836,8 +856,9 @@ type AIBotsResponse struct {
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
 	// API compatibility.
-	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
-	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
+	LinkPolicy              config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled    bool              `json:"htmlArtifactsEnabled"`
+	ChannelArtifactsEnabled bool              `json:"channelArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -942,11 +963,12 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:                 bots,
-		SearchEnabled:        searchEnabled,
-		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
-		LinkPolicy:           a.config.LinkPolicy(),
-		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		Bots:                    bots,
+		SearchEnabled:           searchEnabled,
+		AllowUnsafeLinks:        a.config.AllowUnsafeLinks(),
+		LinkPolicy:              a.config.LinkPolicy(),
+		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
+		ChannelArtifactsEnabled: a.config.EnableChannelArtifacts(),
 	})
 }
 

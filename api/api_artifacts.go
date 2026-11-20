@@ -15,13 +15,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -159,13 +159,32 @@ func artifactBridgeToken(secret []byte, userID, fileID, nonce string) string {
 // base64url without padding.
 var artifactNonceRe = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
-// artifactNonce returns the request's nonce, which must be the only query
-// parameter. On failure it writes a 400 and returns ok=false.
+// artifactNonce returns the request's nonce. By default `n` must be the only
+// query parameter. On failure it writes a 400 and returns ok=false.
 func artifactNonce(c *gin.Context) (string, bool) {
+	return artifactNonceAllowing(c)
+}
+
+// artifactNonceAllowing is artifactNonce plus an allow-list of extra query
+// keys (e.g. library render's optional `version`). Unknown keys still 400.
+func artifactNonceAllowing(c *gin.Context, allowedExtra ...string) (string, bool) {
 	query, err := url.ParseQuery(c.Request.URL.RawQuery)
-	if err != nil || len(query) != 1 || len(query["n"]) != 1 || !artifactNonceRe.MatchString(query["n"][0]) {
+	if err != nil || len(query["n"]) != 1 || !artifactNonceRe.MatchString(query["n"][0]) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return "", false
+	}
+	allowed := make(map[string]struct{}, 1+len(allowedExtra))
+	allowed["n"] = struct{}{}
+	for _, key := range allowedExtra {
+		if key != "" {
+			allowed[key] = struct{}{}
+		}
+	}
+	for key, values := range query {
+		if _, ok := allowed[key]; !ok || len(values) != 1 {
+			c.String(http.StatusBadRequest, "invalid request")
+			return "", false
+		}
 	}
 	return query["n"][0], true
 }
@@ -299,12 +318,13 @@ func artifactRenderLimit(cfg *model.Config) int64 {
 	return min(maxArtifactRenderBytes, mmtools.CreateFileContentLimit(cfg))
 }
 
+// ArtifactRenderLimit is the most HTML bytes the plugin reads for one artifact.
+func ArtifactRenderLimit(cfg *model.Config) int64 {
+	return artifactRenderLimit(cfg)
+}
+
 func isArtifactExtension(info *model.FileInfo) bool {
-	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
-	if ext == "" {
-		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(info.Name), "."))
-	}
-	return ext == "html" || ext == "htm"
+	return channelartifacts.IsHTMLFile(info)
 }
 
 // authorizeArtifact runs the checks shared by every artifact route: the

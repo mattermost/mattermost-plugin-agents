@@ -100,6 +100,10 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	return nil
 }
 
+func (c *fakeMMClient) DeletePost(string) error {
+	return nil
+}
+
 func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 	c.updatedPosts = append(c.updatedPosts, post.Clone())
 	if c.onUpdatePost != nil {
@@ -183,6 +187,22 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool
 
 func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
 	return c.KVCompareAndSet(key, oldValue, newValue)
+}
+
+func (c *fakeMMClient) KVList(page, perPage int) ([]string, error) {
+	c.kvMu.Lock()
+	keys := make([]string, 0, len(c.kv))
+	for key := range c.kv {
+		keys = append(keys, key)
+	}
+	c.kvMu.Unlock()
+	slices.Sort(keys)
+	start := page * perPage
+	if start >= len(keys) {
+		return nil, nil
+	}
+	end := min(start+perPage, len(keys))
+	return keys[start:end], nil
 }
 
 func (c *fakeMMClient) KVDelete(key string) error {
