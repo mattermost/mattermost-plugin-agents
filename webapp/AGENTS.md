@@ -2,6 +2,10 @@
 
 Scoped instructions for the React/TypeScript webapp in `webapp/`. Root rules in `/AGENTS.md` still apply; only deviations and package-specific gotchas live here.
 
+- Single Jest test: `cd webapp && npx jest src/path/file.test.tsx`.
+- Styling: **always `styled-components`**, never inline `style={{...}}`.
+- i18n: never hand-edit `webapp/src/i18n/en.json` — add user-facing strings at call sites (`react/jsx-no-literals` enforces this) and run `make check-style-fix` or `make i18n-extract`.
+- Host editor contract: `webapp/src/types/access_control_editors.ts` mirrors Mattermost host `window.Components` access-control editor props and is checked against `webapp/src/types/host_editor_contract.snapshot.d.ts` by `npm run check-editor-contract` (runs in `make check-style` and CI). Regenerate the snapshot with `npm run update-editor-contract-snapshot` when a host checkout is available (`MM_WEBAPP_PATH` or sibling `../mattermost/webapp`).
 - Async loaders ignore responses from superseded requests (track the latest request, or cancel on input change and unmount) so a stale response never overwrites newer state.
 - Use `@mattermost/compass-ui` components (buttons, icon buttons, tabs, radio groups, modals, menus) instead of hand-rolled interactive elements; anything clickable is keyboard-operable and has an accessible label.
 - Spacing (padding, margin, gap) uses compass `--spacing-*` tokens, not raw px.
