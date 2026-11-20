@@ -56,6 +56,19 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "option value starting with dash is not expanded as short flags",
+			args: []string{"--server-url=https://mm.example.com", "--token", "-dv", "-dl", "-dv"},
+			want: cliConfig{
+				mmServerURL:  "https://mm.example.com",
+				token:        "-dv",
+				debug:        true,
+				logFile:      "-dv",
+				transport:    "stdio",
+				httpPort:     8080,
+				httpBindAddr: "127.0.0.1",
+			},
+		},
+		{
 			name: "http long flags with explicit false track-ai-generated",
 			args: []string{
 				"--server-url", "https://mm.example.com",

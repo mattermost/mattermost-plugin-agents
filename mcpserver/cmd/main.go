@@ -90,27 +90,56 @@ Flags:
 }
 
 // expandShortFlags preserves pflag/POSIX short-flag forms such as -sURL and -dl /path
-// while leaving long flags and registered single-dash flag names untouched.
+// while leaving long flags, registered single-dash flag names, and option values untouched.
 func expandShortFlags(fs *flag.FlagSet, args []string) []string {
+	type boolFlag interface {
+		IsBoolFlag() bool
+	}
+	isValueFlag := func(name string) bool {
+		f := fs.Lookup(name)
+		if f == nil {
+			return false
+		}
+		if bf, ok := f.Value.(boolFlag); ok && bf.IsBoolFlag() {
+			return false
+		}
+		return true
+	}
+
 	out := make([]string, 0, len(args))
+	expectValue := false
 	for i, arg := range args {
+		if expectValue {
+			out = append(out, arg)
+			expectValue = false
+			continue
+		}
 		if arg == "--" {
 			out = append(out, args[i:]...)
 			break
 		}
-		if len(arg) <= 2 || arg[0] != '-' || arg[1] == '-' {
+		if len(arg) < 2 || arg[0] != '-' {
 			out = append(out, arg)
 			continue
 		}
 
-		name, _, _ := strings.Cut(arg[1:], "=")
-		if fs.Lookup(name) != nil {
+		// Long flag (--foo or --foo=bar) or registered single-dash flag (-s, -server-url, etc.).
+		trimmed := strings.TrimPrefix(arg, "--")
+		if trimmed == arg {
+			trimmed = arg[1:]
+		}
+		name, _, hasEq := strings.Cut(trimmed, "=")
+		if arg[1] == '-' || len(arg) == 2 || fs.Lookup(name) != nil {
 			out = append(out, arg)
+			if !hasEq && isValueFlag(name) {
+				expectValue = true
+			}
 			continue
 		}
 
 		var expanded []string
 		valid := true
+		needsNext := false
 		for j := 1; j < len(arg); j++ {
 			switch arg[j] {
 			case 'd', 'v':
@@ -123,6 +152,8 @@ func expandShortFlags(fs *flag.FlagSet, args []string) []string {
 						val = val[1:]
 					}
 					expanded = append(expanded, val)
+				} else {
+					needsNext = true
 				}
 				j = len(arg)
 			default:
@@ -135,6 +166,7 @@ func expandShortFlags(fs *flag.FlagSet, args []string) []string {
 
 		if valid && len(expanded) > 0 {
 			out = append(out, expanded...)
+			expectValue = needsNext
 		} else {
 			out = append(out, arg)
 		}
