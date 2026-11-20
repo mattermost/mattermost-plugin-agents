@@ -30,7 +30,8 @@ interface ChatTitleDropdownProps extends DropdownButtonProps {
 
 // The title of an agent chat as a compass Dropdown trigger: the product's chat header and the RHS
 // title open the same menu from it. The menu's reference (the ref) and its other reference props
-// (handlers, aria attributes) are passed on to the button. The wrapper only limits the width.
+// (handlers, aria attributes) are passed on to the button. The wrapper caps width and supplies the
+// flex shrink path a standalone button needs to ellipsize in the header.
 const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, ...buttonProps}: ChatTitleDropdownProps) => {
     // React 19 passes `ref` to a function component as a prop, and the compass Dropdown spreads its
     // other props onto its button, so the ref reaches the button; its props type does not list it.
@@ -57,10 +58,15 @@ const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, he
 
 export default ChatTitleDropdown;
 
+// A flex header will not ellipsize a standalone button unless this wrapper is a real flex
+// participant with a definite shrink path (overflow: hidden). Keep grow off so a short title does
+// not stretch and push the agent name away.
 const Trigger = styled.span`
-    display: inline-flex;
+    display: flex;
+    flex: 0 1 auto;
     min-width: 0;
     max-width: ${TITLE_MAX_WIDTH};
+    overflow: hidden;
 `;
 
 // The compass label is nowrap and the wrappers around it shrink no smaller than their content, so a
@@ -70,6 +76,8 @@ const TitleDropdown = styled(Dropdown)`
     && {
         min-width: 0;
         max-width: 100%;
+        width: 100%;
+        overflow: hidden;
     }
 
     && [class*='dropdown__trigger'],
