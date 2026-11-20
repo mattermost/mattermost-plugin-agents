@@ -136,7 +136,9 @@ describe('TutorialTourTip', () => {
                     />
                 </div>,
             );
-            expect(tip.style.top).toBe('160px');
+
+            // Tip-origin: vertical center of the 20px trigger (200 + 10).
+            expect(tip.style.top).toBe('210px');
 
             // Simulate an announcement banner shifting the dot down without firing resize/scroll.
             triggerTop = 280;
@@ -151,7 +153,7 @@ describe('TutorialTourTip', () => {
                     />
                 </div>,
             );
-            expect(tip.style.top).toBe('240px');
+            expect(tip.style.top).toBe('290px');
         } finally {
             portal.remove();
         }
@@ -164,18 +166,20 @@ describe('computeAnchoredPosition', () => {
     const viewport = {width: 1000, height: 800};
 
     test.each([
-        {placement: 'left' as const, offset: [0, 12] as [number, number], want: {top: 160, left: 188, placement: 'left'}},
-        {placement: 'right' as const, offset: [0, 12] as [number, number], want: {top: 160, left: 532, placement: 'right'}},
-        {placement: 'top-start' as const, offset: [4, 10] as [number, number], want: {top: 90, left: 504, placement: 'top-start'}},
-        {placement: 'bottom-end' as const, offset: [0, 8] as [number, number], want: {top: 228, left: 220, placement: 'bottom-end'}},
-    ])('positions $placement relative to trigger', ({placement, offset, want}) => {
+
+        // Tip-origin on the trigger edge facing the tip (TourPoint root is 0×0).
+        {placement: 'left' as const, offset: [0, 12] as [number, number], want: {top: 210, left: 488, placement: 'left'}},
+        {placement: 'right' as const, offset: [0, 12] as [number, number], want: {top: 210, left: 532, placement: 'right'}},
+        {placement: 'top-start' as const, offset: [4, 10] as [number, number], want: {top: 190, left: 504, placement: 'top-start'}},
+        {placement: 'bottom-end' as const, offset: [0, 8] as [number, number], want: {top: 228, left: 520, placement: 'bottom-end'}},
+    ])('positions $placement tip origin relative to trigger', ({placement, offset, want}) => {
         expect(computeAnchoredPosition(trigger, tip, placement, offset, viewport)).toEqual(want);
     });
 
     test('flips to the opposite side when the requested side has no room', () => {
         const nearLeftEdge = {top: 200, left: 10, right: 30, bottom: 220, width: 20, height: 20};
         expect(computeAnchoredPosition(nearLeftEdge, tip, 'left', [0, 12], viewport)).toEqual({
-            top: 160,
+            top: 210,
             left: 42,
             placement: 'right',
         });
@@ -186,17 +190,45 @@ describe('computeAnchoredPosition', () => {
         const nearLeftEdge = {top: 200, left: 10, right: 30, bottom: 220, width: 20, height: 20};
         expect(computeAnchoredPosition(nearLeftEdge, tip, 'left', [0, 12], narrowViewport)).toEqual({
             top: 232,
-            left: 8,
+
+            // Bottom tip-origin is centered on the trigger; skid so the 300px card stays in view.
+            left: 158,
             placement: 'bottom',
         });
     });
 
-    test('clamps coordinates inside the viewport when no side fits', () => {
+    test('clamps tip origin inside the viewport when no side fits and the card cannot', () => {
         const tinyViewport = {width: 200, height: 120};
         const nearEdge = {top: 10, left: 10, right: 30, bottom: 30, width: 20, height: 20};
+
+        // Height still fits (skid); width does not, so left falls back to tip-in-viewport.
         expect(computeAnchoredPosition(nearEdge, tip, 'left', [0, 12], tinyViewport)).toEqual({
-            top: 8,
+            top: 58,
             left: 8,
+            placement: 'left',
+        });
+    });
+
+    test('skids a left-placed Agents tip down so a high app-bar card stays on-screen', () => {
+        // Right-hand app bar icon near the top; TourPoint card is vertically centered on the tip.
+        const highAppBarIcon = {top: 40, left: 960, right: 980, bottom: 60, width: 20, height: 20};
+        const agentsTip = {width: 352, height: 240};
+        const viewport = {width: 1000, height: 800};
+        expect(computeAnchoredPosition(highAppBarIcon, agentsTip, 'left', [0, 12], viewport)).toEqual({
+            top: 128, // VIEWPORT_PADDING + height/2
+            left: 948,
+            placement: 'left',
+        });
+    });
+
+    test('skids a last-resort left tip so the card stays on-screen', () => {
+        // Every side fails fit checks, but the viewport can still hold the card.
+        const trigger = {top: 50, left: 180, right: 200, bottom: 70, width: 20, height: 20};
+        const tipSize = {width: 200, height: 200};
+        const viewport = {width: 400, height: 250};
+        expect(computeAnchoredPosition(trigger, tipSize, 'left', [0, 12], viewport)).toEqual({
+            top: 108, // VIEWPORT_PADDING + height/2
+            left: 208, // VIEWPORT_PADDING + width
             placement: 'left',
         });
     });
