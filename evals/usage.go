@@ -198,5 +198,5 @@ func flexUnavailable(err error, stream *peekedStream) bool {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "resource_unavailable") || strings.Contains(msg, "Resource Unavailable")
+	return strings.Contains(msg, "resource_unavailable") || strings.Contains(msg, "flex_unavailable")
 }
