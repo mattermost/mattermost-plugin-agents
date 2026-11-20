@@ -105,3 +105,34 @@ func TestServiceTierIsSentToOpenAIOnly(t *testing.T) {
 		})
 	}
 }
+
+// TestReasoningOffIsSentToOpenAI checks that turning reasoning off reaches
+// OpenAI reasoning models, which otherwise reason at their default effort and
+// can spend a small output budget before writing any text.
+func TestReasoningOffIsSentToOpenAI(t *testing.T) {
+	effortOnWire := func(body map[string]any) any {
+		if effort, ok := body["reasoning_effort"]; ok {
+			return effort
+		}
+		if reasoning, ok := body["reasoning"].(map[string]any); ok {
+			return reasoning["effort"]
+		}
+		return nil
+	}
+	tests := []struct {
+		name       string
+		svc        llm.ServiceConfig
+		wantEffort any
+	}{
+		{name: "chat completions model that can turn reasoning off", svc: llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, DefaultModel: "gpt-6-luna"}, wantEffort: "none"},
+		{name: "Responses model that can turn reasoning off", svc: llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, DefaultModel: "gpt-6-luna", UseResponsesAPI: true}, wantEffort: "none"},
+		{name: "Responses model that always reasons gets its lowest effort", svc: llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, DefaultModel: "gpt-6.1-terra", UseResponsesAPI: true}, wantEffort: "low"},
+		{name: "model that does not reason gets no effort", svc: llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, DefaultModel: "gpt-4o"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := sendWithTools(t, tc.svc, llm.BotConfig{}, nil, llm.WithReasoningDisabled())
+			assert.Equal(t, tc.wantEffort, effortOnWire(body))
+		})
+	}
+}
