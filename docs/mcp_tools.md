@@ -1,6 +1,6 @@
 # Mattermost MCP tool reference
 
-The 121 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 74 are read-only and 47 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 120 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
+The 124 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 74 are read-only and 50 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 123 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
 
 ## How the tools behave
 
@@ -197,6 +197,9 @@ The 121 tools of the built-in Mattermost MCP server, each marked read-only or st
 | `get_channel_groups` | Read-only | Get the groups synced to a channel |
 | `get_team_groups` | Read-only | Get the groups synced to a team |
 | `get_users_in_group_channels` | Read-only | Get the members of given group-message (GM) channels |
+| `create_group` | Changes state | Create a mentionable custom user group with a display name and a mention handle. Can't create LDAP or plugin-synced groups |
+| `update_group` | Changes state | Update a custom group's display name, mention handle, or description. Refuses LDAP and plugin-synced groups. Doesn't change membership |
+| `delete_group` | Changes state | Delete (soft-delete) a custom group. Refuses LDAP and plugin-synced groups |
 
 ## Roles and permissions
 
