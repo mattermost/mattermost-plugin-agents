@@ -68,6 +68,9 @@ func (s *Service) SaveBody(actor Actor, req WriteRequest, lim Limits) (*Entry, e
 	if req.ThreadOfPostID != "" {
 		if sibling, getErr := s.mm.GetPost(req.ThreadOfPostID); getErr == nil && sibling != nil {
 			post.RootId = sibling.RootId
+			if post.RootId == "" {
+				post.RootId = sibling.Id
+			}
 		}
 	}
 	if err = s.mm.CreatePost(post); err != nil {

@@ -177,7 +177,7 @@ func (p *MattermostToolProvider) toolGetChannelArtifact(mcpContext *MCPToolConte
 	format.WriteChannelArtifact(&b, format.ChannelArtifactEntry{Entry: view.Entry})
 
 	if view.ContentIncluded {
-		fmt.Fprintf(&b, "HTML content (characters %d-%d of %d)", view.Offset, view.Offset+view.Returned, view.TotalRunes)
+		fmt.Fprintf(&b, "%s content (characters %d-%d of %d)", contentLabel(view.Entry.Format), view.Offset, view.Offset+view.Returned, view.TotalRunes)
 		if view.HasMore {
 			fmt.Fprintf(&b, "; more remains: call again with offset=%d", view.NextOffset)
 		}
@@ -185,6 +185,13 @@ func (p *MattermostToolProvider) toolGetChannelArtifact(mcpContext *MCPToolConte
 		b.WriteString(view.Content)
 	}
 	return b.String(), nil
+}
+
+func contentLabel(f channelartifacts.Format) string {
+	if f == channelartifacts.FormatMarkdown {
+		return "Markdown"
+	}
+	return "HTML"
 }
 
 // channelArtifactsToolsMiddleware omits the channel artifact tools from

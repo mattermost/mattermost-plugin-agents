@@ -46,6 +46,8 @@ type postFixture struct {
 	posts    map[string]*model.Post
 	events   []string
 	deleted  []string
+	uploads  int
+	created  int
 	filePass bool
 }
 
@@ -132,6 +134,7 @@ func (f *postFixture) upload(r io.Reader, name, channelID string) (*model.FileIn
 	}
 	f.content[info.Id] = string(body)
 	f.infos[info.Id] = info
+	f.uploads++
 	return info, nil
 }
 
@@ -139,6 +142,7 @@ func (f *postFixture) createPost(post *model.Post) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	post.Id = model.NewId()
+	f.created++
 	f.posts[post.Id] = post.Clone()
 	if _, err := f.db.Exec(`INSERT INTO Posts (Id, ChannelId) VALUES ($1, $2)`, post.Id, post.ChannelId); err != nil {
 		return err
@@ -231,6 +235,44 @@ func TestPostBackedLibraryPublishesAndPosts(t *testing.T) {
 	}, f.eventNames())
 }
 
+func TestPostBackedLibraryChecksAReplacementBeforeItUploadsAnything(t *testing.T) {
+	f := newPostFixture(t)
+	writer, unattended, reader, outsider := f.actors()
+	existing, err := f.lib.Write(t.Context(), writer, channelartifacts.WriteRequest{
+		ChannelID: f.channel, Title: "Charter", Format: channelartifacts.FormatMarkdown,
+		Body: []byte("# Charter"),
+	})
+	require.NoError(t, err)
+	uploads, created := f.uploads, f.created
+
+	tests := []struct {
+		name  string
+		actor channelartifacts.Actor
+		req   channelartifacts.SaveRequest
+		want  error
+	}{
+		{"an artifact in another channel", unattended, channelartifacts.SaveRequest{ChannelID: f.otherChannel, ArtifactID: existing.ID}, channelartifacts.ErrNotFound},
+		{"an artifact that does not exist", unattended, channelartifacts.SaveRequest{ChannelID: f.channel, ArtifactID: model.NewId()}, channelartifacts.ErrNotFound},
+		{"an id that is not an id", unattended, channelartifacts.SaveRequest{ChannelID: f.channel, ArtifactID: "nope"}, channelartifacts.ErrInvalidInput},
+		{"another format than the artifact's", unattended, channelartifacts.SaveRequest{ChannelID: f.channel, ArtifactID: existing.ID, Format: channelartifacts.FormatHTML}, channelartifacts.ErrInvalidInput},
+		{"someone who may only read", reader, channelartifacts.SaveRequest{ChannelID: f.channel, ArtifactID: existing.ID}, channelartifacts.ErrForbidden},
+		{"someone who cannot read the channel", outsider, channelartifacts.SaveRequest{ChannelID: f.channel, ArtifactID: existing.ID}, channelartifacts.ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, writeErr := f.lib.Write(t.Context(), tt.actor, channelartifacts.WriteRequest{SaveRequest: tt.req, Body: []byte("# New")})
+			require.ErrorIs(t, writeErr, tt.want)
+			assert.Equal(t, uploads, f.uploads, "nothing is uploaded for a refused replacement")
+			assert.Equal(t, created, f.created, "no message is posted for a refused replacement")
+			assert.Empty(t, f.deleted, "so there is nothing to clean up")
+		})
+	}
+
+	versions, err := f.lib.Versions(t.Context(), writer, existing.ID)
+	require.NoError(t, err)
+	assert.Len(t, versions, 1)
+}
+
 func TestPostBackedLibraryRemovesTheMessageOfARefusedWrite(t *testing.T) {
 	f := newPostFixture(t)
 	_, unattended, _, _ := f.actors()
@@ -269,19 +311,31 @@ func TestPostBackedLibraryAppliesTheFilePolicyWhenTheActorHasASession(t *testing
 }
 
 func TestPostBackedLibraryThreadsTheMessageWithTheResponse(t *testing.T) {
-	f := newPostFixture(t)
-	_, unattended, _, _ := f.actors()
 	root := model.NewId()
-	response := &model.Post{Id: model.NewId(), RootId: root, ChannelId: f.channel}
-	f.posts[response.Id] = response
+	tests := []struct {
+		name     string
+		response *model.Post
+		wantRoot func(response *model.Post) string
+	}{
+		{"a reply joins its thread", &model.Post{RootId: root}, func(*model.Post) string { return root }},
+		{"a root post starts the thread", &model.Post{}, func(r *model.Post) string { return r.Id }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newPostFixture(t)
+			_, unattended, _, _ := f.actors()
+			tt.response.Id, tt.response.ChannelId = model.NewId(), f.channel
+			f.posts[tt.response.Id] = tt.response
 
-	entry, err := f.lib.Write(t.Context(), unattended, channelartifacts.WriteRequest{
-		ChannelID: f.channel, Title: "Threaded",
-		Body:           []byte("<html>t</html>"),
-		ThreadOfPostID: response.Id,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, root, f.posts[entry.SourcePostID].RootId)
+			entry, err := f.lib.Write(t.Context(), unattended, channelartifacts.WriteRequest{
+				ChannelID: f.channel, Title: "Threaded",
+				Body:           []byte("<html>t</html>"),
+				ThreadOfPostID: tt.response.Id,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRoot(tt.response), f.posts[entry.SourcePostID].RootId)
+		})
+	}
 }
 
 func TestPostBackedLibraryRegistersMarkdownFiles(t *testing.T) {

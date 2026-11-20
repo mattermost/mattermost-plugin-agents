@@ -94,6 +94,7 @@ func TestToolGetChannelArtifact(t *testing.T) {
 		args        GetChannelArtifactArgs
 		wantErr     string
 		wantContain []string
+		wantNot     []string
 		wantOpts    ChannelArtifactReadOptions
 	}{
 		{name: "not found", service: &fakeChannelArtifactsService{getErr: channelartifacts.ErrNotFound}, args: GetChannelArtifactArgs{ArtifactID: artifactID}, wantErr: "list_channel_artifacts"},
@@ -116,12 +117,23 @@ func TestToolGetChannelArtifact(t *testing.T) {
 			wantOpts:    ChannelArtifactReadOptions{IncludeContent: true, Limit: 6},
 		},
 		{
+			name: "a Markdown artifact is labeled as Markdown",
+			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
+				Entry:           &channelartifacts.Entry{ID: artifactID, Title: "Charter", Format: channelartifacts.FormatMarkdown, Available: true},
+				ContentIncluded: true, Content: "# Goals", TotalRunes: 7, Returned: 7,
+			}},
+			args:        GetChannelArtifactArgs{ArtifactID: artifactID},
+			wantContain: []string{"Format: markdown", "Markdown content (characters 0-7 of 7)", "# Goals"},
+			wantNot:     []string{"HTML content"},
+			wantOpts:    ChannelArtifactReadOptions{IncludeContent: true},
+		},
+		{
 			name: "later window and version are passed through",
 			service: &fakeChannelArtifactsService{view: ChannelArtifactContent{
 				Entry: entry, ContentIncluded: true, Content: "tail", Offset: 96, TotalRunes: 100, Returned: 4,
 			}},
 			args:        GetChannelArtifactArgs{ArtifactID: artifactID, Offset: 96, Version: 2},
-			wantContain: []string{"characters 96-100 of 100", "tail"},
+			wantContain: []string{"HTML content (characters 96-100 of 100)", "tail"},
 			wantOpts:    ChannelArtifactReadOptions{IncludeContent: true, Offset: 96, Version: 2},
 		},
 	}
@@ -137,6 +149,9 @@ func TestToolGetChannelArtifact(t *testing.T) {
 			require.NoError(t, err)
 			for _, want := range tt.wantContain {
 				assert.Contains(t, result, want)
+			}
+			for _, unwanted := range tt.wantNot {
+				assert.NotContains(t, result, unwanted)
 			}
 			assert.Equal(t, tt.wantOpts, tt.service.gotOpts)
 		})
