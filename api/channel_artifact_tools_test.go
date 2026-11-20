@@ -28,6 +28,8 @@ type artifactToolEnv struct {
 	audits   []string
 	uploads  int
 	postedBy []string
+	posted   []string
+	deleted  []string
 }
 
 // newArtifactToolEnv wires the agent's library tools to the fixture. Uploads
@@ -69,6 +71,7 @@ func newArtifactToolEnv(t *testing.T) *artifactToolEnv {
 	f.mm.EXPECT().CreatePost(mock.Anything).RunAndReturn(func(post *model.Post) error {
 		post.Id = model.NewId()
 		env.postedBy = append(env.postedBy, post.UserId)
+		env.posted = append(env.posted, post.Id)
 		_, err := f.db.Exec(`INSERT INTO Posts (Id, ChannelId) VALUES ($1, $2)`, post.Id, post.ChannelId)
 		require.NoError(t, err)
 		for _, fileID := range post.FileIds {
@@ -81,6 +84,10 @@ func newArtifactToolEnv(t *testing.T) *artifactToolEnv {
 		f.mm.EXPECT().GetPost(post.Id).Return(&model.Post{
 			Id: post.Id, UserId: post.UserId, ChannelId: post.ChannelId, FileIds: post.FileIds,
 		}, nil).Maybe()
+		return nil
+	}).Maybe()
+	f.mm.EXPECT().DeletePost(mock.Anything).RunAndReturn(func(postID string) error {
+		env.deleted = append(env.deleted, postID)
 		return nil
 	}).Maybe()
 	return env
@@ -188,6 +195,24 @@ func TestAgentSaveReadsTheFileUnderTheRequestersFilePolicy(t *testing.T) {
 		require.NoError(t, listErr)
 		assert.Empty(t, list.Entries)
 	})
+}
+
+func TestAgentSaveRemovesItsPostWhenTheLibraryRefusesTheSave(t *testing.T) {
+	e := newArtifactToolEnv(t)
+	_, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Pricing", Content: "<html>same</html>"})
+	require.NoError(t, err)
+	require.Len(t, e.posted, 1)
+	assert.Empty(t, e.deleted, "a saved artifact keeps its message")
+
+	out, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Copy", Content: "<html>same</html>"})
+	require.Error(t, err)
+	assert.Contains(t, out, "identical content")
+	require.Len(t, e.posted, 2)
+	assert.Equal(t, e.posted[1:], e.deleted, "the message posted for the refused save is removed")
+
+	list, err := e.svc.List(testUserID, e.channelID)
+	require.NoError(t, err)
+	assert.Len(t, list.Entries, 1)
 }
 
 func TestAgentRegistersAFileAlreadyOnItsPost(t *testing.T) {

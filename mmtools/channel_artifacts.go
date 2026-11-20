@@ -201,6 +201,9 @@ func (t *ChannelArtifactTools) resolveSave(ctx context.Context, llmCtx *llm.Cont
 	}, limits)
 	if err != nil {
 		t.audit("saveChannelArtifactByAgent", model.AuditStatusFail, llmCtx, args.ArtifactID)
+		if args.Content != "" {
+			t.discardArtifactPost(postID)
+		}
 		return artifactToolUserMessage(err), fmt.Errorf("SaveChannelArtifact failed: %w", err)
 	}
 	t.audit("saveChannelArtifactByAgent", model.AuditStatusSuccess, llmCtx, entry.ID)
@@ -245,6 +248,14 @@ func (t *ChannelArtifactTools) postArtifact(llmCtx *llm.Context, args SaveChanne
 		return "", "", fmt.Errorf("post failed: %w", err)
 	}
 	return post.Id, info.Id, nil
+}
+
+// discardArtifactPost removes the message postArtifact created when the library
+// then refused to record it, so a rejected save leaves nothing in the channel.
+func (t *ChannelArtifactTools) discardArtifactPost(postID string) {
+	if err := t.Client.DeletePost(postID); err != nil {
+		t.Client.LogError("Failed to remove the message of a channel artifact that was not saved", "error", err, "post_id", postID)
+	}
 }
 
 func safeArtifactFileName(title string) string {
