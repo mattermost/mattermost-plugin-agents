@@ -29,6 +29,7 @@ const groups = {
         'tests/system-console/live-service-full-flow.spec.ts',
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
         'tests/tool-activity/activity-approval.spec.ts',
+        'tests/tool-config/real-api/channel-private-source.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/channel-analysis/quick-actions/quick-actions.spec.ts',

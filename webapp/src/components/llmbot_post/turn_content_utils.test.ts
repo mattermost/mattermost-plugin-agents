@@ -224,6 +224,35 @@ describe('extractToolCallsForPost', () => {
         expect(result[2].decided).toBe(true);
     });
 
+    test('maps a result\'s share review onto ToolCall', () => {
+        const sales = {id: 'ch_sales', name: 'sales', display_name: 'Sales Leadership'};
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_1', name: 'mattermost__read_channel', status: 'auto_approved', shared: false},
+                {type: 'tool_use', id: 'tc_2', name: 'get_time', status: 'auto_approved', shared: false},
+            ],
+        });
+        const resultTurn = makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            sequence: 2,
+            role: 'tool_result',
+            content: [
+                {type: 'tool_result', tool_use_id: 'tc_1', content: 'q3', status: 'success', audience_review: true, source_channels: [sales]},
+                {type: 'tool_result', tool_use_id: 'tc_2', content: 'noon', status: 'success', decided_at: 1234},
+            ],
+        });
+
+        const result = extractToolCallsForPost(makeConversation([assistantTurn, resultTurn]), 'post_1');
+
+        expect(result[0].audience_review).toBe(true);
+        expect(result[0].source_channels).toEqual([sales]);
+        expect(result[1].audience_review).toBeUndefined();
+        expect(result[1].source_channels).toBeUndefined();
+    });
+
     test('handles tool_use with null input (redacted)', () => {
         const assistantTurn = makeTurn({
             post_id: 'post_1',

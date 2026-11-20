@@ -302,6 +302,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// call keep their status and are not part of this decision, so they enter
 	// neither audit list; anything auto-executed this call counts as accepted.
 	autoExecutedNow := make(map[string]bool)
+	var executedCalls []llm.ToolCall
 	userRejected := false
 	acceptedToolNames := []string{}
 	rejectedToolNames := []string{}
@@ -335,6 +336,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			})
 		case slices.Contains(acceptedToolIDs, block.ID):
 			acceptedToolNames = append(acceptedToolNames, block.Name)
+			executedCalls = append(executedCalls, llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin})
 			result, resolveErr := resolveApprovedToolUseBlock(run.ctx, llmContext, *block, telemetry.ToolExecutionApproved)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
@@ -374,7 +376,8 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// fresh policy check means a mid-turn policy flip can neither
 			// auto-run a tool the user was asked to approve (or rejected) nor
 			// run one whose policy was since revoked. Shared and terminal, like
-			// any auto-run round.
+			// any auto-run round, unless the share review below holds it.
+			executedCalls = append(executedCalls, llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin})
 			result, resolveErr := resolveApprovedToolUseBlock(run.ctx, llmContext, *block, telemetry.ToolExecutionAuto)
 			autoExecutedNow[block.ID] = true
 			block.Shared = new(true)
@@ -433,6 +436,20 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	}
 	run.stopHeartbeat()
 
+	// As in a run, results the channel's members may not be able to read
+	// wait for the requester's share decision, auto-executed ones included.
+	var review *llm.ShareReview
+	if !policy.isDM && len(executedCalls) > 0 {
+		review = shareReview(llmContext, executedCalls)
+	}
+	if review != nil {
+		for i := range pendingBlocks {
+			if autoExecutedNow[pendingBlocks[i].ID] {
+				pendingBlocks[i].Shared = new(false)
+			}
+		}
+	}
+
 	// Record the resolved statuses and end the run in one write, only while
 	// the turn is still the claimed, streaming one: a sweep that declared the
 	// run lost keeps its interrupted verdict. The tool_result turn follows the
@@ -475,7 +492,8 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		// the canned reason; tool_use arguments stay unshared so they are not
 		// paraphrased into a channel reply.
 		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
-		terminal := policy.isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
+		autoTerminal := autoExecutedNow[tr.ToolCallID] && review == nil
+		terminal := policy.isDM || interactionByID[tr.ToolCallID] || autoTerminal || rejected
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
@@ -487,6 +505,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			rb.DecidedAt = new(now)
 		} else {
 			needsShareDecision = true
+			if review != nil {
+				rb.AudienceReview = true
+				rb.SourceChannels = review.Sources
+			}
 		}
 		resultBlocks = append(resultBlocks, rb)
 	}
@@ -602,9 +624,20 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		}
 	}
 
+	undecidedResults := make(map[string]bool)
+	for i := range turns {
+		for _, b := range decoded[i] {
+			if b.Type == conversation.BlockTypeToolResult && b.DecidedAt == nil {
+				undecidedResults[b.ToolUseID] = true
+			}
+		}
+	}
+
 	// Classify the clicked post's tool_use blocks. DecidedAt applies to the
 	// matching tool_result blocks; we also need to know whether any tool
 	// actually executed to decide whether a follow-up stream is warranted.
+	// Besides the post's own turn, a tool round its run paused after for a
+	// share decision is part of this decision; its settled rounds are not.
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
 	clickedPostUserRejected := false
@@ -612,11 +645,19 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	rejectedToolNames := []string{}
 	var shareLicenseErr error
 	for i, turn := range turns {
-		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
+		if turn.Role != "assistant" {
+			continue
+		}
+		anchor := turn.PostID != nil && *turn.PostID == post.Id
+		runRound := turn.PostID == nil && turn.RunPostID != nil && *turn.RunPostID == post.Id
+		if !anchor && !runRound {
 			continue
 		}
 		for _, b := range decoded[i] {
 			if b.Type != conversation.BlockTypeToolUse || b.ID == "" {
+				continue
+			}
+			if runRound && !undecidedResults[b.ID] {
 				continue
 			}
 			clickedPostToolUseIDs[b.ID] = struct{}{}

@@ -1015,6 +1015,9 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	if runPostID != "" {
 		runPost = &runPostID
 	}
+	if tt.ShareReview != nil {
+		shared = false
+	}
 	assistantBlocks := toolUseBlocks(
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
@@ -1043,7 +1046,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		return fmt.Errorf("failed to create assistant tool turn: %w", err)
 	}
 
-	resultBlockList := toolResultBlocks(tt.ToolResults, shared)
+	resultBlockList := toolResultBlocks(tt.ToolResults, shared, tt.ShareReview)
 	resultContent, err := marshalBlocks(resultBlockList)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tool result blocks: %w", err)

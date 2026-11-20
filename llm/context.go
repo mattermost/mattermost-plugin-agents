@@ -91,6 +91,18 @@ type Context struct {
 	// tools can run, so tools gated on that flag may rely on it.
 	ResponsePostID string
 
+	// DestinationHasNoGuests is true only when the destination channel is known
+	// to contain no guests. Other public channels of the destination team are
+	// readable by that audience only when this is set. Unknown fails closed.
+	DestinationHasNoGuests bool
+
+	// ReviewToolRound, when set, is consulted after an auto-executed tool
+	// round has run, with that round's calls. A non-nil review ends the run
+	// after the round, as a batch awaiting approval does: no further
+	// completion uses the results until the requester decides whether to
+	// share them.
+	ReviewToolRound func(calls []ToolCall) *ShareReview
+
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
 	// ToolRuntime holds non-prompt tool execution state for this turn.

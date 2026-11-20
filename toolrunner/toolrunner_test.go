@@ -364,6 +364,78 @@ func TestToolRunner_MultipleToolRounds(t *testing.T) {
 	assert.Equal(t, 3, inner.callCount)
 }
 
+func TestToolRunner_ReviewedRoundEndsRun(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "tool_a", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc2", Name: "tool_b", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "answer built on result_b"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	review := &llm.ShareReview{Sources: []llm.SourceChannel{{ID: "ch-private", DisplayName: "Sales"}}}
+	var reviewedCalls [][]string
+	store := newTestToolStore(
+		testToolDef{name: "tool_a", result: "result_a"},
+		testToolDef{name: "tool_b", result: "result_b"},
+	)
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store, ReviewToolRound: func(calls []llm.ToolCall) *llm.ShareReview {
+			names := make([]string, 0, len(calls))
+			for _, call := range calls {
+				names = append(names, call.Name)
+				assert.NotEmpty(t, call.Result, "the review sees the round after it ran")
+			}
+			reviewedCalls = append(reviewedCalls, names)
+			if calls[0].Name == "tool_b" {
+				return review
+			}
+			return nil
+		}},
+	}
+
+	result, err := New(inner).Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	var end *llm.StreamEnd
+	var text strings.Builder
+	for event := range result.Stream.Stream {
+		switch event.Type {
+		case llm.EventTypeText:
+			text.WriteString(event.Value.(string))
+		case llm.EventTypeEnd:
+			if v, ok := event.Value.(llm.StreamEnd); ok {
+				end = &v
+			}
+		}
+	}
+
+	assert.Equal(t, 2, inner.callCount, "no completion runs on the reviewed round's results")
+	assert.Empty(t, text.String())
+	assert.Equal(t, [][]string{{"tool_a"}, {"tool_b"}}, reviewedCalls)
+	require.Len(t, result.ToolTurns, 2)
+	assert.Nil(t, result.ToolTurns[0].ShareReview)
+	assert.Equal(t, review, result.ToolTurns[1].ShareReview)
+	require.Len(t, result.ToolTurns[1].ToolResults, 1)
+	assert.Equal(t, "result_b", result.ToolTurns[1].ToolResults[0].Result)
+	require.NotNil(t, end, "the paused run ends with a StreamEnd")
+	assert.True(t, end.OmitEmptyFallback)
+}
+
 func TestToolRunner_PartialApproval_NoneExecuted(t *testing.T) {
 	// LLM returns tool call, shouldExecute returns false.
 	inner := &testLLM{

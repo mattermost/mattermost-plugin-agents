@@ -90,6 +90,17 @@ type ContentBlock struct {
 	// Shared=false but require opposite UI behavior.
 	DecidedAt *int64 `json:"decided_at,omitempty"`
 
+	// AudienceReview (tool_result blocks) marks a result that may hold
+	// content some channel members cannot read, or whose sources are
+	// unknown. The share prompt warns the requester and defaults to Keep
+	// private.
+	AudienceReview bool `json:"audience_review,omitempty"`
+
+	// SourceChannels (tool_result blocks) are the channels behind
+	// AudienceReview that members may not be able to read. Never sent to
+	// non-requesters.
+	SourceChannels []llm.SourceChannel `json:"source_channels,omitempty"`
+
 	// ToolResult fields
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"` // tool_result or file content
@@ -128,7 +139,8 @@ type WebSearchContext struct {
 // MCPBareName cleared; tool result blocks with shared != true have Content
 // cleared. Tool identity (Name, Title, Description, ServerOrigin) stays
 // visible, mirroring redactToolCalls on the live path so both paths render
-// identically. The original slice is never mutated; nil in, nil out.
+// identically. A result's share review stays with the requester. The
+// original slice is never mutated; nil in, nil out.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -147,6 +159,8 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 			if block.Shared == nil || !*block.Shared {
 				result[i].Content = ""
 			}
+			result[i].AudienceReview = false
+			result[i].SourceChannels = nil
 		}
 	}
 	return result

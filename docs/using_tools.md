@@ -21,12 +21,14 @@ When a tool needs your approval, the agent's reply shows a card with the tool na
 
 ## Share or keep private (channels only)
 
-In a channel, a second step follows a tool call that ran after your approval. After the tool returns, you choose what happens to the result:
+In a channel, you choose what happens to a tool result before the agent writes from it:
 
 - **Share:** the agent uses the result in its reply, and everyone in the channel sees the tool's arguments and result.
 - **Keep private:** the result stays with you. The agent writes its channel reply without that content.
 
-You can't take back a **Share**. Tools your admin set to run automatically everywhere skip this step, and their results are shared right away.
+You get this step after every tool call you approve. A tool your admin set to run automatically everywhere runs without asking, and you get the step only when Mattermost can't confirm that everyone in the channel can read what the tool returned. For example, the tool read a private channel, or it came from another system. The agent pauses until you decide. It shows you which channels the results came from, when it knows, and makes **Keep private** the default. Others in the channel see that the agent is waiting for you, but not the results or the channel names. After you decide, the agent continues and can use more tools.
+
+You can't take back a **Share**.
 
 In a direct message or the Agents pane there's no second step, because only you can see the conversation.
 

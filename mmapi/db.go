@@ -52,6 +52,26 @@ func (db *DBClient) DoQuery(dest any, b builder) error {
 	return sqlx.Select(db, dest, sqlString, args...)
 }
 
+// ChannelGuestCount counts a channel's active guest members the way the
+// server's channel store does. The plugin API's channel stats cannot be used:
+// their GuestCount field carries the member count.
+func (db *DBClient) ChannelGuestCount(channelID string) (int64, error) {
+	sqlString, args, err := db.builder.
+		Select("COUNT(*)").
+		From("ChannelMembers").
+		Join("Users ON ChannelMembers.UserId = Users.Id").
+		Where(sq.Eq{"ChannelMembers.ChannelId": channelID, "ChannelMembers.SchemeGuest": true, "Users.DeleteAt": 0}).
+		ToSql()
+	if err != nil {
+		return 0, fmt.Errorf("failed to build guest count query: %w", err)
+	}
+	var count int64
+	if err := db.Get(&count, sqlString, args...); err != nil {
+		return 0, fmt.Errorf("failed to count channel guests: %w", err)
+	}
+	return count, nil
+}
+
 func (db *DBClient) Builder() sq.StatementBuilderType {
 	return db.builder
 }

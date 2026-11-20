@@ -40,6 +40,15 @@ const BatchButtonContainer = styled.div`
     gap: 8px;
 `;
 
+const ShareReviewNotice = styled.div`
+    padding: var(--spacing-xs) var(--spacing-m);
+    border-radius: 4px;
+    background: rgba(var(--away-indicator-rgb), 0.08);
+    border: 1px solid rgba(var(--away-indicator-rgb), 0.24);
+    font-size: 12px;
+    line-height: 16px;
+`;
+
 // Tool call interfaces
 interface ToolApprovalSetProps {
     postID: string;
@@ -113,6 +122,20 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
     }, [decisionToolCalls]);
+
+    const shareReview = useMemo(() => {
+        const reviewed = isResultStage ? decisionToolCalls.filter((call) => call.audience_review) : [];
+        const names = new Map<string, string>();
+        for (const call of reviewed) {
+            for (const channel of call.source_channels ?? []) {
+                const name = channel.display_name || channel.name;
+                if (name) {
+                    names.set(channel.id, name);
+                }
+            }
+        }
+        return {active: reviewed.length > 0, channelNames: [...names.values()]};
+    }, [isResultStage, decisionToolCalls]);
 
     useEffect(() => {
         setToolDecisions({});
@@ -283,6 +306,22 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     return (
         <ToolCallsContainer>
+            {shareReview.active && (
+                <ShareReviewNotice data-testid='share-review-notice'>
+                    {shareReview.channelNames.length > 0 ? (
+                        <FormattedMessage
+                            id='ai.tool_call.share_review_named'
+                            defaultMessage='These results include content from {channels}. Members of this channel may not have access. Review them before you share.'
+                            values={{channels: shareReview.channelNames.join(', ')}}
+                        />
+                    ) : (
+                        <FormattedMessage
+                            id='ai.tool_call.share_review_unnamed'
+                            defaultMessage='The agent could not confirm that members of this channel can read every source of these results. Review them before you share.'
+                        />
+                    )}
+                </ShareReviewNotice>
+            )}
             {props.toolCalls.map((tool) => {
                 const isDecisionCall = decisionToolIDSet.has(tool.id);
 

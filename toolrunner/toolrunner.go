@@ -133,6 +133,11 @@ type ToolTurn struct {
 	// that produced this round's assistant response.
 	TokensIn  int64
 	TokensOut int64
+
+	// ShareReview is set on the round the run paused after because its
+	// results wait for the requester's share decision (see
+	// llm.Context.ReviewToolRound).
+	ShareReview *llm.ShareReview
 }
 
 // ToolResult holds the result of executing a single tool call.
@@ -363,6 +368,15 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
+		// Sources are only known once the tools have run, so the review
+		// happens here, before any completion can use the results.
+		if review := reviewToolRound(request, resolvedToolCalls); review != nil {
+			result.ToolTurns[len(result.ToolTurns)-1].ShareReview = review
+			r.deliverToolTurns(result, onToolTurns)
+			send(llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: llm.StreamEnd{OmitEmptyFallback: true}})
+			return
+		}
+
 		finishToolRound(round)
 	}
 
@@ -469,6 +483,13 @@ func drainStream(stream *llm.TextStreamResult, send func(llm.TextStreamEvent) bo
 	resp.text = sequence.Text()
 	resp.segments = sequence.Segments()
 	return resp
+}
+
+func reviewToolRound(request llm.CompletionRequest, calls []llm.ToolCall) *llm.ShareReview {
+	if request.Context == nil || request.Context.ReviewToolRound == nil {
+		return nil
+	}
+	return request.Context.ReviewToolRound(calls)
 }
 
 // deliverToolTurns calls the onToolTurns callback if there are accumulated turns.

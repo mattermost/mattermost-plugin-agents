@@ -47,6 +47,14 @@ export interface Citation {
     end_index: number;
 }
 
+// A channel a tool result drew from that members of the conversation's
+// channel may not be able to read.
+export interface SourceChannel {
+    id: string;
+    name?: string;
+    display_name?: string;
+}
+
 export interface WebSearchContext {
     results: unknown;
     executed_queries: unknown;
@@ -119,6 +127,11 @@ export interface ContentBlock {
     // Timestamp (ms) at which the share/keep-private decision was recorded.
     // nil → decision still pending; non-nil → decision made, no approval UI.
     decided_at?: number;
+
+    // Set, for the requester only, on a result that needs a share decision
+    // because members of the channel may not be able to read its sources.
+    audience_review?: boolean;
+    source_channels?: SourceChannel[];
 
     // File / Image fields
     filename?: string;

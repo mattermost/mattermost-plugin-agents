@@ -530,6 +530,7 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		&p.configuration,
 	)
+	contextBuilder.SetDestinationGuestCount(dbClient.ChannelGuestCount)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
