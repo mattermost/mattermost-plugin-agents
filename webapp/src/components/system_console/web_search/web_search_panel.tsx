@@ -11,13 +11,6 @@ import {useIsLicensedFor} from '@/license';
 import {BooleanItem, ItemList, SelectionItem, TextItem} from '../item';
 import {LicenseChip} from '../enterprise_chip';
 
-export type WebSearchGoogleConfig = {
-    apiKey: string;
-    searchEngineId: string;
-    resultLimit: number;
-    apiURL: string;
-};
-
 export type WebSearchBraveConfig = {
     apiKey: string;
     resultLimit: number;
@@ -32,7 +25,6 @@ export type WebSearchSearXNGConfig = {
 export type WebSearchConfig = {
     enabled: boolean;
     provider: string;
-    google: WebSearchGoogleConfig;
     brave: WebSearchBraveConfig;
     searxng: WebSearchSearXNGConfig;
     domainDenylist: string[] | null; // server sends nil Go slice as JSON null
@@ -43,7 +35,6 @@ type Props = {
     onChange: (config: WebSearchConfig) => void;
 };
 
-const DEFAULT_GOOGLE_CONFIG = {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
 const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
 const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
 
@@ -52,17 +43,12 @@ const WebSearchPanel = ({value, onChange}: Props) => {
     const sovereignSearchLicensed = useIsLicensedFor('sovereign_web_search');
 
     // Provide defaults for missing config objects
-    const google = value.google || DEFAULT_GOOGLE_CONFIG;
     const brave = value.brave || DEFAULT_BRAVE_CONFIG;
     const searxng = value.searxng || DEFAULT_SEARXNG_CONFIG;
     const domainDenylist = value.domainDenylist || [];
 
     const handleUpdate = (patch: Partial<WebSearchConfig>) => {
         onChange({...value, ...patch});
-    };
-
-    const handleGoogleUpdate = (patch: Partial<WebSearchGoogleConfig>) => {
-        handleUpdate({google: {...google, ...patch}});
     };
 
     const handleBraveUpdate = (patch: Partial<WebSearchBraveConfig>) => {
@@ -94,46 +80,12 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                     value={value.provider}
                     onChange={(provider) => handleUpdate({provider})}
                     disabled={!value.enabled}
+                    error={value.provider === 'google' ? intl.formatMessage({defaultMessage: 'Google Custom Search is no longer supported. Choose another provider.'}) : ''}
                     options={[
-                        {value: 'google', label: 'Google Custom Search'},
                         {value: 'brave', label: 'Brave Search'},
                         {value: 'searxng', label: intl.formatMessage({defaultMessage: 'SearXNG (self-hosted)'})},
                     ]}
                 />
-                {value.provider === 'google' && (
-                    <>
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Google API Key'})}
-                            type='password'
-                            value={google.apiKey}
-                            onChange={(e) => handleGoogleUpdate({apiKey: e.target.value})}
-                            disabled={!value.enabled}
-                        />
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Search Engine ID'})}
-                            value={google.searchEngineId}
-                            onChange={(e) => handleGoogleUpdate({searchEngineId: e.target.value})}
-                            disabled={!value.enabled}
-                        />
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Result Limit'})}
-                            type='number'
-                            value={google.resultLimit.toString()}
-                            onChange={(e) => {
-                                const parsed = parseInt(e.target.value, 10);
-                                handleGoogleUpdate({resultLimit: Number.isNaN(parsed) ? 5 : parsed});
-                            }}
-                            disabled={!value.enabled}
-                        />
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'API URL (optional)'})}
-                            value={google.apiURL}
-                            onChange={(e) => handleGoogleUpdate({apiURL: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'Override the default Google Custom Search endpoint if necessary.'})}
-                            disabled={!value.enabled}
-                        />
-                    </>
-                )}
                 {value.provider === 'brave' && (
                     <>
                         <TextItem

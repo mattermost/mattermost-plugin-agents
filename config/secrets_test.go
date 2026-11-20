@@ -59,8 +59,7 @@ func TestRedactSecrets(t *testing.T) {
 			},
 		}}},
 		WebSearch: WebSearchConfig{
-			Google: WebSearchGoogleConfig{APIKey: "google-key", SearchEngineID: "engine-id"},
-			Brave:  WebSearchBraveConfig{APIKey: ""},
+			Brave: WebSearchBraveConfig{APIKey: "brave-key", APIURL: "https://brave.example.com"},
 		},
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 			EmbeddingProvider: embeddings.UpstreamConfig{
@@ -83,13 +82,13 @@ func TestRedactSecrets(t *testing.T) {
 		{name: "mcp client secret", got: func(cfg Config) string { return cfg.MCP.Servers[0].ClientSecret }, want: SecretPlaceholder},
 		{name: "mcp header value", got: func(cfg Config) string { return cfg.MCP.Servers[0].Headers["Authorization"] }, want: SecretPlaceholder},
 		{name: "mcp service account header value", got: func(cfg Config) string { return cfg.MCP.Servers[0].ServiceAccountHeaders["Authorization"] }, want: SecretPlaceholder},
-		{name: "google api key", got: func(cfg Config) string { return cfg.WebSearch.Google.APIKey }, want: SecretPlaceholder},
-		{name: "unset brave api key stays empty", got: func(cfg Config) string { return cfg.WebSearch.Brave.APIKey }, want: ""},
+		{name: "brave api key", got: func(cfg Config) string { return cfg.WebSearch.Brave.APIKey }, want: SecretPlaceholder},
+		{name: "unset opentelemetry headers stay empty", got: func(cfg Config) string { return cfg.OpenTelemetryHeaders }, want: ""},
 		{name: "service org id", got: func(cfg Config) string { return cfg.Services[0].OrgID }, want: "org-1"},
 		{name: "service aws access key id", got: func(cfg Config) string { return cfg.Services[0].AWSAccessKeyID }, want: "AKIAEXAMPLE"},
 		{name: "mcp client id", got: func(cfg Config) string { return cfg.MCP.Servers[0].ClientID }, want: "client-id"},
 		{name: "mcp base url", got: func(cfg Config) string { return cfg.MCP.Servers[0].BaseURL }, want: "https://mcp.example.com"},
-		{name: "google search engine id", got: func(cfg Config) string { return cfg.WebSearch.Google.SearchEngineID }, want: "engine-id"},
+		{name: "brave api url", got: func(cfg Config) string { return cfg.WebSearch.Brave.APIURL }, want: "https://brave.example.com"},
 	}
 
 	for _, tt := range tests {
@@ -138,8 +137,7 @@ func TestRestoreSecrets(t *testing.T) {
 				},
 			}}},
 			WebSearch: WebSearchConfig{
-				Google: WebSearchGoogleConfig{APIKey: "google-key"},
-				Brave:  WebSearchBraveConfig{APIKey: "brave-key"},
+				Brave: WebSearchBraveConfig{APIKey: "brave-key"},
 			},
 			EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 				EmbeddingProvider: embeddings.UpstreamConfig{
@@ -174,7 +172,7 @@ func TestRestoreSecrets(t *testing.T) {
 					"Authorization": SecretPlaceholder,
 				},
 			}}},
-			WebSearch: WebSearchConfig{Google: WebSearchGoogleConfig{APIKey: SecretPlaceholder}},
+			WebSearch: WebSearchConfig{Brave: WebSearchBraveConfig{APIKey: SecretPlaceholder}},
 			EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 				EmbeddingProvider: embeddings.UpstreamConfig{
 					Parameters: json.RawMessage(`{"apiKey":"` + SecretPlaceholder + `"}`),
@@ -188,7 +186,7 @@ func TestRestoreSecrets(t *testing.T) {
 		assert.Equal(t, SecretPlaceholder, restored.MCP.Servers[0].ClientSecret)
 		assert.Equal(t, SecretPlaceholder, restored.MCP.Servers[0].Headers["Authorization"])
 		assert.Equal(t, SecretPlaceholder, restored.MCP.Servers[0].ServiceAccountHeaders["Authorization"])
-		assert.Equal(t, SecretPlaceholder, restored.WebSearch.Google.APIKey)
+		assert.Equal(t, SecretPlaceholder, restored.WebSearch.Brave.APIKey)
 
 		params := map[string]string{}
 		require.NoError(t, json.Unmarshal(restored.EmbeddingSearchConfig.EmbeddingProvider.Parameters, &params))
@@ -199,7 +197,7 @@ func TestRestoreSecrets(t *testing.T) {
 			"mcp.servers[Confluence].clientSecret",
 			"mcp.servers[Confluence].headers[Authorization]",
 			"mcp.servers[Confluence].serviceAccountHeaders[Authorization]",
-			"webSearch.google.apiKey",
+			"webSearch.brave.apiKey",
 			"embeddingSearchConfig.embeddingProvider.parameters.apiKey",
 		}, MaskedCredentialFields(restored))
 	})

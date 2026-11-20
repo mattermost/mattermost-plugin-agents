@@ -203,7 +203,6 @@ func configWithEverySecret() *config.Config {
 			}},
 		},
 		WebSearch: config.WebSearchConfig{
-			Google:  config.WebSearchGoogleConfig{APIKey: "sentinel-google-key"},
 			SearXNG: config.WebSearchSearXNGConfig{BaseURL: "https://searx:sentinel-searxng-password@searx.example.com"},
 			Brave:   config.WebSearchBraveConfig{APIKey: "sentinel-brave-key", APIURL: "https://brave.example.com/sentinel-brave-path-token/search"},
 		},
@@ -228,7 +227,6 @@ var maskedCredentials = []string{
 	"sentinel-mcp-header",
 	"sentinel-mcp-service-account",
 	"sentinel-mcp-client-secret",
-	"sentinel-google-key",
 	"sentinel-brave-key",
 	"sentinel-embedding-key",
 	"sentinel-otlp-header",
