@@ -240,7 +240,7 @@ replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
 // https://github.com/mattermost/mattermost/pull/39367, for CreateScopedSession,
 // model.SessionScope and its limits. Remove it and require a released
 // server/public once those PRs merge.
-replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261118161627-71e1e9bd9336
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155907-e4fd62b3fe64
 
 // TEMPORARY, with the server/public replace above: that server/public needs
 // testcontainers-go v0.44, which github.com/mattermost/testcontainers-mattermost-go
