@@ -246,8 +246,9 @@ func newRegisteredProvider(t *testing.T, serverURL string) *MattermostToolProvid
 	return provider
 }
 
-// callRegisteredTool runs a tool through the provider's registration, so the
-// registered name, schema and argument decoding are all exercised.
+// callRegisteredTool runs the resolver registered under name, so the tool's
+// registered name and JSON argument decoding are exercised. It does not check
+// the input schema or the access restrictions applied at request time.
 func callRegisteredTool(t *testing.T, provider *MattermostToolProvider, mcpCtx *MCPToolContext, name string, args map[string]any) (string, error) {
 	t.Helper()
 	raw, err := json.Marshal(args)
