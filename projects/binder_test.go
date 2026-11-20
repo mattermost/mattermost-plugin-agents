@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -433,6 +434,45 @@ func TestCursorCreateStartsOneAgentPerRunThread(t *testing.T) {
 		_, err = call(newCreate(t, f, resolve))
 		require.Error(t, err)
 		assert.Equal(t, 1, creates)
+	})
+
+	t.Run("a call whose thread read races another create starts no second agent", func(t *testing.T) {
+		f := newRunThreadFixture(t)
+		var creates atomic.Int32
+		resolve := func() (string, error) {
+			n := creates.Add(1)
+			return fmt.Sprintf(`{"agent_id":"bc-%d"}`, n), nil
+		}
+		read, resume := make(chan struct{}), make(chan struct{})
+		callbacks := f.svc.binderCallbacks(f.bot)
+		readThread := callbacks.RunThread
+		callbacks.RunThread = func(channelID, rootPostID string) (*store.ProjectThread, error) {
+			thread, err := readThread(channelID, rootPostID)
+			close(read)
+			<-resume
+			return thread, err
+		}
+		slow := NewBinder(activeProject(), true, callbacks).Bind([]llm.Tool{{
+			Name: "cursor_cloud_agents__com_mattermost_plugin-cursor__create_agent", ServerOrigin: CursorOrigin,
+			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return resolve() },
+		}})
+		require.Len(t, slow, 1)
+		slowErr := make(chan error, 1)
+		go func() {
+			_, err := call(slow[0])
+			slowErr <- err
+		}()
+		<-read
+
+		_, otherErr := call(newCreate(t, f, resolve))
+		close(resume)
+		firstErr := <-slowErr
+
+		assert.Equal(t, int32(1), creates.Load(), "only one Cursor agent is started")
+		assert.True(t, (firstErr == nil) != (otherErr == nil), "exactly one call succeeds: %v, %v", firstErr, otherErr)
+		thread, err := f.store.GetProjectThread("P", "run")
+		require.NoError(t, err)
+		assert.Equal(t, "bc-1", thread.ExternalID)
 	})
 
 	t.Run("a call while another runs is refused", func(t *testing.T) {

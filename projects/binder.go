@@ -342,6 +342,16 @@ func (b *Binder) cursorCreate(tool llm.Tool) llm.Tool {
 		if rootID == "" {
 			return "", ErrNotInRunThread
 		}
+		key := b.project.ChannelID + "/" + rootID
+		pending, ok := b.cursorCreates.claim(key)
+		if !ok {
+			return "", ErrCreateInProgress
+		}
+		agentID, recorded := pending, false
+		defer func() { b.cursorCreates.release(key, agentID, recorded) }()
+
+		// Read the thread after claiming, so an agent another call recorded
+		// meanwhile is seen.
 		thread, err := b.callbacks.RunThread(b.project.ChannelID, rootID)
 		if errors.Is(err, store.ErrProjectThreadNotFound) {
 			return "", ErrNotInRunThread
@@ -352,14 +362,6 @@ func (b *Binder) cursorCreate(tool llm.Tool) llm.Tool {
 		if thread.Kind != store.ProjectThreadKindCursor {
 			return "", ErrNotInRunThread
 		}
-
-		key := b.project.ChannelID + "/" + rootID
-		pending, ok := b.cursorCreates.claim(key)
-		if !ok {
-			return "", ErrCreateInProgress
-		}
-		agentID, recorded := pending, false
-		defer func() { b.cursorCreates.release(key, agentID, recorded) }()
 
 		if pending != "" {
 			if recordErr := b.callbacks.CursorAgentCreated(ctx, b.project, rootID, pending); recordErr != nil {
