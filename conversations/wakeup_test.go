@@ -220,7 +220,7 @@ func newWakeEnv(t *testing.T, bot *bots.Bot) *wakeEnv {
 		mmClient:         env.mmClient,
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             botsService,
-		convService:      conversation.NewService(env.convStore, nil, nil, nil),
+		convService:      conversation.NewService(env.convStore, nil, livePostClient{}, nil),
 		streamingService: env.streaming,
 	}
 	return env
@@ -847,7 +847,7 @@ func TestRegenerationCancelsThreadWakeWithoutNote(t *testing.T) {
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t),
 		bots:           passthroughBotsService(bot),
-		convService:    conversation.NewService(convStore, nil, nil, nil),
+		convService:    conversation.NewService(convStore, nil, livePostClient{}, nil),
 		configProvider: &channelFollowUpTestConfig{},
 		wakeScheduler:  sched,
 	}

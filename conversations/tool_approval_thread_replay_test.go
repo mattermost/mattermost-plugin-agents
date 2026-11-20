@@ -295,7 +295,7 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 		&channelFollowUpTestConfig{},
 	)
 
-	convService := conversation.NewService(s, nil, nil, nil)
+	convService := conversation.NewService(s, nil, livePostClient{}, nil)
 	c := &Conversations{
 		mmClient:          mmClient,
 		contextBuilder:    contextBuilder,

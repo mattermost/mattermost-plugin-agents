@@ -275,7 +275,7 @@ func newConnectionTestConversations(t *testing.T, provider llmcontext.MCPToolPro
 		configProvider:    config,
 		contextBuilder:    llmcontext.NewLLMContextBuilder(pluginAPI, &channelFollowUpTestToolProvider{}, provider, config),
 		bots:              botsService,
-		convService:       conversation.NewService(convStore, nil, nil, nil),
+		convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
 		streamingService:  streamingService,
 		licenseChecker:    licenseChecker,
 	}

@@ -656,6 +656,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		},
 		kv:              make(map[string]any),
 		allowCreatePost: true,
+		liveRoots:       true,
 	}
 
 	i18nBundle := i18n.Init()
@@ -912,6 +913,8 @@ func TestDMReplyInArchivedThread(t *testing.T) {
 			rootPostID := "root1"
 			if root := tt.rootPost(rootPostID); root != nil {
 				env.mmClient.posts = map[string]*model.Post{rootPostID: root}
+			} else {
+				env.mmClient.gonePosts = map[string]bool{rootPostID: true}
 			}
 			channelID := env.channelID
 			createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{

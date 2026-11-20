@@ -390,6 +390,7 @@ func TestToolApprovalUsesTheRunsActivation(t *testing.T) {
 			botPost := env.seedRun(t, env.channel, root, initiator, pendingWeatherBlock(), nil)
 			if tc.hideInitiator {
 				delete(env.mmClient.posts, initiator.Id)
+				env.mmClient.gonePosts = map[string]bool{initiator.Id: true}
 			}
 			if tc.initiatorErr != nil {
 				env.mmClient.postErrors = map[string]error{initiator.Id: tc.initiatorErr}
@@ -566,7 +567,9 @@ func TestAnalysisFollowUpRechecksSourceAccess(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupPolicyEnv(t, []llm.BotConfig{policyBotConfig(), autoReplySecondBotConfig()}, dmMakeTextStream("follow-up answer"))
-			if !tc.threadGone {
+			if tc.threadGone {
+				env.mmClient.gonePosts = map[string]bool{policyThreadPostID: true}
+			} else {
 				env.mmClient.posts[policyThreadPostID] = &model.Post{Id: policyThreadPostID, ChannelId: policySecretChannel, UserId: autoReplyOtherUserID, Message: "secret plans"}
 			}
 			if tc.lookupFails {

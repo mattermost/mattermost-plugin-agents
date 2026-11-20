@@ -77,7 +77,7 @@ func newChannelWakeApprovalEnv(t *testing.T) *channelWakeApprovalEnv {
 	}
 
 	env.convStore = newLoadedStateFlowStore()
-	env.convService = conversation.NewService(env.convStore, nil, nil, nil)
+	env.convService = conversation.NewService(env.convStore, nil, livePostClient{}, nil)
 	rootID := wakeApprovalRootID
 	env.conv = &store.Conversation{
 		ID:           "conv-id",

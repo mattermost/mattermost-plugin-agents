@@ -587,7 +587,7 @@ func TestHandleRegenerate(t *testing.T) {
 				mmClient:         mm,
 				bots:             botsService,
 				contextBuilder:   builder,
-				convService:      conversation.NewService(convStore, nil, nil, nil),
+				convService:      conversation.NewService(convStore, nil, mm, nil),
 				streamingService: streamSvc,
 				licenseChecker:   enterprisetest.CheckerAt(licenseLevel),
 				configProvider:   &channelFollowUpTestConfig{},
@@ -698,7 +698,7 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 
 	c := &Conversations{
 		bots:        botsService,
-		convService: conversation.NewService(newLoadedStateFlowStore(), nil, nil, nil),
+		convService: conversation.NewService(newLoadedStateFlowStore(), nil, livePostClient{}, nil),
 	}
 
 	// Posts created before meeting flows were migrated carry no
@@ -828,7 +828,7 @@ func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
 		mmClient:         mm,
 		bots:             botsService,
 		contextBuilder:   loadedStateBuilder(t, blockingTool, regenChannelTool("get_channel_info", new(string))),
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, mm, nil),
 		streamingService: &stoppedStreaming{stopAfter: toolStarted},
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelEnterprise),
 		configProvider:   &channelFollowUpTestConfig{},

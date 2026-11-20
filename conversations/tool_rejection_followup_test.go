@@ -422,7 +422,7 @@ func newRejectionFollowUpConversations(
 		contextBuilder:   newChannelFollowUpTestBuilder(t, tools, &channelFollowUpTestConfig{}),
 		bots:             botsService,
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 		streamingService: streamingService,
 	}
 }

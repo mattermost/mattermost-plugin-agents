@@ -21,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -684,7 +685,7 @@ func seedLoadToolPair(t *testing.T, convStore *loadedStateFlowStore, convID, too
 
 func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	convStore, _ := loadedStateConversationStore()
-	convService := conversation.NewService(convStore, nil, nil, nil)
+	convService := conversation.NewService(convStore, nil, livePostClient{}, nil)
 	lm := &loadedStateLLM{}
 	c := &Conversations{convService: convService}
 	llmContext := &llm.Context{Tools: llm.NewToolStore()}
@@ -739,7 +740,7 @@ func TestHandleToolCallExecutesApprovedToolRestoredFromLoadTurns(t *testing.T) {
 		streamingService: &noopStreamingService{},
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             botsService,
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 	}
 
@@ -806,7 +807,7 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             botsService,
 		licenseChecker:   licenseChecker,
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -875,7 +876,7 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             botsService,
 		licenseChecker:   licenseChecker,
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -945,7 +946,7 @@ func TestHandleToolCallRestoresMultipleLoadsBeforeExecutingApprovedTool(t *testi
 		mmClient:         mmClient,
 		contextBuilder:   loadedStateBuilder(t, transitionTool),
 		bots:             botsService,
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
 	}
 
@@ -980,7 +981,7 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             passthroughBotsService(bot),
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 		streamingService: streamingService,
 	}
 
@@ -1082,7 +1083,7 @@ func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t 
 		streamingService: &noopStreamingService{},
 		contextBuilder:   loadedStateBuilder(t, loadedStateTransitionTool(nil)),
 		bots:             passthroughBotsService(bot),
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 		configProvider:   &channelFollowUpTestConfig{},
 	}
 	post := &model.Post{Id: regenPostID}
@@ -1160,7 +1161,7 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 		streamingService: &noopStreamingService{},
 		mmClient:         mmClient,
 		bots:             botsService,
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
 	}
 
 	clickedPost := &model.Post{Id: postAID, UserId: "bot-id"}
@@ -1218,3 +1219,13 @@ func (noopStreamingService) GetStreamingContext(ctx context.Context, _ string) (
 }
 
 func (noopStreamingService) FinishStreaming(string) {}
+
+// livePostClient backs a conversation service whose conversations' root posts
+// all still exist.
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
+}

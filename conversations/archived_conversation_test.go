@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -200,6 +201,67 @@ func TestRegenerateAndToolDecisionRefuseDeletedRoot(t *testing.T) {
 	}
 }
 
+// TestRegenerateRechecksRootAfterBuildingRequest pins that a root post deleted
+// while the regenerate request is being built stops the turn before any
+// provider call, even though the entry check passed.
+func TestRegenerateRechecksRootAfterBuildingRequest(t *testing.T) {
+	env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
+	botPost := env.seedRun(t, env.dm, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	require.NotNil(t, convs[0].RootPostID)
+	rootID := *convs[0].RootPostID
+	// The root is read at the entry gates and again at the recheck; it is
+	// deleted just before the recheck read.
+	const rootReadsBeforeToolLoop = 5
+	reads := 0
+	env.mmClient.onGetPost = func(id string) {
+		if id != rootID {
+			return
+		}
+		reads++
+		if reads >= rootReadsBeforeToolLoop {
+			env.mmClient.posts[rootID] = &model.Post{Id: rootID, DeleteAt: model.GetMillis()}
+		}
+	}
+
+	err := env.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, env.dm)
+
+	require.ErrorIs(t, err, conversation.ErrRootPostDeleted)
+	assert.Empty(t, env.llmRequests(), "the provider must not be called for a deleted root")
+	assert.Zero(t, env.executions.Load(), "no tool may run for a deleted root")
+}
+
+// TestRegenerateRootLookupFailureKeepsResponseTurns pins that a failed root
+// lookup stops regenerate before the saved response turns are deleted.
+func TestRegenerateRootLookupFailureKeepsResponseTurns(t *testing.T) {
+	env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
+	botPost := env.seedRun(t, env.dm, nil, humanPost("what is the weather"), earlierAnswer(), nil)
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	require.NotNil(t, convs[0].RootPostID)
+	rootID := *convs[0].RootPostID
+	// The root is read at the entry gates; the lookup fails on the read just
+	// before the request is built.
+	const rootReadsBeforeBuild = 4
+	reads := 0
+	env.mmClient.onGetPost = func(id string) {
+		if id != rootID {
+			return
+		}
+		reads++
+		if reads >= rootReadsBeforeBuild {
+			env.mmClient.postErrors = map[string]error{rootID: errors.New("lookup failed")}
+		}
+	}
+	before := env.state()
+
+	err := env.conversations.HandleRegenerate(context.Background(), autoReplyUserID, botPost, env.dm)
+
+	require.Error(t, err)
+	requireNothingRan(t, env, before)
+}
+
 // TestRefusedResumeLeavesConversationArchived pins that a stale tool click, a
 // repeated share click, or a regenerate that fails after its gates passed
 // leaves an archived conversation archived, so a pending wait is never
@@ -261,6 +323,72 @@ func TestRefusedResumeLeavesConversationArchived(t *testing.T) {
 				assert.NotZero(t, conv.DeleteAt, "a refused resume must not un-archive the conversation")
 			}
 			assert.Equal(t, before, env.state())
+		})
+	}
+}
+
+// TestDMTurnRefusesDeletedRoot pins that a DM turn on an active conversation
+// whose root post was deleted runs nothing, whether the deletion came before
+// the reply or after the turn was accepted.
+func TestDMTurnRefusesDeletedRoot(t *testing.T) {
+	tests := []struct {
+		name string
+		// deleteMidTurn deletes the root once the turn is accepted, before
+		// the completion request is built.
+		deleteMidTurn bool
+		// deleteAfterRootReads deletes the root on this many-th read of it
+		// during the reply (the last one being the check after the request
+		// is built).
+		deleteAfterRootReads int
+	}{
+		{name: "root deleted before the reply"},
+		{name: "root deleted after the turn was accepted", deleteMidTurn: true},
+		{name: "root deleted while the request is built", deleteAfterRootReads: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupPolicyEnv(t, []llm.BotConfig{policyBotConfig()}, dmMakeTextStream("first answer"), dmMakeTextStream("second answer"))
+			first := dmMessage(env, "what is the weather")
+			env.conversations.MessageHasBeenPosted(nil, first)
+			env.waitForStream(t)
+			requestsBefore := len(env.llmRequests())
+			convs := allConversations(env.convStore)
+			require.Len(t, convs, 1)
+			turnsBefore := len(env.convStore.turnsFor(convs[0].ID))
+
+			reply := &model.Post{Id: model.NewId(), UserId: autoReplyUserID, ChannelId: env.dm.Id, RootId: first.Id, Message: "and tomorrow?"}
+			env.setThread(first.Id, first, reply)
+			switch {
+			case tt.deleteMidTurn:
+				deleted := false
+				env.mmClient.onUpdatePost = func(post *model.Post) {
+					if convID, _ := post.GetProp(streaming.ConversationIDProp).(string); convID != "" && !deleted {
+						deleted = true
+						env.mmClient.gonePosts = map[string]bool{first.Id: true}
+					}
+				}
+			case tt.deleteAfterRootReads > 0:
+				reads := 0
+				env.mmClient.onGetPost = func(id string) {
+					if id != first.Id {
+						return
+					}
+					reads++
+					if reads >= tt.deleteAfterRootReads {
+						env.mmClient.gonePosts = map[string]bool{first.Id: true}
+					}
+				}
+			default:
+				env.mmClient.gonePosts = map[string]bool{first.Id: true}
+			}
+
+			env.conversations.MessageHasBeenPosted(nil, reply)
+
+			assert.Len(t, env.llmRequests(), requestsBefore, "a deleted thread must not reach the provider")
+			if !tt.deleteMidTurn && tt.deleteAfterRootReads == 0 {
+				assert.Len(t, env.convStore.turnsFor(convs[0].ID), turnsBefore, "no user turn is recorded")
+			}
 		})
 	}
 }
