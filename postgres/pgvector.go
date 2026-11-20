@@ -20,6 +20,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -319,7 +320,7 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		return nil, err
 	}
 
-	if opts.UserID == "" {
+	if opts.Scope == nil && opts.UserID == "" {
 		return nil, fmt.Errorf("user ID is required to validate permissions")
 	}
 
@@ -337,12 +338,18 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	).
 		From("llm_posts_embeddings e").
 		Join("Channels c ON e.channel_id = c.Id").
-		Join("ChannelMembers cm ON e.channel_id = cm.ChannelId").
 		Join("Posts p ON e.post_id = p.Id").
-		Where("cm.UserId = ?", opts.UserID).
 		Where("c.DeleteAt = 0").
 		Where("p.DeleteAt = 0").
 		PlaceholderFormat(sq.Dollar)
+
+	if opts.Scope != nil {
+		queryBuilder = queryBuilder.Where(scopedChannelsCondition(*opts.Scope))
+	} else {
+		queryBuilder = queryBuilder.
+			Join("ChannelMembers cm ON e.channel_id = cm.ChannelId").
+			Where("cm.UserId = ?", opts.UserID)
+	}
 
 	if opts.TeamID != "" {
 		queryBuilder = queryBuilder.Where(sq.Eq{"e.team_id": opts.TeamID})
@@ -380,6 +387,32 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	defer rows.Close()
 
 	return scanSearchResults(rows)
+}
+
+// openTeamSQL selects teams any user on the server can join. It must match
+// model.Team.IsOpenToAllUsers.
+const openTeamSQL = `SELECT t.Id FROM Teams t
+	WHERE t.AllowOpenInvite = true
+	AND t.DeleteAt = 0
+	AND COALESCE(t.GroupConstrained, false) = false
+	AND COALESCE(t.AllowedDomains, '') = ''
+	AND NOT EXISTS (SELECT 1 FROM AccessControlPolicies tp WHERE tp.ID = t.Id AND tp.Type = 'team')`
+
+// scopedChannelsCondition limits a search to the channels a scoped session
+// can read: the listed channels plus, when enabled, public channels on open
+// teams. Membership is not consulted. DMs, group messages, and channels under
+// an access policy are never in scope.
+func scopedChannelsCondition(scope model.SessionScopeResources) sq.Sqlizer {
+	inScope := sq.Or{
+		sq.Expr("(c.Id = ANY(?::text[]) AND c.Type IN ('O', 'P'))", pq.Array(scope.ChannelIDs)),
+	}
+	if scope.OpenTeamPublicChannels {
+		inScope = append(inScope, sq.Expr("(c.Type = 'O' AND c.TeamId IN ("+openTeamSQL+"))"))
+	}
+	return sq.And{
+		sq.Expr("NOT EXISTS (SELECT 1 FROM AccessControlPolicies cp WHERE cp.ID = c.Id AND cp.Type = 'channel')"),
+		inScope,
+	}
 }
 
 // scanSearchResults extracts search results from query rows
