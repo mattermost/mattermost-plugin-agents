@@ -5,9 +5,6 @@ import React from 'react';
 import styled from 'styled-components';
 
 import {Dropdown} from '@mattermost/compass-ui/components/dropdown';
-import {WithTooltip} from '@mattermost/shared/components/tooltip';
-
-import {TooltipTrigger} from '@/components/dropdown';
 
 // Caps the button so a long chat title never pushes the buttons beside it off the bar. No compass
 // token for a width of this size.
@@ -34,34 +31,27 @@ interface ChatTitleDropdownProps extends DropdownButtonProps {
 // The title of an agent chat as a compass Dropdown trigger: the product's chat header and the RHS
 // title open the same menu from it. The menu's reference (the ref) and its other reference props
 // (handlers, aria attributes) are passed on to the button. The wrapper caps width and supplies the
-// flex shrink path a standalone button needs to ellipsize in the header. WithTooltip shows the full
-// name on hover (native title is unreliable and not the host pattern).
+// flex shrink path a standalone button needs to ellipsize in the header.
 const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, ...buttonProps}: ChatTitleDropdownProps) => {
     // React 19 passes `ref` to a function component as a prop, and the compass Dropdown spreads its
     // other props onto its button, so the ref reaches the button; its props type does not list it.
     const refProp = {ref} as Record<string, unknown>;
     return (
         <Trigger>
-            <WithTooltip
+            <TitleDropdown
+                {...buttonProps}
+                {...refProp}
+                size='large'
+                isOpen={expanded}
+                aria-label={ariaLabel}
+                aria-haspopup='menu'
+                aria-expanded={expanded}
                 title={label}
-                disabled={expanded}
+                data-testid={testId}
+                onClick={onClick}
             >
-                <TitleTooltipTrigger>
-                    <TitleDropdown
-                        {...buttonProps}
-                        {...refProp}
-                        size='large'
-                        isOpen={expanded}
-                        aria-label={ariaLabel}
-                        aria-haspopup='menu'
-                        aria-expanded={expanded}
-                        data-testid={testId}
-                        onClick={onClick}
-                    >
-                        {heading ? <Heading>{label}</Heading> : <Truncate>{label}</Truncate>}
-                    </TitleDropdown>
-                </TitleTooltipTrigger>
-            </WithTooltip>
+                {heading ? <Heading>{label}</Heading> : <Truncate>{label}</Truncate>}
+            </TitleDropdown>
         </Trigger>
     );
 };
@@ -77,16 +67,6 @@ const Trigger = styled.span`
     justify-content: flex-start;
     min-width: 0;
     max-width: ${TITLE_MAX_WIDTH};
-    overflow: hidden;
-`;
-
-// WithTooltip clones this span with hover/focus handlers; it must keep the shrink path between
-// Trigger and the button (default TooltipTrigger is only inline-flex).
-const TitleTooltipTrigger = styled(TooltipTrigger)`
-    display: flex;
-    flex: 1 1 0%;
-    min-width: 0;
-    max-width: 100%;
     overflow: hidden;
 `;
 

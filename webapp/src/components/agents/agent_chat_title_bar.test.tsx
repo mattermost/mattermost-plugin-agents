@@ -35,23 +35,7 @@ jest.mock('@/components/rhs/context_usage_indicator', () => ({
 }));
 
 jest.mock('@mattermost/shared/components/tooltip', () => ({
-    WithTooltip: ({
-        children,
-        title,
-        disabled,
-    }: {
-        children: React.ReactNode;
-        title?: React.ReactNode;
-        disabled?: boolean;
-    }) => (
-        <span
-            data-testid='with-tooltip'
-            {...(typeof title === 'string' ? {'data-title': title} : {})}
-            data-disabled={disabled ? 'true' : 'false'}
-        >
-            {children}
-        </span>
-    ),
+    WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
 }));
 
 jest.mock('react-intl', () => {
@@ -169,8 +153,7 @@ describe('AgentChatTitleBar', () => {
         renderHeader(props, reply);
         await waitFor(() => expect(screen.getByRole('heading', {level: 1}).textContent).toBe(label));
         const trigger = screen.getByRole('button', {name: aria});
-        expect(trigger.getAttribute('title')).toBeNull();
-        expect(trigger.closest('[data-testid="with-tooltip"]')?.getAttribute('data-title')).toBe(label);
+        expect(trigger.getAttribute('title')).toBe(label);
         expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
         expect(document.querySelector('header[aria-label="Matty"] img[src="/users/bot1/image"]')).toBeTruthy();
     });
