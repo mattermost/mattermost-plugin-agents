@@ -78,6 +78,9 @@ Everything is under **Agents > Settings**, in the **General**, **AI services**, 
 | AI Functions | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
 | AI Functions | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
 | AI Functions | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
+| AI Functions | Enable channel artifacts (experimental) | `enableChannelArtifacts` | Off | [Channel artifacts](channel_artifacts.md) |
+| AI Functions | Max artifacts per channel | `channelArtifactsMaxPerChannel` | 50 | [Channel artifacts](channel_artifacts.md#turn-it-on) |
+| AI Functions | Versions to keep per artifact | `channelArtifactVersionsToKeep` | 20 | [Channel artifacts](channel_artifacts.md#turn-it-on) |
 | AI Functions | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
 | AI Functions | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
 | AI Functions | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |

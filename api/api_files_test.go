@@ -228,4 +228,10 @@ func TestPluginCallbackClientsReachRoutes(t *testing.T) {
 	_, err = tools.NewHTTPSemanticSearchService(server.URL+pluginPrefix).Search(ctx, "query", search.Options{UserID: userID})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "semantic search is not available")
+
+	// Channel artifacts are disabled / unset in the test API, so the MCP list
+	// callback returns its availability error rather than gin's 404.
+	_, err = tools.NewHTTPChannelArtifactsService(server.URL+pluginPrefix).List(ctx, userID, channelID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "channel artifacts are not available")
 }

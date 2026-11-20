@@ -144,7 +144,7 @@ func TestPluginMCPHandlers_ProxyToolReachesLegacyPlugin(t *testing.T) {
 			require.NoError(t, err)
 			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg,
 				newPerPluginForwarder(t, map[string]*httptest.Server{legacyPluginID: target}),
-				nil, nil, allowAllStateChangingTools, nil, nil)
+				nil, nil, nil, allowAllStateChangingTools, nil, nil)
 			require.NoError(t, err)
 			t.Cleanup(h.Close)
 

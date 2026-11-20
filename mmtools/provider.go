@@ -18,10 +18,11 @@ type ToolProvider interface {
 
 // MMToolProvider implements ToolProvider with all built-in Mattermost tools
 type MMToolProvider struct {
-	pluginAPI     mmapi.Client
-	webSearch     WebSearchService
-	htmlArtifacts func() bool
-	scheduleWake  ScheduleWake
+	pluginAPI        mmapi.Client
+	webSearch        WebSearchService
+	htmlArtifacts    func() bool
+	scheduleWake     ScheduleWake
+	channelArtifacts *ChannelArtifactTools
 }
 
 // NewMMToolProvider creates a new tool provider. htmlArtifacts reports
@@ -39,6 +40,12 @@ func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService, htmlA
 // Called after conversations are wired because the wake handler resumes them.
 func (p *MMToolProvider) SetScheduleWake(schedule ScheduleWake) {
 	p.scheduleWake = schedule
+}
+
+// SetChannelArtifactTools installs the tools that let the agent manage the
+// channel artifact library. They are cataloged only while the library is on.
+func (p *MMToolProvider) SetChannelArtifactTools(tools *ChannelArtifactTools) {
+	p.channelArtifacts = tools
 }
 
 // GetTools returns all available tools. Tool execution is restricted at runtime via
@@ -78,6 +85,8 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 	if p.scheduleWake != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported && llmContext.RequestingUser != nil {
 		builtInTools = append(builtInTools, NewWaitForAsyncWorkTool(p.scheduleWake))
 	}
+
+	builtInTools = append(builtInTools, p.channelArtifacts.Tools(llmContext)...)
 
 	return builtInTools
 }

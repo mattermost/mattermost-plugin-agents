@@ -379,6 +379,31 @@ func TestContainerGetServices(t *testing.T) {
 	}
 }
 
+func TestChannelArtifactConfigDefaults(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          Config
+		wantEnabled  bool
+		wantPerChan  int
+		wantVersions int
+	}{
+		{name: "unset", cfg: Config{}, wantPerChan: 50, wantVersions: 20},
+		{name: "negative falls back", cfg: Config{ChannelArtifactsMaxPerChannel: -1, ChannelArtifactVersionsToKeep: -3}, wantPerChan: 50, wantVersions: 20},
+		{name: "explicit", cfg: Config{ChannelArtifactsMaxPerChannel: 10, ChannelArtifactVersionsToKeep: 5}, wantPerChan: 10, wantVersions: 5},
+		{name: "needs html artifacts", cfg: Config{EnableChannelArtifacts: true}, wantPerChan: 50, wantVersions: 20},
+		{name: "both on", cfg: Config{EnableHTMLArtifacts: true, EnableChannelArtifacts: true}, wantEnabled: true, wantPerChan: 50, wantVersions: 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			container.Update(&tt.cfg)
+			require.Equal(t, tt.wantEnabled, container.EnableChannelArtifacts())
+			require.Equal(t, tt.wantPerChan, container.ChannelArtifactsMaxPerChannel())
+			require.Equal(t, tt.wantVersions, container.ChannelArtifactVersionsToKeep())
+		})
+	}
+}
+
 func TestContainerGetServicesReturnsIndependentSlice(t *testing.T) {
 	container := &Container{}
 	container.Update(&Config{Services: []llm.ServiceConfig{

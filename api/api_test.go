@@ -71,6 +71,9 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	allowedLinkDomains              string
 	enableHTMLArtifacts             bool
+	enableChannelArtifacts          bool
+	channelArtifactsMaxPerChannel   int
+	channelArtifactVersionsToKeep   int
 	enableChannelMentionToolCalling bool
 	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
@@ -102,6 +105,24 @@ func (tc *testConfigImpl) LinkPolicy() config.LinkPolicy {
 
 func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
 	return tc.enableHTMLArtifacts
+}
+
+func (tc *testConfigImpl) EnableChannelArtifacts() bool {
+	return tc.enableHTMLArtifacts && tc.enableChannelArtifacts
+}
+
+func (tc *testConfigImpl) ChannelArtifactsMaxPerChannel() int {
+	if tc.channelArtifactsMaxPerChannel <= 0 {
+		return config.DefaultChannelArtifactsMaxPerChannel
+	}
+	return tc.channelArtifactsMaxPerChannel
+}
+
+func (tc *testConfigImpl) ChannelArtifactVersionsToKeep() int {
+	if tc.channelArtifactVersionsToKeep <= 0 {
+		return config.DefaultChannelArtifactVersionsToKeep
+	}
+	return tc.channelArtifactVersionsToKeep
 }
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
