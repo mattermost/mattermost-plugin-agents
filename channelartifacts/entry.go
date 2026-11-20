@@ -30,12 +30,44 @@ var (
 	// ErrUnavailable means the source post or file of a version is gone, or its
 	// bytes no longer match what was recorded when it was saved.
 	ErrUnavailable = errors.New("channel artifact source is unavailable")
-	// ErrIneligible means the file cannot be saved: not an HTML file attached
-	// to an agent's post in the channel.
+	// ErrIneligible means the file cannot be saved: not an HTML or Markdown file
+	// attached to an agent's post in the channel, or its format differs from the
+	// artifact it would replace.
 	ErrIneligible = errors.New("file cannot be saved as a channel artifact")
+	// ErrSessionRequired means the operation reads a Mattermost file or its
+	// content and needs the caller's session to apply the file download policy.
+	ErrSessionRequired = errors.New("a session is required to read this channel artifact")
 	// ErrDuplicate is wrapped by DuplicateError.
 	ErrDuplicate = errors.New("identical artifact already saved")
 )
+
+// Format is the content type of an artifact. A saved artifact keeps its format
+// across versions.
+type Format string
+
+const (
+	FormatHTML     Format = "html"
+	FormatMarkdown Format = "markdown"
+)
+
+// Valid reports whether f is a format the library can store.
+func (f Format) Valid() bool { return f == FormatHTML || f == FormatMarkdown }
+
+// Extension is the file extension, with its dot, that holds the format.
+func (f Format) Extension() string {
+	if f == FormatMarkdown {
+		return ".md"
+	}
+	return ".html"
+}
+
+// ContentType is the media type content of this format is served as.
+func (f Format) ContentType() string {
+	if f == FormatMarkdown {
+		return "text/markdown; charset=utf-8"
+	}
+	return "text/html; charset=utf-8"
+}
 
 // DuplicateError reports the artifact whose current version already has the
 // content being saved.
@@ -55,6 +87,7 @@ type Entry struct {
 	ID        string `json:"id" db:"id"`
 	ChannelID string `json:"channel_id" db:"channelid"`
 	Title     string `json:"title" db:"title"`
+	Format    Format `json:"format" db:"format"`
 	// Version is the current (head) version number.
 	Version                int    `json:"version" db:"version"`
 	SHA256                 string `json:"sha256" db:"sha256"`
@@ -98,20 +131,22 @@ type ListResponse struct {
 
 // Limits carries the size and retention caps into writes.
 type Limits struct {
-	// MaxSize caps the HTML size in bytes.
+	// MaxSize caps the content size in bytes.
 	MaxSize        int64
 	MaxPerChannel  int
 	VersionsToKeep int
 }
 
 // SaveRequest registers a source file as a new artifact, or as a new version of
-// ArtifactID when it is set.
+// ArtifactID when it is set. Format is optional: it defaults to the replaced
+// artifact's format, or to the format of the file's extension.
 type SaveRequest struct {
 	ChannelID  string `json:"channel_id"`
 	PostID     string `json:"post_id"`
 	FileID     string `json:"file_id"`
 	Title      string `json:"title"`
 	ArtifactID string `json:"replace_id,omitempty"`
+	Format     Format `json:"format,omitempty"`
 }
 
 // PatchRequest is the body for renaming a saved artifact.

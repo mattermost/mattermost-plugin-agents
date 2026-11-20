@@ -7,14 +7,15 @@ import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
-import {ChannelArtifactEntry, getChannelArtifact} from '@/client';
+import {ChannelArtifactEntry} from '@/client';
 import {getChannelArtifactsEnabled, getChannelArtifactsLoadFailed, getChannelArtifactsLoaded} from '@/selectors';
 
 import ConfirmationDialog from '../confirmation_dialog';
-import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
 
 import {historyPathWithoutBasename, libraryUrlAwaitingChannelSwitch, parseLibraryArtifactIdFromSearch, stripLibraryArtifactQuery} from './bookmark';
 import {useChannelLibrary} from './library';
+import {getChannelLibraryClient} from './library_client';
+import {openArtifact} from './viewers/artifact_viewer';
 
 type NoticeKind = 'disabled' | 'unavailable' | null;
 
@@ -106,7 +107,7 @@ const LibraryArtifactDeepLink = () => {
         }
 
         try {
-            const match = await getChannelArtifact(artifactId);
+            const match = await getChannelLibraryClient().get(artifactId);
             if (seq !== openSeq.current) {
                 return;
             }
@@ -210,25 +211,19 @@ const LibraryArtifactDeepLink = () => {
                     zIndex={11000}
                 />
             )}
-            {entry && (
-                <HTMLArtifactFullscreen
-                    fileId={entry.id}
-                    fileName={entry.title}
-                    artifactKind='library'
-                    canEdit={library.canEdit}
-                    canDelete={library.canDelete}
-                    headVersion={entry.version}
-                    onClose={() => {
-                        setEntry(null);
-                        openingRef.current = null;
+            {entry && openArtifact(entry, {
+                canEdit: library.canEdit,
+                canDelete: library.canDelete,
+                onClose: () => {
+                    setEntry(null);
+                    openingRef.current = null;
 
-                        // Allow the same bookmark to open again after close.
-                        if (entry.id) {
-                            openedIdsRef.current.delete(entry.id);
-                        }
-                    }}
-                />
-            )}
+                    // Allow the same bookmark to open again after close.
+                    if (entry.id) {
+                        openedIdsRef.current.delete(entry.id);
+                    }
+                },
+            })}
         </>
     );
 };

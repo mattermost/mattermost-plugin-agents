@@ -73,6 +73,8 @@ func (a *API) writeMCPChannelArtifactError(c *gin.Context, err error) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 	case errors.Is(err, channelartifacts.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "channel artifact not found"})
+	case errors.Is(err, channelartifacts.ErrSessionRequired):
+		c.JSON(http.StatusForbidden, gin.H{"error": "a session is required to read the artifact's content"})
 	case errors.Is(err, channelartifacts.ErrUnavailable):
 		c.JSON(http.StatusGone, gin.H{"error": "the source message or file is no longer available"})
 	case errors.Is(err, channelartifacts.ErrTooLarge):

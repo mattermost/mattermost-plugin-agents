@@ -13,22 +13,20 @@ import {Tag} from '@mattermost/compass-ui/components/tag';
 import {
     ArrowExpandIcon,
     FileCodeOutlineIcon,
+    FileTextOutlineIcon,
     PencilOutlineIcon,
     RefreshIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
 
-import {
-    ChannelArtifactEntry,
-    deleteChannelArtifact,
-    patchChannelArtifact,
-} from '@/client';
+import {ChannelArtifactEntry} from '@/client';
 import {getChannelArtifactsEnabled} from '@/selectors';
 
-import HTMLArtifactFullscreen from '../html_artifacts/html_artifact_fullscreen';
-
 import {syncLibraryArtifactBookmarkTitle, unpinLibraryArtifactBookmark} from './bookmark';
+import FormatBadge from './format_badge';
 import {useChannelLibrary} from './library';
+import {getChannelLibraryClient} from './library_client';
+import {openArtifact} from './viewers/artifact_viewer';
 
 export const ChannelArtifactsRHSTitle = () => (
     <FormattedMessage defaultMessage='Channel artifacts'/>
@@ -96,7 +94,7 @@ const ChannelArtifactsRHS = () => {
         renamePending.current = true;
         setBookmarkWarning(false);
         try {
-            const entry = await patchChannelArtifact(id, {title: next});
+            const entry = await getChannelLibraryClient().rename(id, next);
             store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
             if (channelId) {
                 try {
@@ -120,7 +118,7 @@ const ChannelArtifactsRHS = () => {
         }
         setDeleteError(false);
         try {
-            await deleteChannelArtifact(entry.id);
+            await getChannelLibraryClient().remove(entry.id);
             store.dispatch({type: 'CHANNEL_ARTIFACT_REMOVE', channelId, id: entry.id});
             if (openId === entry.id) {
                 setOpenId(null);
@@ -181,7 +179,7 @@ const ChannelArtifactsRHS = () => {
                     >
                         <Icon
                             size='16'
-                            glyph={<FileCodeOutlineIcon/>}
+                            glyph={entry.format === 'markdown' ? <FileTextOutlineIcon/> : <FileCodeOutlineIcon/>}
                         />
                         <Meta>
                             {editingId === entry.id ? (
@@ -240,6 +238,7 @@ const ChannelArtifactsRHS = () => {
                                 </Sub>
                             )}
                         </Meta>
+                        <FormatBadge entry={entry}/>
                         {entry.version > 1 && (
                             <Tag
                                 size='x-small'
@@ -278,18 +277,13 @@ const ChannelArtifactsRHS = () => {
                     </Card>
                 ))}
             </List>
-            {openEntry && (
-                <HTMLArtifactFullscreen
-                    fileId={openEntry.id}
-                    fileName={openEntry.title}
-                    artifactKind='library'
-                    startedByClick={true}
-                    canEdit={library.canEdit}
-                    canDelete={library.canDelete}
-                    headVersion={openEntry.version}
-                    onClose={() => setOpenId(null)}
-                />
-            )}
+            {openEntry && openArtifact(openEntry, {
+                presentation: 'fullscreen',
+                canEdit: library.canEdit,
+                canDelete: library.canDelete,
+                startedByClick: true,
+                onClose: () => setOpenId(null),
+            })}
         </Container>
     );
 };

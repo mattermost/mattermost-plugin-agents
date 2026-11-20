@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -91,6 +92,7 @@ type libraryFixture struct {
 	db        *sqlx.DB
 	mm        *mocks.MockClient
 	svc       *channelartifacts.Service
+	lib       channelartifacts.Manager
 	channelID string
 	botID     string
 
@@ -117,7 +119,14 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 		mu: &sync.Mutex{}, denied: map[*model.Permission]bool{}, policy: true, content: map[string]string{},
 	}
 	f.svc = channelartifacts.NewService(channelartifacts.NewStore(f.db), f.mm, artifactBots{f.botID: "Helper"})
-	e.api.SetChannelArtifacts(f.svc)
+	f.lib = channelartifacts.NewLibrary(f.svc, func() channelartifacts.Limits {
+		return channelartifacts.Limits{
+			MaxSize:        ArtifactRenderLimit(f.mm.GetConfig()),
+			MaxPerChannel:  e.config.ChannelArtifactsMaxPerChannel(),
+			VersionsToKeep: e.config.ChannelArtifactVersionsToKeep(),
+		}
+	})
+	e.api.SetChannelArtifacts(f.lib)
 	e.api.mmClient = f.mm
 
 	f.mm.EXPECT().GetChannel(mock.Anything).RunAndReturn(func(id string) (*model.Channel, error) {
@@ -159,16 +168,22 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 // fixture's channel and returns the post and file IDs.
 func (f *libraryFixture) addSource(t *testing.T, authorID, html string) (postID, fileID string) {
 	t.Helper()
+	return f.addFile(t, authorID, "dashboard.html", html)
+}
+
+// addFile is addSource for a file of any name.
+func (f *libraryFixture) addFile(t *testing.T, authorID, name, content string) (postID, fileID string) {
+	t.Helper()
 	postID, fileID = model.NewId(), model.NewId()
 	_, err := f.db.Exec(`INSERT INTO Posts (Id, ChannelId) VALUES ($1, $2)`, postID, f.channelID)
 	require.NoError(t, err)
 	_, err = f.db.Exec(`INSERT INTO FileInfo (Id, PostId) VALUES ($1, $2)`, fileID, postID)
 	require.NoError(t, err)
 	f.mu.Lock()
-	f.content[fileID] = html
+	f.content[fileID] = content
 	f.mu.Unlock()
 	f.mm.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
-		Id: fileID, PostId: postID, Name: "dashboard.html", Extension: "html", Size: int64(len(html)),
+		Id: fileID, PostId: postID, Name: name, Extension: strings.TrimPrefix(path.Ext(name), "."), Size: int64(len(content)),
 	}, nil).Maybe()
 	f.mm.EXPECT().GetPost(postID).Return(&model.Post{
 		Id: postID, UserId: authorID, ChannelId: f.channelID, FileIds: model.StringArray{fileID},

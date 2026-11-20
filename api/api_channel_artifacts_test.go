@@ -500,14 +500,14 @@ func TestMCPChannelArtifactsServeToolsInProcess(t *testing.T) {
 	f := newLibraryFixture(t)
 	entry := f.save(t, "Sprint notes", "<html>0123456789</html>")
 	ctx := t.Context()
-	svc := NewMCPChannelArtifacts(f.svc, f.mm, f.e.config)
+	svc := NewMCPChannelArtifacts(f.lib, f.e.config)
 
 	entries, err := svc.List(ctx, testUserID, f.channelID)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
 	_, err = svc.Get(ctx, testUserID, entry.ID, tools.ChannelArtifactReadOptions{IncludeContent: true})
-	require.ErrorIs(t, err, channelartifacts.ErrNotFound, "no session means the file policy denies, so the read fails closed")
+	require.ErrorIs(t, err, channelartifacts.ErrSessionRequired, "no session means the file policy can't be applied, so the read fails closed")
 
 	withSession := context.WithValue(ctx, auth.SessionIDContextKey, artifactSession)
 	got, err := svc.Get(withSession, testUserID, entry.ID, tools.ChannelArtifactReadOptions{IncludeContent: true, Offset: 6, Limit: 4})

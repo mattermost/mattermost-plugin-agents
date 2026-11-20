@@ -37,8 +37,16 @@ jest.mock('react-intl', () => {
 });
 
 jest.mock('../html_artifacts/html_artifact_fullscreen', () => {
-    return function MockFullscreen() {
-        return null;
+    return function MockFullscreen(props: {fileId: string; renderDocument?: unknown; startedByClick?: boolean; canEdit?: boolean}) {
+        return (
+            <div
+                data-testid='html-artifact-fullscreen'
+                data-file-id={props.fileId}
+                data-document={String(Boolean(props.renderDocument))}
+                data-started-by-click={String(Boolean(props.startedByClick))}
+                data-can-edit={String(Boolean(props.canEdit))}
+            />
+        );
     };
 });
 
@@ -125,6 +133,36 @@ describe('ChannelArtifactsRHS', () => {
         expect(screen.getByTestId('channel-artifact-unavailable-artifactid012345678901235')).toBeTruthy();
         expect(screen.queryByTestId('channel-artifact-unavailable-artifactid012345678901234')).toBeNull();
         expect(screen.getAllByText(/Helper/).length).toBeGreaterThan(0);
+    });
+
+    test('badges each entry with its format, treating a missing one as HTML', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(libraryList([
+            libraryEntry({id: 'artifactid012345678901235', title: 'Charter', format: 'markdown'}),
+            libraryEntry({id: 'artifactid012345678901236', title: 'Dashboard', format: 'html'}),
+            libraryEntry({title: 'Legacy'}),
+        ]));
+        renderRHS();
+
+        const badge = (id: string) => screen.findByTestId(`channel-artifact-format-${id}`);
+        expect((await badge('artifactid012345678901235')).getAttribute('data-format')).toBe('markdown');
+        expect((await badge('artifactid012345678901235')).textContent).toBe('Markdown');
+        expect((await badge('artifactid012345678901236')).textContent).toBe('HTML');
+        expect((await badge(artifactID)).getAttribute('data-format')).toBe('html');
+    });
+
+    test.each([
+        ['html', false],
+        ['markdown', true],
+    ] as const)('opens a %s artifact in its own viewer', async (format, document) => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(libraryList([libraryEntry({format})]));
+        renderRHS();
+        fireEvent.click(await screen.findByTestId(`channel-artifact-open-${artifactID}`));
+
+        const viewer = await screen.findByTestId('html-artifact-fullscreen');
+        expect(viewer.getAttribute('data-file-id')).toBe(artifactID);
+        expect(viewer.getAttribute('data-document')).toBe(String(document));
+        expect(viewer.getAttribute('data-started-by-click')).toBe('true');
+        expect(viewer.getAttribute('data-can-edit')).toBe('true');
     });
 
     test('does not label an entry with no agent name as an agent', async () => {

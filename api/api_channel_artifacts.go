@@ -18,7 +18,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -28,28 +27,28 @@ const (
 	WebsocketEventChannelArtifactDeleted = channelartifacts.EventDeleted
 )
 
-// SetChannelArtifacts installs the channel artifact library service.
-func (a *API) SetChannelArtifacts(svc *channelartifacts.Service) {
-	a.channelArtifacts = svc
+// SetChannelArtifacts installs the channel artifact library.
+func (a *API) SetChannelArtifacts(library channelartifacts.Manager) {
+	a.channelLibrary = library
+}
+
+// channelArtifactActor is the signed-in user making the request.
+func channelArtifactActor(c *gin.Context) channelartifacts.Actor {
+	return channelartifacts.Actor{
+		UserID:    c.GetHeader("Mattermost-User-Id"),
+		SessionID: auth.SessionIDFromContext(c.Request.Context()),
+	}
 }
 
 func (a *API) channelArtifactsEnabled() bool {
 	return a.config.EnableChannelArtifacts()
 }
 
-func (a *API) channelArtifactLimits(maxSize int64) channelartifacts.Limits {
-	return channelartifacts.Limits{
-		MaxSize:        maxSize,
-		MaxPerChannel:  a.config.ChannelArtifactsMaxPerChannel(),
-		VersionsToKeep: a.config.ChannelArtifactVersionsToKeep(),
-	}
-}
-
 func (a *API) writeChannelArtifactError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, channelartifacts.ErrNotFound):
 		c.String(http.StatusNotFound, "not found")
-	case errors.Is(err, channelartifacts.ErrForbidden):
+	case errors.Is(err, channelartifacts.ErrForbidden), errors.Is(err, channelartifacts.ErrSessionRequired):
 		c.String(http.StatusForbidden, "forbidden")
 	case errors.Is(err, channelartifacts.ErrInvalidInput):
 		c.String(http.StatusBadRequest, "invalid request")
@@ -93,7 +92,7 @@ func bindChannelArtifactJSON(c *gin.Context, out any) bool {
 func (a *API) beginChannelArtifactRoute(c *gin.Context) bool {
 	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
 	c.Writer.Header().Set("Cache-Control", "private, no-store")
-	if !a.channelArtifactsEnabled() || a.channelArtifacts == nil {
+	if !a.channelArtifactsEnabled() || a.channelLibrary == nil {
 		c.String(http.StatusNotFound, "not found")
 		return false
 	}
@@ -121,17 +120,16 @@ func (a *API) handleListChannelArtifacts(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid channel id")
 		return
 	}
-	resp, err := a.channelArtifacts.List(c.GetHeader("Mattermost-User-Id"), channelID)
+	resp, err := a.channelLibrary.List(c.Request.Context(), channelArtifactActor(c), channelID)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	resp.MaxPerChannel = a.config.ChannelArtifactsMaxPerChannel()
 	c.JSON(http.StatusOK, resp)
 }
 
-// handleCreateChannelArtifact saves an agent's HTML attachment as a new library
-// entry, or as a new version of the entry named by replace_id.
+// handleCreateChannelArtifact saves an agent's HTML or Markdown attachment as a
+// new library entry, or as a new version of the entry named by replace_id.
 func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 	if !a.beginChannelArtifactRoute(c) {
 		return
@@ -140,7 +138,8 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 	if !bindChannelArtifactJSON(c, &req) {
 		return
 	}
-	if !model.IsValidId(req.ChannelID) || !model.IsValidId(req.PostID) || !model.IsValidId(req.FileID) ||
+	if !model.IsValidId(req.ChannelID) || !model.IsValidId(req.FileID) ||
+		(req.PostID != "" && !model.IsValidId(req.PostID)) ||
 		(req.ArtifactID != "" && !model.IsValidId(req.ArtifactID)) {
 		c.String(http.StatusBadRequest, "invalid request")
 		return
@@ -157,23 +156,16 @@ func (a *API) handleCreateChannelArtifact(c *gin.Context) {
 		return
 	}
 
-	reader := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
-	entry, err := a.channelArtifacts.Save(
-		c.GetHeader("Mattermost-User-Id"),
-		reader,
-		req,
-		a.channelArtifactLimits(artifactRenderLimit(a.mmClient.GetConfig())),
-	)
+	entry, err := a.channelLibrary.Write(c.Request.Context(), channelArtifactActor(c), channelartifacts.WriteRequest{SaveRequest: req})
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactID, entry.ID)
-	event, status := WebsocketEventChannelArtifactCreated, http.StatusCreated
+	status := http.StatusCreated
 	if req.ArtifactID != "" {
-		event, status = WebsocketEventChannelArtifactUpdated, http.StatusOK
+		status = http.StatusOK
 	}
-	a.channelArtifacts.Publish(event, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(status, entry)
 }
 
@@ -186,7 +178,7 @@ func (a *API) handleGetChannelArtifactInfo(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
-	entry, err := a.channelArtifacts.GetReadable(c.GetHeader("Mattermost-User-Id"), id)
+	entry, err := a.channelLibrary.Get(c.Request.Context(), channelArtifactActor(c), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
@@ -206,12 +198,11 @@ func (a *API) handlePatchChannelArtifact(c *gin.Context) {
 	if !bindChannelArtifactJSON(c, &req) {
 		return
 	}
-	entry, err := a.channelArtifacts.Patch(c.GetHeader("Mattermost-User-Id"), id, req)
+	entry, err := a.channelLibrary.Rename(c.Request.Context(), channelArtifactActor(c), id, req.Title)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(http.StatusOK, entry)
 }
 
@@ -232,12 +223,11 @@ func (a *API) handleRollbackChannelArtifact(c *gin.Context) {
 		return
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactVersion, strconv.Itoa(req.Version))
-	entry, err := a.channelArtifacts.Rollback(c.GetHeader("Mattermost-User-Id"), id, req.Version)
+	entry, err := a.channelLibrary.Rollback(c.Request.Context(), channelArtifactActor(c), id, req.Version)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(http.StatusOK, entry)
 }
 
@@ -251,13 +241,12 @@ func (a *API) handleDeleteChannelArtifact(c *gin.Context) {
 	if !ok {
 		return
 	}
-	entry, err := a.channelArtifacts.Delete(c.GetHeader("Mattermost-User-Id"), id)
+	entry, err := a.channelLibrary.Remove(c.Request.Context(), channelArtifactActor(c), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelID, entry.ChannelID)
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactDeleted, entry.ChannelID, map[string]any{"id": id})
 	c.Status(http.StatusNoContent)
 }
 
@@ -277,12 +266,11 @@ func (a *API) handleDeleteChannelArtifactVersion(c *gin.Context) {
 		return
 	}
 	audit.AddParam(auditRec(c), audit.KeyChannelArtifactVersion, strconv.Itoa(version))
-	entry, err := a.channelArtifacts.DeleteVersion(c.GetHeader("Mattermost-User-Id"), id, version)
+	entry, err := a.channelLibrary.RemoveVersion(c.Request.Context(), channelArtifactActor(c), id, version)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	a.channelArtifacts.Publish(WebsocketEventChannelArtifactUpdated, entry.ChannelID, map[string]any{"artifact": entry})
 	c.JSON(http.StatusOK, entry)
 }
 
@@ -295,7 +283,7 @@ func (a *API) handleListChannelArtifactVersions(c *gin.Context) {
 		c.String(http.StatusBadRequest, "invalid id")
 		return
 	}
-	versions, err := a.channelArtifacts.Versions(c.GetHeader("Mattermost-User-Id"), id)
+	versions, err := a.channelLibrary.Versions(c.Request.Context(), channelArtifactActor(c), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
@@ -319,7 +307,7 @@ func (a *API) authorizeLibraryArtifact(c *gin.Context) (*channelartifacts.Entry,
 		c.String(http.StatusBadRequest, "invalid id")
 		return nil, false
 	}
-	entry, err := a.channelArtifacts.GetReadable(c.GetHeader("Mattermost-User-Id"), id)
+	entry, err := a.channelLibrary.Get(c.Request.Context(), channelArtifactActor(c), id)
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return nil, false
@@ -355,9 +343,19 @@ func parseArtifactVersionQuery(c *gin.Context) (int, bool) {
 	return n, true
 }
 
+// requireArtifactFormat answers 415 unless the entry has the format the route
+// serves.
+func requireArtifactFormat(c *gin.Context, entry *channelartifacts.Entry, want channelartifacts.Format) bool {
+	if entry.Format != want {
+		c.String(http.StatusUnsupportedMediaType, "this route does not serve "+string(entry.Format)+" artifacts")
+		return false
+	}
+	return true
+}
+
 func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	entry, ok := a.authorizeLibraryArtifact(c)
-	if !ok {
+	if !ok || !requireArtifactFormat(c, entry, channelartifacts.FormatHTML) {
 		return
 	}
 	nonce, ok := artifactNonceAllowing(c, "version")
@@ -374,22 +372,23 @@ func (a *API) handleGetChannelArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err = a.channelArtifacts.CheckReadable(auth.SessionIDFromContext(c.Request.Context()), entry, version); err != nil {
+	ctx, actor := c.Request.Context(), channelArtifactActor(c)
+	if err = a.channelLibrary.CheckReadable(ctx, actor, entry.ID, version); err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	rec, err := a.channelArtifacts.VersionOf(entry, version)
+	viewed, err := a.channelLibrary.Read(ctx, actor, entry.ID, channelartifacts.ReadOptions{Version: version, MetadataOnly: true})
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
-	token := libraryArtifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), entry.ID, nonce)
-	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": rec.Size > artifactRenderLimit(a.mmClient.GetConfig())})
+	token := libraryArtifactBridgeToken(secret, actor.UserID, entry.ID, nonce)
+	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": viewed.Entry.Size > artifactRenderLimit(a.mmClient.GetConfig())})
 }
 
 func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	entry, ok := a.authorizeLibraryArtifact(c)
-	if !ok {
+	if !ok || !requireArtifactFormat(c, entry, channelartifacts.FormatHTML) {
 		return
 	}
 
@@ -420,11 +419,12 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	}
 	token := libraryArtifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), entry.ID, nonce)
 
-	body, err := a.channelArtifacts.ReadContent(auth.SessionIDFromContext(c.Request.Context()), entry, version, artifactRenderLimit(cfg))
+	content, err := a.channelLibrary.Read(c.Request.Context(), channelArtifactActor(c), entry.ID, channelartifacts.ReadOptions{Version: version})
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
+	body := content.Body
 
 	h := c.Writer.Header()
 	h.Set("Content-Security-Policy", artifactCSP)
@@ -436,6 +436,28 @@ func (a *API) handleGetChannelArtifact(c *gin.Context) {
 	c.Data(http.StatusOK, "text/html; charset=utf-8", injectArtifactBridge(body, token, artifactTargetOrigin(cfg)))
 }
 
+// handleGetChannelArtifactContent serves a Markdown artifact's source for the
+// host to render. It is plain text, never HTML, so the browser cannot run it.
+func (a *API) handleGetChannelArtifactContent(c *gin.Context) {
+	entry, ok := a.authorizeLibraryArtifact(c)
+	if !ok || !requireArtifactFormat(c, entry, channelartifacts.FormatMarkdown) {
+		return
+	}
+	version, ok := parseArtifactVersionQuery(c)
+	if !ok {
+		return
+	}
+	content, err := a.channelLibrary.Read(c.Request.Context(), channelArtifactActor(c), entry.ID, channelartifacts.ReadOptions{Version: version})
+	if err != nil {
+		a.writeChannelArtifactError(c, err)
+		return
+	}
+	h := c.Writer.Header()
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	h.Set("Content-Disposition", "inline")
+	c.Data(http.StatusOK, entry.Format.ContentType(), content.Body)
+}
+
 func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 	entry, ok := a.authorizeLibraryArtifact(c)
 	if !ok {
@@ -445,18 +467,18 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 	if !ok {
 		return
 	}
-	body, err := a.channelArtifacts.ReadContent(auth.SessionIDFromContext(c.Request.Context()), entry, version, artifactRenderLimit(a.mmClient.GetConfig()))
+	content, err := a.channelLibrary.Read(c.Request.Context(), channelArtifactActor(c), entry.ID, channelartifacts.ReadOptions{Version: version})
 	if err != nil {
 		a.writeChannelArtifactError(c, err)
 		return
 	}
 	h := c.Writer.Header()
-	h.Set("Content-Disposition", attachmentDisposition(entry.Title+".html"))
+	h.Set("Content-Disposition", attachmentDisposition(entry.Title+entry.Format.Extension(), entry.Format.Extension()))
 	h.Set("X-Content-Type-Options", "nosniff")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
+	c.Data(http.StatusOK, entry.Format.ContentType(), content.Body)
 }
 
-func attachmentDisposition(name string) string {
+func attachmentDisposition(name, fallback string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' {
 			return -1
@@ -464,7 +486,7 @@ func attachmentDisposition(name string) string {
 		return r
 	}, name)
 	if cleaned == "" {
-		cleaned = "artifact.html"
+		cleaned = "artifact" + fallback
 	}
 	return `attachment; filename="` + cleaned + `"`
 }

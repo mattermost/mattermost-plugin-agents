@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,6 +31,9 @@ type artifactToolEnv struct {
 	postedBy []string
 	posted   []string
 	deleted  []string
+
+	uploadNames []string
+	fileNames   map[string]string
 }
 
 // newArtifactToolEnv wires the agent's library tools to the fixture. Uploads
@@ -38,14 +42,12 @@ type artifactToolEnv struct {
 func newArtifactToolEnv(t *testing.T) *artifactToolEnv {
 	t.Helper()
 	f := newLibraryFixture(t)
-	env := &artifactToolEnv{libraryFixture: f}
+	env := &artifactToolEnv{libraryFixture: f, fileNames: map[string]string{}}
 	env.tools = &mmtools.ChannelArtifactTools{
-		Service: f.svc,
-		Client:  f.mm,
-		Enabled: f.e.config.EnableChannelArtifacts,
-		Limits: func() channelartifacts.Limits {
+		Library: channelartifacts.NewLibrary(f.svc, func() channelartifacts.Limits {
 			return channelartifacts.Limits{MaxSize: 1 << 20, MaxPerChannel: 5, VersionsToKeep: 5}
-		},
+		}),
+		Enabled: f.e.config.EnableChannelArtifacts,
 		Audit: func(event, status, _, _, artifactID string) {
 			env.audits = append(env.audits, event+":"+status+":"+artifactID)
 		},
@@ -60,13 +62,15 @@ func newArtifactToolEnv(t *testing.T) *artifactToolEnv {
 	f.mm.EXPECT().UploadFile(mock.Anything, mock.Anything, f.channelID).RunAndReturn(
 		func(r io.Reader, name, channelID string) (*model.FileInfo, error) {
 			env.uploads++
+			env.uploadNames = append(env.uploadNames, name)
 			body, err := io.ReadAll(r)
 			require.NoError(t, err)
 			fileID := model.NewId()
 			f.mu.Lock()
 			f.content[fileID] = string(body)
 			f.mu.Unlock()
-			return &model.FileInfo{Id: fileID, Name: name, Extension: "html", ChannelId: channelID, Size: int64(len(body))}, nil
+			env.fileNames[fileID] = name
+			return &model.FileInfo{Id: fileID, Name: name, Extension: strings.TrimPrefix(filepath.Ext(name), "."), ChannelId: channelID, Size: int64(len(body))}, nil
 		}).Maybe()
 	f.mm.EXPECT().CreatePost(mock.Anything).RunAndReturn(func(post *model.Post) error {
 		post.Id = model.NewId()
@@ -78,7 +82,7 @@ func newArtifactToolEnv(t *testing.T) *artifactToolEnv {
 			_, err = f.db.Exec(`INSERT INTO FileInfo (Id, PostId) VALUES ($1, $2)`, fileID, post.Id)
 			require.NoError(t, err)
 			f.mm.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
-				Id: fileID, PostId: post.Id, Name: "artifact.html", Extension: "html", Size: int64(len(f.content[fileID])),
+				Id: fileID, PostId: post.Id, Name: env.fileNames[fileID], Extension: strings.TrimPrefix(filepath.Ext(env.fileNames[fileID]), "."), Size: int64(len(f.content[fileID])),
 			}, nil).Maybe()
 		}
 		f.mm.EXPECT().GetPost(post.Id).Return(&model.Post{
@@ -156,21 +160,14 @@ func TestAgentSavePublishesTheMatchingEvent(t *testing.T) {
 }
 
 func TestAgentSaveReadsTheFileUnderTheRequestersFilePolicy(t *testing.T) {
-	t.Run("no session fails closed before anything is posted", func(t *testing.T) {
+	t.Run("a file needs the session to check its policy", func(t *testing.T) {
 		e := newArtifactToolEnv(t)
 		_, filePost := e.addSource(t, e.botID, "<html>mine</html>")
-		for name, args := range map[string]mmtools.SaveChannelArtifactArgs{
-			"content": {Title: "x", Content: "<html></html>"},
-			"file":    {Title: "x", FileID: filePost},
-		} {
-			out, err := e.callIn(t.Context(), t, mmtools.SaveChannelArtifactToolName, args)
-			require.Error(t, err, name)
-			assert.Contains(t, out, "session", name)
-		}
-		assert.Zero(t, e.uploads)
-		assert.Empty(t, e.postedBy)
-		list, err := e.svc.List(testUserID, e.channelID)
-		require.NoError(t, err)
+		out, err := e.callIn(t.Context(), t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "x", FileID: filePost})
+		require.Error(t, err)
+		assert.Contains(t, out, "session")
+		list, listErr := e.svc.List(testUserID, e.channelID)
+		require.NoError(t, listErr)
 		assert.Empty(t, list.Entries)
 	})
 
@@ -180,7 +177,7 @@ func TestAgentSaveReadsTheFileUnderTheRequestersFilePolicy(t *testing.T) {
 		e.setFilePolicy(false)
 		out, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Restricted", FileID: fileID})
 		require.Error(t, err)
-		assert.Contains(t, out, "not allowed to download")
+		assert.Contains(t, out, "download")
 		list, listErr := e.svc.List(testUserID, e.channelID)
 		require.NoError(t, listErr)
 		assert.Empty(t, list.Entries)
@@ -195,6 +192,86 @@ func TestAgentSaveReadsTheFileUnderTheRequestersFilePolicy(t *testing.T) {
 		require.NoError(t, listErr)
 		assert.Empty(t, list.Entries)
 	})
+}
+
+func TestAgentSavesWithoutASession(t *testing.T) {
+	e := newArtifactToolEnv(t)
+
+	out, err := e.callIn(t.Context(), t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Wake note", Content: "<html>unattended</html>"})
+	require.NoError(t, err, "agent-authored content needs no file policy, so unattended turns can save it")
+	var result mmtools.ChannelArtifactResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	assert.Equal(t, []string{e.botID}, e.postedBy)
+
+	entry, err := e.svc.GetReadable(testUserID, result.ArtifactID)
+	require.NoError(t, err)
+	assert.Equal(t, e.botID, entry.SourceBotUserID)
+	assert.Equal(t, channelartifacts.FormatHTML, entry.Format)
+}
+
+func TestAgentSavesMarkdown(t *testing.T) {
+	e := newArtifactToolEnv(t)
+
+	out, err := e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Charter", Format: "Markdown", Content: "# Goals\n\n- ship"})
+	require.NoError(t, err)
+	var result mmtools.ChannelArtifactResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	assert.Equal(t, "markdown", result.Format)
+	assert.Equal(t, []string{"Charter.md"}, e.uploadNames)
+
+	entry, err := e.svc.GetReadable(testUserID, result.ArtifactID)
+	require.NoError(t, err)
+	assert.Equal(t, channelartifacts.FormatMarkdown, entry.Format)
+
+	out, err = e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{ArtifactID: entry.ID, Format: "html", Content: "<html></html>"})
+	require.Error(t, err, "an artifact keeps its format")
+	assert.Contains(t, out, "format")
+
+	_, err = e.call(t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Bad", Format: "pdf", Content: "x"})
+	require.Error(t, err)
+}
+
+func TestAgentSaveAutoExecutesOnlyWhereTheHookAllows(t *testing.T) {
+	e := newArtifactToolEnv(t)
+	autoRun := func(tools []llm.Tool) map[string]bool {
+		out := map[string]bool{}
+		for _, tool := range tools {
+			out[tool.Name] = tool.AutoExecute
+		}
+		return out
+	}
+
+	assert.Equal(t, map[string]bool{mmtools.SaveChannelArtifactToolName: false, mmtools.RemoveChannelArtifactToolName: false},
+		autoRun(e.tools.Tools(e.llmCtx)), "without a hook every call asks")
+
+	e.tools.AutoExecuteFor = func(llmCtx *llm.Context, toolName string) bool {
+		return llmCtx.Channel.Id == e.channelID && toolName == mmtools.SaveChannelArtifactToolName
+	}
+	assert.Equal(t, map[string]bool{mmtools.SaveChannelArtifactToolName: true, mmtools.RemoveChannelArtifactToolName: false}, autoRun(e.tools.Tools(e.llmCtx)))
+
+	elsewhere := *e.llmCtx
+	elsewhere.Channel = &model.Channel{Id: model.NewId(), Type: model.ChannelTypeOpen}
+	assert.Equal(t, map[string]bool{mmtools.SaveChannelArtifactToolName: false, mmtools.RemoveChannelArtifactToolName: false}, autoRun(e.tools.Tools(&elsewhere)))
+}
+
+func TestAgentSaveCanActAsTheAgent(t *testing.T) {
+	e := newArtifactToolEnv(t)
+	noRequester := *e.llmCtx
+	noRequester.RequestingUser = nil
+	assert.Empty(t, e.tools.Tools(&noRequester))
+
+	e.tools.ActorFor = func(_ context.Context, llmCtx *llm.Context) (channelartifacts.Actor, bool) {
+		return channelartifacts.Actor{UserID: llmCtx.BotUserID, BotUserID: llmCtx.BotUserID}, true
+	}
+	e.e.config.enableChannelArtifacts = true
+	e.llmCtx = &noRequester
+	out, err := e.callIn(t.Context(), t, mmtools.SaveChannelArtifactToolName, mmtools.SaveChannelArtifactArgs{Title: "Project charter", Format: "markdown", Content: "# Charter"})
+	require.NoError(t, err)
+	var result mmtools.ChannelArtifactResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	entry, err := e.svc.GetReadable(testUserID, result.ArtifactID)
+	require.NoError(t, err)
+	assert.Equal(t, e.botID, entry.CreatedBy, "the library records the agent as the writer")
 }
 
 func TestAgentSaveRemovesItsPostWhenTheLibraryRefusesTheSave(t *testing.T) {

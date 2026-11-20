@@ -6,10 +6,11 @@ import {useDispatch, useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
-import {ChannelArtifactEntry, listChannelArtifacts} from '@/client';
+import {ChannelArtifactEntry} from '@/client';
 import {channelSupportsArtifacts, getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
 import {unpinLibraryArtifactBookmark} from './bookmark';
+import {getChannelLibraryClient} from './library_client';
 
 type LibraryDispatch = (action: Record<string, unknown>) => unknown;
 
@@ -26,7 +27,7 @@ export function loadChannelLibrary(dispatch: LibraryDispatch, channelId: string)
         return pending;
     }
     dispatch({type: 'CHANNEL_ARTIFACTS_LOADING', channelId});
-    const request = listChannelArtifacts(channelId).then(
+    const request = getChannelLibraryClient().list(channelId).then(
         (list) => {
             inflight.delete(channelId);
             dispatch({type: 'CHANNEL_ARTIFACTS_LOADED', channelId, list});

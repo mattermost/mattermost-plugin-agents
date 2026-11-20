@@ -34,7 +34,7 @@ func TestStoreCreateAndListReportAvailability(t *testing.T) {
 	channelID := model.NewId()
 	v := newVersion(t, db, sha(1))
 	id := model.NewId()
-	require.NoError(t, s.Create(id, channelID, "Dashboard", v, 5))
+	require.NoError(t, s.Create(id, channelID, "Dashboard", channelartifacts.FormatHTML, v, 5))
 
 	entries, err := s.List(channelID)
 	require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestStoreCreateAndListReportAvailability(t *testing.T) {
 			s := channelartifacts.NewStore(db)
 			v := newVersion(t, db, sha(2))
 			id := model.NewId()
-			require.NoError(t, s.Create(id, model.NewId(), "T", v, 5))
+			require.NoError(t, s.Create(id, model.NewId(), "T", channelartifacts.FormatHTML, v, 5))
 			_, err := db.Exec(tt.breakIt, v.FileID)
 			require.NoError(t, err)
 
@@ -80,7 +80,7 @@ func TestStoreCreateEnforcesCapAndDedupe(t *testing.T) {
 	s := channelartifacts.NewStore(db)
 	channelID := model.NewId()
 	first := model.NewId()
-	require.NoError(t, s.Create(first, channelID, "One", newVersion(t, db, sha(1)), 2))
+	require.NoError(t, s.Create(first, channelID, "One", channelartifacts.FormatHTML, newVersion(t, db, sha(1)), 2))
 
 	tests := []struct {
 		name    string
@@ -96,7 +96,7 @@ func TestStoreCreateEnforcesCapAndDedupe(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := s.Create(model.NewId(), tt.channel, "T", newVersion(t, db, tt.sha), 2)
+			err := s.Create(model.NewId(), tt.channel, "T", channelartifacts.FormatHTML, newVersion(t, db, tt.sha), 2)
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 				return
@@ -125,7 +125,7 @@ func TestStoreCreateHonoursTheCapUnderConcurrency(t *testing.T) {
 	created := 0
 	for _, v := range versions {
 		wg.Go(func() {
-			err := s.Create(model.NewId(), channelID, "T", v, 3)
+			err := s.Create(model.NewId(), channelID, "T", channelartifacts.FormatHTML, v, 3)
 			mu.Lock()
 			defer mu.Unlock()
 			if err == nil {
@@ -144,7 +144,7 @@ func TestStoreAddVersionPrunesRowsButKeepsTheHead(t *testing.T) {
 	s := channelartifacts.NewStore(db)
 	channelID := model.NewId()
 	id := model.NewId()
-	require.NoError(t, s.Create(id, channelID, "T", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.Create(id, channelID, "T", channelartifacts.FormatHTML, newVersion(t, db, sha(1)), 5))
 	for i := 2; i <= 4; i++ {
 		require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(i)), 2))
 	}
@@ -167,7 +167,7 @@ func TestStoreHeadAndDeleteOperations(t *testing.T) {
 	db := testDB(t)
 	s := channelartifacts.NewStore(db)
 	id := model.NewId()
-	require.NoError(t, s.Create(id, model.NewId(), "T", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.Create(id, model.NewId(), "T", channelartifacts.FormatHTML, newVersion(t, db, sha(1)), 5))
 	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(2)), 5))
 	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(3)), 5))
 	user := model.NewId()
@@ -209,7 +209,7 @@ func TestStoreAddVersionNeverReusesADeletedVersionNumber(t *testing.T) {
 	s := channelartifacts.NewStore(db)
 	id := model.NewId()
 	user := model.NewId()
-	require.NoError(t, s.Create(id, model.NewId(), "T", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.Create(id, model.NewId(), "T", channelartifacts.FormatHTML, newVersion(t, db, sha(1)), 5))
 	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(2)), 5))
 	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(3)), 5))
 	require.NoError(t, s.DeleteVersion(id, 3, user, 100))
@@ -234,9 +234,9 @@ func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO Channels (Id) VALUES ($1)`, live)
 	require.NoError(t, err)
 	keep, drop := model.NewId(), model.NewId()
-	require.NoError(t, s.Create(keep, live, "Keep", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.Create(keep, live, "Keep", channelartifacts.FormatHTML, newVersion(t, db, sha(1)), 5))
 	dropVersion := newVersion(t, db, sha(2))
-	require.NoError(t, s.Create(drop, gone, "Drop", dropVersion, 5))
+	require.NoError(t, s.Create(drop, gone, "Drop", channelartifacts.FormatHTML, dropVersion, 5))
 	require.NoError(t, s.AddVersion(drop, newVersion(t, db, sha(3)), 5))
 
 	removed, err := s.SweepDeletedChannels()
@@ -259,7 +259,7 @@ func TestStoreAddVersionRenamesInTheSameTransaction(t *testing.T) {
 	db := testDB(t)
 	s := channelartifacts.NewStore(db)
 	id := model.NewId()
-	require.NoError(t, s.Create(id, model.NewId(), "Old", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.Create(id, model.NewId(), "Old", channelartifacts.FormatHTML, newVersion(t, db, sha(1)), 5))
 
 	renamed := newVersion(t, db, sha(2))
 	renamed.Title = "New"
@@ -289,7 +289,7 @@ func TestStoreAddVersionRacingPurgeLeavesNoOrphanRows(t *testing.T) {
 
 	for i := range 20 {
 		id := model.NewId()
-		require.NoError(t, s.Create(id, model.NewId(), "T", newVersion(t, db, sha(1000+i*2)), 5))
+		require.NoError(t, s.Create(id, model.NewId(), "T", channelartifacts.FormatHTML, newVersion(t, db, sha(1000+i*2)), 5))
 		next := newVersion(t, db, sha(1001+i*2))
 
 		var wg sync.WaitGroup

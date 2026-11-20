@@ -201,7 +201,7 @@ func newRecordingCreateFileTool(mu *sync.Mutex, files *[]createdFile) llm.Tool {
 // answers like the plugin does for the seeded library.
 func newRecordingLibraryTools(llmCtx *llm.Context, env *artifactEvalEnv, mu *sync.Mutex, writes *[]libraryWrite) []llm.Tool {
 	production := (&mmtools.ChannelArtifactTools{
-		Service: &channelartifacts.Service{},
+		Library: channelartifacts.NewLibrary(&channelartifacts.Service{}, func() channelartifacts.Limits { return channelartifacts.Limits{} }),
 		Enabled: func() bool { return true },
 	}).Tools(llmCtx)
 

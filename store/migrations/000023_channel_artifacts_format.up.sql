@@ -1,0 +1,1 @@
+ALTER TABLE Agents_ChannelArtifacts ADD COLUMN IF NOT EXISTS Format VARCHAR(16) NOT NULL DEFAULT 'html';
