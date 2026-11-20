@@ -4,8 +4,9 @@
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from './manifest';
-import type {ChannelArtifactLibrary, ChannelLibraryState} from './redux';
+import type {ChannelArtifactLibrary, ChannelLibraryState, ProjectAgentInfo, ProjectsState} from './redux';
 import {CustomPrompt} from './types';
+import type {Project, ProjectTab} from './types/projects';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 // Both start null (unloaded); the selectors below default them to shared empty arrays.
@@ -20,6 +21,11 @@ interface PluginState {
     channelArtifactsLoadFailed?: boolean;
     channelArtifactLibrary?: ChannelArtifactLibrary;
     scopedSessionsSupported?: boolean | null;
+    bots?: Array<{id: string}> | null;
+    projectChannelsEnabled?: boolean;
+    projectAgents?: ProjectAgentInfo[];
+    projects?: ProjectsState;
+    projectRHSTab?: ProjectTab;
 }
 
 type AppState = GlobalState & {
@@ -74,6 +80,36 @@ export const channelSupportsArtifacts = (state: GlobalState, channelId: string):
 /** True when the library is on and the open channel can hold one. */
 export const getChannelArtifactsAvailableHere = (state: AppState): boolean =>
     getChannelArtifactsEnabled(state) && channelSupportsArtifacts(state, state.entities?.channels?.currentChannelId || '');
+
 // Null until /ai_bots has answered.
 export const getScopedSessionsSupported = (state: AppState): boolean | null =>
     state[`plugins-${manifest.id}`]?.scopedSessionsSupported ?? null;
+
+export const getProjectChannelsEnabled = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.projectChannelsEnabled);
+
+const EMPTY_PROJECT_AGENTS: readonly ProjectAgentInfo[] = Object.freeze([]);
+
+export const getProjectAgents = (state: AppState): readonly ProjectAgentInfo[] =>
+    state[`plugins-${manifest.id}`]?.projectAgents ?? EMPTY_PROJECT_AGENTS;
+
+/** A project the viewer can see, or undefined for a non-project, an unknown channel, or when projects are off. */
+export const getProject = (state: AppState, channelId: string): Project | undefined => {
+    const pluginState = state[`plugins-${manifest.id}`];
+    return pluginState?.projectChannelsEnabled ? pluginState.projects?.byChannelId?.[channelId] : undefined; // eslint-disable-line no-undefined
+};
+
+export const isKnownNotProject = (state: AppState, channelId: string): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.projects?.notProject?.[channelId]);
+
+export const getCurrentChannelProject = (state: AppState): Project | undefined =>
+    getProject(state, state.entities?.channels?.currentChannelId || '');
+
+export const getProjectRHSTab = (state: AppState): ProjectTab =>
+    state[`plugins-${manifest.id}`]?.projectRHSTab ?? 'board';
+
+/** Whether a user is one of the agent bots, hidden project agents included. Only these authors' post props are trusted. */
+export const isAgentBotUserId = (state: AppState, userId: string): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`];
+    return Boolean(pluginState?.bots?.some((bot) => bot.id === userId) || pluginState?.projectAgents?.some((agent) => agent.id === userId));
+};

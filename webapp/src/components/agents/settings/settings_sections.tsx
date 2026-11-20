@@ -22,6 +22,7 @@ import {MCPConfig, PersistMCPServerScope} from '@/components/system_console/mcp_
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import WebSearchPanel from '@/components/system_console/web_search/web_search_panel';
 
+import ProjectChannelsSettings from './project_channels_settings';
 import {SettingsSection} from './sections';
 
 /** Minimal fields from GET /ai_bots used for the default-bot dropdown. */
@@ -77,6 +78,9 @@ export const defaultConfig: PluginConfig = {
     enableChannelMentionToolCalling: false,
     enableAmbientAutoReply: false,
     enableAgentAutoSetup: false,
+    enableProjectChannels: false,
+    projectDefaultServiceID: '',
+    projectDefaultModel: '',
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
@@ -325,6 +329,10 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             updateConfig({enableAgentAutoSetup: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'Adds “Set up with agent” to the actions of agents people manage. It opens a direct message in which the agent asks about its purpose and then sets its own display name and instructions, and can turn off its own tools. Each change needs the person’s approval and is saved to the agent’s version history, where it can be restored.'})}
+                    />
+                    <ProjectChannelsSettings
+                        value={value}
+                        updateConfig={updateConfig}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}

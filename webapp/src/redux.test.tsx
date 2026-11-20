@@ -1,8 +1,26 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {AIThreadTitleSet, AIThreadsReceived, AIThreadsRequested, aiThreads, initialAIThreadsState, rhsTab, selectedPostId} from './redux';
+import {
+    AIThreadTitleSet,
+    AIThreadsReceived,
+    AIThreadsRequested,
+    ProjectAgentsSet,
+    ProjectChannelsEnabledSet,
+    ProjectMissing,
+    ProjectReceived,
+    ProjectsReceived,
+    aiThreads,
+    initialAIThreadsState,
+    initialProjectsState,
+    pluginReducer,
+    projects,
+    type ProjectsState,
+    rhsTab,
+    selectedPostId,
+} from './redux';
 import {showRHSList} from './redux_actions';
+import type {Project} from './types/projects';
 
 describe('rhsTab reducer', () => {
     test.each([
@@ -54,5 +72,68 @@ describe('aiThreads reducer', () => {
     ])('$name', ({actions, expected}) => {
         const state = apply(actions);
         expect(state.threads?.map((t) => `${t.id}:${t.title}`) ?? null).toEqual(expected);
+    });
+});
+
+describe('projects reducer', () => {
+    const project = (channelId: string, overrides: Record<string, unknown> = {}) => ({
+        channel_id: channelId,
+        team_id: 'team1',
+        state: 'active',
+        update_at: 10,
+        ...overrides,
+    }) as unknown as Project;
+    const apply = (actions: Array<Record<string, unknown>>) => actions.reduce<ProjectsState>((state, action) => projects(state, action), initialProjectsState);
+
+    test.each([
+        {
+            name: 'a pushed update replaces the stored project',
+            actions: [{type: ProjectReceived, project: project('c1')}, {type: ProjectReceived, project: project('c1', {state: 'ending', update_at: 11})}],
+            expected: ['c1:ending'],
+        },
+        {
+            name: 'a response older than the stored project is dropped',
+            actions: [{type: ProjectReceived, project: project('c1', {state: 'ending', update_at: 11})}, {type: ProjectReceived, project: project('c1', {update_at: 5})}],
+            expected: ['c1:ending'],
+        },
+        {
+            name: 'a team list replaces that team\'s projects and keeps other teams\'',
+            actions: [
+                {type: ProjectReceived, project: project('c1')},
+                {type: ProjectReceived, project: project('c2', {team_id: 'team2'})},
+                {type: ProjectsReceived, teamId: 'team1', projects: [project('c3')]},
+            ],
+            expected: ['c2:active', 'c3:active'],
+        },
+        {
+            name: 'turning projects off forgets every project',
+            actions: [{type: ProjectReceived, project: project('c1')}, {type: ProjectChannelsEnabledSet, projectChannelsEnabled: false}],
+            expected: [],
+        },
+    ])('$name', ({actions, expected}) => {
+        const state = apply(actions);
+        expect(Object.values(state.byChannelId).map((p) => `${p.channel_id}:${p.state}`).sort()).toEqual(expected);
+    });
+
+    test('a project arriving clears the not-a-project mark of its channel', () => {
+        const state = apply([{type: ProjectMissing, channelId: 'c1'}, {type: ProjectReceived, project: project('c1')}]);
+        expect(state.notProject).toEqual({});
+    });
+
+    test('a project is never marked as not a project', () => {
+        const state = apply([{type: ProjectReceived, project: project('c1')}, {type: ProjectMissing, channelId: 'c1'}]);
+        expect(state.notProject).toEqual({});
+    });
+});
+
+describe('projectAgents reducer', () => {
+    test('is emptied when project channels are turned off', () => {
+        const initial = pluginReducer({} as never, {type: 'NONE'});
+        const stored = pluginReducer(initial, {type: ProjectAgentsSet, projectAgents: [{id: 'a'}]});
+        expect(stored.projectAgents).toEqual([{id: 'a'}]);
+
+        const off = pluginReducer(stored, {type: ProjectChannelsEnabledSet, projectChannelsEnabled: false});
+
+        expect(off.projectAgents).toEqual([]);
     });
 });

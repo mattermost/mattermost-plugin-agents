@@ -64,8 +64,9 @@ type WebSocketHandlers = Map<string, (msg: unknown) => void>;
 // Only the registry members initialize() calls unconditionally, plus the
 // channel-settings tab (its presence is what makes the bots cache load-bearing
 // for a synchronous shouldRender).
-function makeRegistry(websocketHandlers: WebSocketHandlers) {
+function makeRegistry(websocketHandlers: WebSocketHandlers, extra: Record<string, unknown> = {}) {
     return {
+        ...extra,
         registerReducer: jest.fn(),
         registerDesktopNotificationHook: jest.fn(),
         registerTranslations: jest.fn(),
@@ -92,7 +93,7 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065', state
     };
 }
 
-async function initializePlugin(siteURL?: string, state?: Record<string, unknown>) {
+async function initializePlugin(siteURL?: string, state?: Record<string, unknown>, registryExtras: Record<string, unknown> = {}) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
 
@@ -101,7 +102,7 @@ async function initializePlugin(siteURL?: string, state?: Record<string, unknown
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch, siteURL, state));
+    await new Plugin().initialize(makeRegistry(websocketHandlers, registryExtras), makeStore(dispatch, siteURL, state));
 
     return {websocketHandlers, dispatch};
 }
@@ -209,5 +210,53 @@ describe('agent thread list websocket handlers', () => {
         await jest.advanceTimersByTimeAsync(1000);
 
         expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('project channels registration', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+    });
+
+    const stateWith = (projectChannelsEnabled: boolean) => ({
+        entities: {
+            general: {config: {SiteURL: 'http://localhost:8065'}},
+            users: {currentUserId: 'me'},
+            teams: {currentTeamId: 'team1'},
+            i18n: {locale: 'en'},
+        },
+        'plugins-mattermost-ai': {projectChannelsEnabled},
+    });
+
+    test.each([
+        {name: 'offers the Project option while project channels are on', enabled: true},
+        {name: 'hides the Project option while project channels are off', enabled: false},
+    ])('$name', async ({enabled}) => {
+        const registerChannelTypeOption = jest.fn();
+        await initializePlugin('http://localhost:8065', stateWith(enabled), {registerChannelTypeOption});
+
+        expect(registerChannelTypeOption).toHaveBeenCalledTimes(1);
+        const option = registerChannelTypeOption.mock.calls[0][0];
+        expect(option.isAvailable(stateWith(enabled))).toBe(enabled);
+        expect(option.onCreate).toEqual(expect.any(Function));
+    });
+
+    test('a project update event is stored for the channel', async () => {
+        const {websocketHandlers, dispatch} = await initializePlugin('http://localhost:8065', stateWith(true));
+        const project = {channel_id: 'chan1', state: 'active', update_at: 5};
+
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_project_updated', {data: project});
+
+        expect(dispatch).toHaveBeenCalledWith({type: 'PROJECT_RECEIVED', project});
+    });
+
+    test('an event that is not a project is ignored', async () => {
+        const {websocketHandlers, dispatch} = await initializePlugin('http://localhost:8065', stateWith(true));
+        dispatch.mockClear();
+
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_project_updated', {data: {state: 'active'}});
+
+        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: 'PROJECT_RECEIVED'}));
     });
 });

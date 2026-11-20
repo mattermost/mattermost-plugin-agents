@@ -18,8 +18,8 @@ import {
     LLMBot,
 } from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
-import {BotsHandler, SetLinkPolicyHandler, setupRedux} from './redux';
-import {getLinkPolicy} from './selectors';
+import {BotsHandler, SetLinkPolicyHandler, pluginReducer, setupRedux} from './redux';
+import {getLinkPolicy, getProjectAgents, getProjectChannelsEnabled, isAgentBotUserId} from './selectors';
 import manifest from './manifest';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
@@ -273,6 +273,42 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).toHaveBeenCalledWith({type: SetLinkPolicyHandler, linkPolicy});
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_HTML_ARTIFACTS_ENABLED', htmlArtifactsEnabled: true});
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_SCOPED_SESSIONS_SUPPORTED', scopedSessionsSupported: true});
+    });
+
+    test('stores hidden project agents apart from the bots, so pickers never list them', async () => {
+        const store = createStore((state: any = {}, action: any) => ({
+            entities: {users: {currentUserId: 'me'}},
+            ['plugins-' + manifest.id]: pluginReducer(state['plugins-' + manifest.id], action),
+        }));
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('regular')], projectChannelsEnabled: true, projectAgents: [makeBot('hidden')]});
+
+        await fetchAndStoreBots(store.dispatch);
+
+        const state = store.getState() as any;
+        expect(getProjectChannelsEnabled(state)).toBe(true);
+        expect(getProjectAgents(state).map((agent) => agent.id)).toEqual(['hidden']);
+        expect(state['plugins-' + manifest.id].bots.map((bot: LLMBot) => bot.id)).toEqual(['regular']);
+        expect(isAgentBotUserId(state, 'hidden')).toBe(true);
+        expect(isAgentBotUserId(state, 'regular')).toBe(true);
+        expect(isAgentBotUserId(state, 'someone')).toBe(false);
+
+        const {result} = renderHook(() => useBotlist(), {
+            wrapper: ({children}: {children: React.ReactNode}) => <Provider store={store}>{children}</Provider>,
+        });
+        expect(result.current.bots?.map((bot) => bot.id)).toEqual(['regular']);
+    });
+
+    test('a server that predates project channels leaves them off with no project agents', async () => {
+        const store = createStore((state: any = {}, action: any) => ({
+            ['plugins-' + manifest.id]: pluginReducer(state['plugins-' + manifest.id], action),
+        }));
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('regular')]});
+
+        await fetchAndStoreBots(store.dispatch);
+
+        const state = store.getState() as any;
+        expect(getProjectChannelsEnabled(state)).toBe(false);
+        expect(getProjectAgents(state)).toEqual([]);
     });
 
     test('falls back to the plain text link policy when the server omits linkPolicy', async () => {

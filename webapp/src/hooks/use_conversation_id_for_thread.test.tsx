@@ -11,6 +11,7 @@ import manifest from '@/manifest';
 import {useConversationIdForThread} from './use_conversation_id_for_thread';
 
 const BOT_ID = 'botuserid12345678901234567';
+const PROJECT_BOT_ID = 'projectbot123456789012345';
 const USER_ID = 'useruserid1234567890123456';
 const BOT_CONV = 'botconvid12345678901234567';
 const FORGED_CONV = 'forgedconv1234567890123456';
@@ -22,7 +23,7 @@ const makeStore = (posts: Record<string, {user_id: string; conversation_id?: str
             postsInThread: {root: replies},
         },
     },
-    ['plugins-' + manifest.id]: {bots: [{id: BOT_ID}]},
+    ['plugins-' + manifest.id]: {bots: [{id: BOT_ID}], projectAgents: [{id: PROJECT_BOT_ID}]},
 }));
 
 describe('useConversationIdForThread', () => {
@@ -30,6 +31,11 @@ describe('useConversationIdForThread', () => {
         {
             name: 'reads the id from a bot reply',
             posts: {root: {user_id: USER_ID}, reply: {user_id: BOT_ID, conversation_id: BOT_CONV}},
+            expected: BOT_CONV,
+        },
+        {
+            name: 'reads the id from a hidden project agent reply',
+            posts: {root: {user_id: USER_ID}, reply: {user_id: PROJECT_BOT_ID, conversation_id: BOT_CONV}},
             expected: BOT_CONV,
         },
         {

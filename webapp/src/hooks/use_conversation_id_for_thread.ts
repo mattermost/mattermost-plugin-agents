@@ -5,8 +5,7 @@ import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
-import type {LLMBot} from '@/bots';
-import manifest from '@/manifest';
+import {isAgentBotUserId} from '@/selectors';
 import {isValidId} from '@/utils/ids';
 
 /**
@@ -25,11 +24,10 @@ export function useConversationIdForThread(rootPostId: string | null | undefined
             return '';
         }
         const posts = state.entities.posts.posts;
-        const bots: LLMBot[] | null | undefined = (state as any)['plugins-' + manifest.id]?.bots;
         const botConversationId = (postId: string): string => {
             const post = posts[postId];
             const convId: unknown = post?.props?.conversation_id;
-            if (!isValidId(convId) || !bots?.some((bot) => bot.id === post.user_id)) {
+            if (!isValidId(convId) || !isAgentBotUserId(state as never, post.user_id)) {
                 return '';
             }
             return convId;
