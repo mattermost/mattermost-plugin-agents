@@ -220,7 +220,7 @@ func TestReconcileKnownPluginServer(t *testing.T) {
 						return
 					}
 					body, _ := io.ReadAll(r.Body)
-					if bytes.Contains(body, []byte("notifications/cancelled")) {
+					if bytes.Contains(body, []byte("notifications/cancelled")) { //nolint:misspell // MCP protocol method name
 						w.WriteHeader(http.StatusAccepted)
 						return
 					}

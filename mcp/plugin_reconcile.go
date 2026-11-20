@@ -88,7 +88,7 @@ func (m *ClientManager) ReconcileKnownPluginServer(ctx context.Context, pluginID
 // strings.
 type probeStatusRoundTripper struct {
 	base           http.RoundTripper
-	lastPostStatus atomic.Int32
+	lastPostStatus atomic.Int64
 }
 
 func (t *probeStatusRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -97,7 +97,7 @@ func (t *probeStatusRoundTripper) RoundTrip(req *http.Request) (*http.Response, 
 	}
 	resp, err := t.base.RoundTrip(req)
 	if req.Method == http.MethodPost && resp != nil {
-		t.lastPostStatus.Store(int32(resp.StatusCode))
+		t.lastPostStatus.Store(int64(resp.StatusCode))
 	}
 	return resp, err
 }
