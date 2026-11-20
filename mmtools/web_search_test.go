@@ -777,8 +777,8 @@ func TestWebSearchSourceToolNeedsSearchResultAllowlist(t *testing.T) {
 			service := NewWebSearchService(func() *config.Config {
 				return &config.Config{WebSearch: config.WebSearchConfig{
 					Enabled:  true,
-					Provider: "google",
-					Google:   config.WebSearchGoogleConfig{APIKey: "key", SearchEngineID: "engine"},
+					Provider: "brave",
+					Brave:    config.WebSearchBraveConfig{APIKey: "key"},
 				}}
 			}, &mockLogger{}, client, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
 			bot := bots.NewBot(llm.BotConfig{Name: "mockbot"}, llm.ServiceConfig{Type: "mock"}, &model.Bot{Username: "mockbot"}, &mockLanguageModel{})

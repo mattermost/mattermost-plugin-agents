@@ -130,7 +130,7 @@ func TestScopedRunReadsThroughEmbeddedServer(t *testing.T) {
 	mm.EXPECT().RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 
 	reads := &heldFileReads{inner: files.New(mm), entered: make(chan struct{}, 1), results: make(chan error, 4)}
-	embedded, err := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, nil, reads, func() bool { return false })
+	embedded, err := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, nil, reads, nil, func() bool { return false })
 	require.NoError(t, err)
 
 	manager := mcp.NewClientManager(mcp.Config{

@@ -252,6 +252,20 @@ func TestAgentSaveAutoExecutesOnlyWhereTheHookAllows(t *testing.T) {
 	elsewhere := *e.llmCtx
 	elsewhere.Channel = &model.Channel{Id: model.NewId(), Type: model.ChannelTypeOpen}
 	assert.Equal(t, map[string]bool{mmtools.SaveChannelArtifactToolName: false, mmtools.RemoveChannelArtifactToolName: false}, autoRun(e.tools.Tools(&elsewhere)))
+
+	scopedOffered := func(tools []llm.Tool) map[string]bool {
+		out := map[string]bool{}
+		for _, tool := range llm.FilterScopedOptInTools(tools, nil) {
+			out[tool.Name] = !tool.AlwaysAsk
+		}
+		return out
+	}
+	assert.Equal(t, map[string]bool{mmtools.SaveChannelArtifactToolName: true}, scopedOffered(e.tools.Tools(e.llmCtx)),
+		"a scoped turn, which runs everything unasked, offers only the write the hook auto-runs")
+	assert.Empty(t, scopedOffered(e.tools.Tools(&elsewhere)), "other scoped agents don't get the writes unless the admin names them")
+	named := llm.FilterScopedOptInTools(e.tools.Tools(&elsewhere), []llm.EnabledMCPTool{{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: mmtools.SaveChannelArtifactToolName}})
+	require.Len(t, named, 1)
+	assert.True(t, named[0].AlwaysAsk, "a named write still asks in a scoped turn")
 }
 
 func TestAgentSaveCanActAsTheAgent(t *testing.T) {

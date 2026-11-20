@@ -113,12 +113,18 @@ func (t *ChannelArtifactTools) Tools(llmCtx *llm.Context) []llm.Tool {
 	if !t.available(llmCtx) {
 		return nil
 	}
+	// A scoped turn runs every tool unasked, so a write the hook does not
+	// auto-run is offered there only when the admin names it, and still asks.
+	saveAuto := t.autoExecute(llmCtx, SaveChannelArtifactToolName)
+	removeAuto := t.autoExecute(llmCtx, RemoveChannelArtifactToolName)
 	return []llm.Tool{
 		{
 			Name:        SaveChannelArtifactToolName,
 			Description: saveChannelArtifactDescription,
 			Schema:      llm.NewJSONSchemaFromStruct[SaveChannelArtifactArgs](),
-			AutoExecute: t.autoExecute(llmCtx, SaveChannelArtifactToolName),
+			AutoExecute: saveAuto,
+			ScopedOptIn: !saveAuto,
+			AlwaysAsk:   !saveAuto,
 			Resolver: func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 				return t.resolveSave(ctx, llmCtx, argsGetter)
 			},
@@ -127,7 +133,9 @@ func (t *ChannelArtifactTools) Tools(llmCtx *llm.Context) []llm.Tool {
 			Name:        RemoveChannelArtifactToolName,
 			Description: removeChannelArtifactDescription,
 			Schema:      llm.NewJSONSchemaFromStruct[RemoveChannelArtifactArgs](),
-			AutoExecute: t.autoExecute(llmCtx, RemoveChannelArtifactToolName),
+			AutoExecute: removeAuto,
+			ScopedOptIn: !removeAuto,
+			AlwaysAsk:   !removeAuto,
 			Resolver: func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 				return t.resolveRemove(ctx, llmCtx, argsGetter)
 			},

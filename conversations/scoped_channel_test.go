@@ -194,6 +194,8 @@ type scopedEnvOpts struct {
 	webSearchURL string
 	// namedBuiltins are built-in tools the agent's allowlist names.
 	namedBuiltins []string
+	// alwaysAsk marks the scoped test tool as one that asks even in scoped turns.
+	alwaysAsk bool
 }
 
 func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
@@ -233,6 +235,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 		Description:  "fetch a Jira issue",
 		ServerOrigin: scopedRemote,
 		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		AlwaysAsk:    opts.alwaysAsk,
 		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
 			env.runsMu.Lock()
 			env.toolRuns++
@@ -414,6 +417,17 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 		toolUse, _ := scopedToolBlocks(t, env)
 		assert.Empty(t, toolUse, "a call awaiting approval is neither run nor persisted as a tool round")
 	})
+}
+
+// An always-ask tool, such as starting a Cursor run, waits for the requester's
+// approval even in a scoped turn that runs everything else unasked.
+func TestScopedChannelTurnAsksForAlwaysAskTool(t *testing.T) {
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypePrivate, Name: "evidence"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{alwaysAsk: true, toolPolicy: mcp.ToolPolicyAutoRunEverywhere}, dmMakeToolCallStream(toolCall))
+
+	assert.Equal(t, 0, env.runs(), "the call waits for approval")
+	assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
 }
 
 // Built-in web search is offered to a scoped turn, and runs without approval,

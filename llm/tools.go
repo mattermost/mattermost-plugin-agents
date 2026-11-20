@@ -80,6 +80,11 @@ type Tool struct {
 	// every tool without asking, offers only when the agent's allowlist names
 	// it under BuiltinToolsOrigin.
 	ScopedOptIn bool
+
+	// AlwaysAsk makes a call need the requester's approval even in a scoped
+	// turn, which otherwise runs every tool unasked. It is for tools with an
+	// effect outside the scope, such as starting external work or deleting.
+	AlwaysAsk bool
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a

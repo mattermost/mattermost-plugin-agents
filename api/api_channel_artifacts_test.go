@@ -20,7 +20,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/mock"
 )
 
 func init() {
@@ -500,7 +502,7 @@ func TestMCPChannelArtifactsServeToolsInProcess(t *testing.T) {
 	f := newLibraryFixture(t)
 	entry := f.save(t, "Sprint notes", "<html>0123456789</html>")
 	ctx := t.Context()
-	svc := NewMCPChannelArtifacts(f.lib, f.e.config)
+	svc := NewMCPChannelArtifacts(f.lib, f.e.config, f.mm)
 
 	entries, err := svc.List(ctx, testUserID, f.channelID)
 	require.NoError(t, err)
@@ -519,6 +521,46 @@ func TestMCPChannelArtifactsServeToolsInProcess(t *testing.T) {
 	assert.False(t, svc.Enabled())
 	_, err = svc.List(ctx, testUserID, f.channelID)
 	require.ErrorIs(t, err, errChannelArtifactsUnavailable)
+}
+
+func TestMCPChannelArtifactsHonorRunScope(t *testing.T) {
+	f := newLibraryFixture(t)
+	entry := f.save(t, "Charter", "<html>charter</html>")
+	f.mm.EXPECT().RolesGrantPermission(mock.Anything, mock.Anything).Return(true).Maybe()
+	svc := NewMCPChannelArtifacts(f.lib, f.e.config, f.mm)
+
+	scopedTo := func(channelIDs ...string) context.Context {
+		scope := scopedsession.NewRunScope(testUserID, channelIDs, "")
+		scope.Resources.OpenTeamPublicChannels = false
+		scope.Resources.PublicChannelTeamIDs = nil
+		return scopedsession.WithBinding(t.Context(), scopedsession.NewBinding(scope))
+	}
+	ended := scopedsession.NewBinding(scopedsession.NewRunScope(testUserID, []string{f.channelID}, ""))
+	ended.End()
+
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		allowed bool
+	}{
+		{name: "unscoped read is the user's own", ctx: t.Context(), allowed: true},
+		{name: "scope lists the channel", ctx: scopedTo(f.channelID), allowed: true},
+		{name: "scope lists only another channel", ctx: scopedTo(model.NewId())},
+		{name: "run has ended", ctx: scopedsession.WithBinding(t.Context(), ended)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, listErr := svc.List(tt.ctx, testUserID, f.channelID)
+			_, getErr := svc.Get(tt.ctx, testUserID, entry.ID, tools.ChannelArtifactReadOptions{})
+			if tt.allowed {
+				assert.NoError(t, listErr)
+				assert.NoError(t, getErr)
+				return
+			}
+			assert.Error(t, listErr)
+			assert.Error(t, getErr)
+		})
+	}
 }
 
 func TestChannelArtifactRoutesRefuseDirectAndGroupMessages(t *testing.T) {

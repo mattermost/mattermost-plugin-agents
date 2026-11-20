@@ -408,8 +408,9 @@ func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 				return false
 			}
 			// Everything a scoped catalog reads is within the scope, but an
-			// interaction tool needs the user's answer.
-			if lookup.Tool.UserInteraction != "" {
+			// interaction tool needs the user's answer, and an always-ask
+			// tool reaches outside it.
+			if lookup.Tool.UserInteraction != "" || lookup.Tool.AlwaysAsk {
 				return false
 			}
 			// A tool the admin has disabled never runs, whatever the catalog

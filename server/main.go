@@ -489,7 +489,7 @@ func (p *Plugin) OnActivate() error {
 			VersionsToKeep: p.configuration.ChannelArtifactVersionsToKeep(),
 		}
 	})
-	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelLibrary, &p.configuration)
+	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelLibrary, &p.configuration, mmClient)
 	toolProvider.SetChannelArtifactTools(&mmtools.ChannelArtifactTools{
 		Library: channelLibrary,
 		Enabled: p.configuration.EnableChannelArtifacts,

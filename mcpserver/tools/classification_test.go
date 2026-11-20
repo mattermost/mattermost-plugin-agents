@@ -213,6 +213,8 @@ var scopedSupportedReadTools = map[string]bool{
 	"get_team_info": true, "search_teams": true, "get_me": true,
 	"get_user": true, "get_user_custom_status": true, "get_user_by_username": true,
 	"get_users_by_ids": true, "get_users_by_usernames": true,
+	// The plugin serves these in process and checks the run's scope itself.
+	"list_channel_artifacts": true, "get_channel_artifact": true,
 }
 
 func TestMCPToolScopedSupportClassification(t *testing.T) {
