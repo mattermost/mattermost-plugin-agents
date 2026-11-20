@@ -49,6 +49,18 @@ const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}
 };
 
 describe('ThreadItem', () => {
+    const formatText = jest.fn<string, [string]>();
+
+    beforeEach(() => {
+        formatText.mockReset();
+        formatText.mockImplementation((source) => `<p>${source}</p>`);
+        (window as any).PostUtils = {formatText};
+    });
+
+    afterEach(() => {
+        delete (window as any).PostUtils;
+    });
+
     test('shows the agent\'s avatar, the chat title and first message, and a meta line with the agent, time and replies', () => {
         renderItem();
 
@@ -87,6 +99,23 @@ describe('ThreadItem', () => {
         renderItem({title, preview});
 
         texts.forEach((text) => expect(screen.getAllByText(text)).toHaveLength(1));
+    });
+
+    test('the list preview is the host-formatted text and the title stays as stored', () => {
+        formatText.mockReturnValue('<p><strong>Bold</strong> idea. See <a href="https://example.com/docs">the docs</a>.</p>');
+        renderItem({title: '**Keep title**', preview: '**Bold** idea. See [the docs](https://example.com/docs).'});
+
+        expect(screen.getByText('**Keep title**')).toBeTruthy();
+        expect(screen.getByText('Bold idea. See the docs.')).toBeTruthy();
+        expect(screen.queryByText(/https:\/\/example\.com/)).toBeNull();
+    });
+
+    test('an untitled chat is headed by the formatted preview once', () => {
+        formatText.mockReturnValue('<h2><strong>Status</strong></h2><p>All clear</p>');
+        renderItem({title: '  ', preview: '## **Status**\n\nAll clear'});
+
+        expect(screen.getAllByText('Status All clear')).toHaveLength(1);
+        expect(screen.getByRole('button', {name: 'Status All clear, Matty'})).toBeTruthy();
     });
 
     test('opens the chat on click and from the keyboard', () => {

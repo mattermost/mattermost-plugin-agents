@@ -229,6 +229,7 @@
   "Cd4uvaQF": "Recent chats",
   "Ckzx8y/w": "Expose search and load helper tools first, then load MCP tool schemas only when the agent needs them. Disable this to use the full MCP tool list for this agent.",
   "CuoNlyjK": "External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts.",
+  "Cwk0uLhF": "Agent chats",
   "Cz/D1/Vt": "The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.",
   "D+QOVdhf": "No service account credentials",
   "D+cOTUo5": "Simple",

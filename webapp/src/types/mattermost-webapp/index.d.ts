@@ -12,6 +12,9 @@ export interface PluginRegistry {
 // Global type definitions
 declare global {
     interface Window {
+        PostUtils: {
+            formatText: (text: string, options?: unknown) => string;
+        };
         WebappUtils?: {
             sendWebSocketMessage: (msg: {
                 action: string;
