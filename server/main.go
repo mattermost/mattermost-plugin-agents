@@ -482,19 +482,18 @@ func (p *Plugin) OnActivate() error {
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
 	channelArtifactsService := channelartifacts.NewService(channelartifacts.NewStore(dbClient.DB), mmClient, bots)
-	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelArtifactsService, mmClient, &p.configuration)
+	channelLibrary := channelartifacts.NewLibrary(channelArtifactsService, func() channelartifacts.Limits {
+		return channelartifacts.Limits{
+			MaxSize:        api.ArtifactRenderLimit(mmClient.GetConfig()),
+			MaxPerChannel:  p.configuration.ChannelArtifactsMaxPerChannel(),
+			VersionsToKeep: p.configuration.ChannelArtifactVersionsToKeep(),
+		}
+	})
+	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelLibrary, &p.configuration)
 	toolProvider.SetChannelArtifactTools(&mmtools.ChannelArtifactTools{
-		Service: channelArtifactsService,
-		Client:  mmClient,
+		Library: channelLibrary,
 		Enabled: p.configuration.EnableChannelArtifacts,
-		Limits: func() channelartifacts.Limits {
-			return channelartifacts.Limits{
-				MaxSize:        api.ArtifactRenderLimit(mmClient.GetConfig()),
-				MaxPerChannel:  p.configuration.ChannelArtifactsMaxPerChannel(),
-				VersionsToKeep: p.configuration.ChannelArtifactVersionsToKeep(),
-			}
-		},
-		Audit: p.auditChannelArtifactTool,
+		Audit:   p.auditChannelArtifactTool,
 	})
 	var (
 		embeddedMu     sync.Mutex
@@ -661,7 +660,7 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
-	apiService.SetChannelArtifacts(channelArtifactsService)
+	apiService.SetChannelArtifacts(channelLibrary)
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.

@@ -222,13 +222,31 @@ func (s *Service) sourceOf(entry *Entry, version int) (*VersionRecord, error) {
 	return s.store.Version(entry.ID, version)
 }
 
-// IsHTMLFile reports whether the file is an HTML document by extension.
-func IsHTMLFile(info *model.FileInfo) bool {
+func fileExtension(info *model.FileInfo) string {
 	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
 	if ext == "" {
 		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(info.Name), "."))
 	}
+	return ext
+}
+
+// IsHTMLFile reports whether the file is an HTML document by extension.
+func IsHTMLFile(info *model.FileInfo) bool {
+	ext := fileExtension(info)
 	return ext == "html" || ext == "htm"
+}
+
+// FormatOfFile returns the library format of a file by extension, and false
+// when the library cannot hold it.
+func FormatOfFile(info *model.FileInfo) (Format, bool) {
+	switch fileExtension(info) {
+	case "html", "htm":
+		return FormatHTML, true
+	case "md", "markdown":
+		return FormatMarkdown, true
+	default:
+		return "", false
+	}
 }
 
 func defaultTitle(fileName string) string {
@@ -250,10 +268,12 @@ func validateTitle(title string) error {
 }
 
 type source struct {
+	postID   string
 	sha256   string
 	size     int64
 	botID    string
 	fileName string
+	format   Format
 }
 
 // readLimited reads at most limit bytes and fails with ErrTooLarge beyond that.
@@ -287,10 +307,11 @@ func (s *Service) openFile(reader mmapi.Client, fileID string) (io.ReadCloser, e
 	}
 }
 
-// checkSource verifies the file is an HTML attachment of an agent's post in the
-// channel and records its SHA-256. reader decides whose file policy applies.
-func (s *Service) checkSource(reader mmapi.Client, channelID, postID, fileID string, maxSize int64) (*source, error) {
-	if !model.IsValidId(postID) || !model.IsValidId(fileID) {
+// checkSource verifies the file is an HTML or Markdown attachment of an agent's
+// post in the channel and records its SHA-256. want, when set, is the format
+// the file must have. reader decides whose file policy applies.
+func (s *Service) checkSource(reader mmapi.Client, channelID, postID, fileID string, want Format, maxSize int64) (*source, error) {
+	if !model.IsValidId(fileID) || (postID != "" && !model.IsValidId(postID)) {
 		return nil, ErrInvalidInput
 	}
 	info, err := reader.GetFileInfo(fileID)
@@ -304,7 +325,11 @@ func (s *Service) checkSource(reader mmapi.Client, channelID, postID, fileID str
 	if info == nil || info.DeleteAt != 0 {
 		return nil, ErrNotFound
 	}
-	if !IsHTMLFile(info) || info.PostId != postID {
+	format, supported := FormatOfFile(info)
+	if postID == "" {
+		postID = info.PostId
+	}
+	if !supported || info.PostId != postID || (want != "" && format != want) {
 		return nil, ErrIneligible
 	}
 	post, err := s.mm.GetPost(postID)
@@ -336,53 +361,65 @@ func (s *Service) checkSource(reader mmapi.Client, channelID, postID, fileID str
 	if err != nil {
 		return nil, err
 	}
-	return &source{sha256: hashHex(body), size: int64(len(body)), botID: post.UserId, fileName: info.Name}, nil
+	return &source{postID: postID, sha256: hashHex(body), size: int64(len(body)), botID: post.UserId, fileName: info.Name, format: format}, nil
 }
 
-// Save registers the file as a new artifact in req.ChannelID, or as a new
-// current version of req.ArtifactID. Only a reference to the post and file is
-// stored. reader supplies the file policy the content is read under.
-func (s *Service) Save(userID string, reader mmapi.Client, req SaveRequest, lim Limits) (*Entry, error) {
+// authorizeWrite checks a save request before any content is touched and
+// returns the trimmed title and the format the content must have, which is ""
+// when it is still to be inferred from the file.
+func (s *Service) authorizeWrite(userID string, req SaveRequest) (string, Format, error) {
 	if !model.IsValidId(req.ChannelID) || (req.ArtifactID != "" && !model.IsValidId(req.ArtifactID)) {
-		return nil, ErrInvalidInput
+		return "", "", ErrInvalidInput
 	}
-	if req.ArtifactID != "" {
-		existing, err := s.store.Get(req.ArtifactID)
-		if err != nil {
-			return nil, err
-		}
-		if existing.ChannelID != req.ChannelID {
-			return nil, ErrNotFound
-		}
+	if req.Format != "" && !req.Format.Valid() {
+		return "", "", ErrInvalidInput
 	}
+	format := req.Format
 	op := OpAdd
+	var existing *Entry
 	if req.ArtifactID != "" {
 		op = OpEdit
+		var err error
+		if existing, err = s.store.Get(req.ArtifactID); err != nil {
+			return "", "", err
+		}
+		if existing.ChannelID != req.ChannelID {
+			return "", "", ErrNotFound
+		}
 	}
 	if err := s.authorize(userID, req.ChannelID, op); err != nil {
-		return nil, err
+		return "", "", err
+	}
+	if existing != nil {
+		if format != "" && format != existing.Format {
+			return "", "", ErrInvalidInput
+		}
+		format = existing.Format
 	}
 	title := strings.TrimSpace(req.Title)
 	if title != "" {
 		if err := validateTitle(title); err != nil {
-			return nil, err
+			return "", "", err
 		}
 	}
-	src, err := s.checkSource(reader, req.ChannelID, req.PostID, req.FileID, lim.MaxSize)
-	if err != nil {
-		return nil, err
-	}
+	return title, format, nil
+}
+
+// persist records the checked source as a new artifact, or as a new current
+// version of req.ArtifactID.
+func (s *Service) persist(userID string, req SaveRequest, title string, src *source, lim Limits) (*Entry, error) {
 	version := NewVersion{
-		PostID: req.PostID, FileID: req.FileID, SHA256: src.sha256, Size: src.size,
+		PostID: src.postID, FileID: req.FileID, SHA256: src.sha256, Size: src.size,
 		SourceBotUserID: src.botID, UserID: userID, At: model.GetMillis(), Title: title,
 	}
 	id := req.ArtifactID
+	var err error
 	if id == "" {
 		id = model.NewId()
 		if title == "" {
 			title = defaultTitle(src.fileName)
 		}
-		err = s.store.Create(id, req.ChannelID, title, version, resolveMax(lim.MaxPerChannel, DefaultMaxPerChannel))
+		err = s.store.Create(id, req.ChannelID, title, src.format, version, resolveMax(lim.MaxPerChannel, DefaultMaxPerChannel))
 	} else {
 		err = s.store.AddVersion(id, version, resolveMax(lim.VersionsToKeep, DefaultVersionsToKeep))
 	}
@@ -390,6 +427,21 @@ func (s *Service) Save(userID string, reader mmapi.Client, req SaveRequest, lim 
 		return nil, err
 	}
 	return s.GetReadable(userID, id)
+}
+
+// Save registers the file as a new artifact in req.ChannelID, or as a new
+// current version of req.ArtifactID. req.PostID may be left empty to use the
+// post the file is attached to. Only a reference to the post and file is stored. reader supplies the file policy the content is read under.
+func (s *Service) Save(userID string, reader mmapi.Client, req SaveRequest, lim Limits) (*Entry, error) {
+	title, format, err := s.authorizeWrite(userID, req)
+	if err != nil {
+		return nil, err
+	}
+	src, err := s.checkSource(reader, req.ChannelID, req.PostID, req.FileID, format, lim.MaxSize)
+	if err != nil {
+		return nil, err
+	}
+	return s.persist(userID, req, title, src, lim)
 }
 
 func resolveMax(value, fallback int) int {

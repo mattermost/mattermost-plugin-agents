@@ -1,12 +1,12 @@
 # Save agent-built apps to a channel library
 
-Channel members can save an interactive HTML app an agent built to the channel's Channel artifacts panel, reopen it later, and keep versions. This page is for System Admins.
+Channel members can save an interactive HTML app or a Markdown document an agent wrote to the channel's Channel artifacts panel, reopen it later, and keep versions. This page is for System Admins.
 
 The library is experimental. It stores references, not copies: each saved version points at the message and file the agent posted. The app stays available only while that message and file exist, and follows the message's retention.
 
 ## Turn it on
 
-Turn on **Enable HTML artifacts** first. The library only holds HTML artifacts, and it is off until you also turn on the setting below.
+Turn on **Enable HTML artifacts** first. The library is off until you also turn on the setting below.
 
 | Setting | Config key | Default | What it does |
 |---|---|---|---|
@@ -30,11 +30,11 @@ Libraries exist only in public and private channels. Direct and group messages h
 
 ## What can be saved
 
-Only HTML files (`.html`, `.htm`) attached to a post written by one of Agents' own bots, in the same channel, and no larger than 5 MiB or the server's maximum file size if that's smaller. A person's attachment can't be saved. Saving the same content twice in a channel is refused and points at the existing artifact.
+Only HTML files (`.html`, `.htm`) and Markdown files (`.md`, `.markdown`) attached to a post written by one of Agents' own bots, in the same channel, and no larger than 5 MiB or the server's maximum file size if that's smaller. A person's attachment can't be saved. Each artifact has one format, shown as a badge in the panel, and every version of it keeps that format. HTML artifacts open in the same sandboxed viewer as HTML artifacts in posts. Markdown artifacts open in a reader that renders them like a message and runs no script. Saving the same content twice in a channel is refused and points at the existing artifact.
 
 ## Where the content lives
 
-The library keeps a row per artifact and one per version, with the post ID, file ID, SHA-256, and size. It never stores the HTML.
+The library keeps a row per artifact and one per version, with the post ID, file ID, SHA-256, and size. It never stores the content.
 
 - **Reads follow the source file.** To open, render, download, or let an agent read an artifact, Agents reads the file from the source post under the viewer's session. The file's download policy applies, including attribute-based access policies, and a denial fails closed: the artifact looks missing. The stored SHA-256 is checked on every read, and a mismatch makes the version unavailable.
 - **Deleting or expiring the source makes the artifact unavailable.** If the post or file is deleted by a user, by message or file retention, or by a channel purge, the entry stays listed and is marked unavailable. Nothing is deleted automatically. Restoring an unavailable version fails.
@@ -49,10 +49,10 @@ Agents can read the library with the `list_channel_artifacts` and `get_channel_a
 
 Agents can also manage the library directly with two built-in tools:
 
-- `SaveChannelArtifact` saves HTML as a new artifact, or as a new version of an existing one. Given HTML content, it posts that content to the channel as a message from the agent, with the file attached, and records that message as the version. It can also record an HTML file already attached to one of the agent's posts in the channel.
+- `SaveChannelArtifact` saves a document as a new artifact, or as a new version of an existing one. The agent sets `format` to `html` (the default) or `markdown`. Given content, it posts that content to the channel as a message from the agent, with the file attached, and records that message as the version. It can also record an HTML or Markdown file already attached to one of the agent's posts in the channel. An existing artifact keeps its format.
 - `RemoveChannelArtifact` removes a library entry.
 
-Both tools ask for approval by default and work only in the channel the request came from. They aren't offered in direct or group messages, and the read tools aren't offered there either. The requesting user must hold the matching bookmark permission, and the server checks it on every call. When a tool saves a file, it reads that file under the requesting user's file download policy. If the user's session isn't available, or the policy denies the file, the save is refused. See [Approve tool calls](tool_approval.md).
+Both tools ask for approval by default, unless an integration that runs the agent, such as a project channel, lets the agent save without asking. They work only in the channel the request came from. They aren't offered in direct or group messages, and the read tools aren't offered there either. The requesting user must hold the matching bookmark permission, and the server checks it on every call. When a tool saves a file that is already attached to a post, it reads that file under the requesting user's file download policy. If the user's session isn't available, or the policy denies the file, the save is refused. Content the agent writes itself needs no session, so a turn nobody is attending, such as a scheduled wake-up, can still save it. When the requesting user's session is available, the saved file is also checked against their download policy. See [Approve tool calls](tool_approval.md).
 
 Because each save through `SaveChannelArtifact` posts a message, the message is visible to everyone in the channel and follows the channel's retention. If the library then refuses the save, for example because identical content is already saved or the channel's library is full, the agent removes the message it just posted.
 

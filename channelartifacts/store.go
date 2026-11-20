@@ -19,7 +19,7 @@ const sourceAvailable = `EXISTS (
 	WHERE f.Id = v.FileID AND f.PostId = v.PostID AND f.DeleteAt = 0 AND p.DeleteAt = 0)`
 
 const entrySelect = `
-SELECT a.ID, a.ChannelID, a.Title, a.HeadVersion AS Version, v.SHA256, v.Size,
+SELECT a.ID, a.ChannelID, a.Title, a.Format, a.HeadVersion AS Version, v.SHA256, v.Size,
 	v.PostID AS SourcePostID, v.FileID AS SourceFileID, v.SourceBotUserID,
 	a.CreatedBy, a.CreateAt, a.UpdatedBy, a.UpdateAt, ` + sourceAvailable + ` AS Available
 FROM Agents_ChannelArtifacts a
@@ -148,7 +148,7 @@ func insertVersion(tx *sqlx.Tx, id string, version int, v NewVersion) error {
 // Create inserts a new artifact with version 1. It fails with ErrLimitReached
 // when the channel already holds maxPerChannel artifacts, and with a
 // DuplicateError when a current version in the channel has the same SHA-256.
-func (s *Store) Create(id, channelID, title string, v NewVersion, maxPerChannel int) error {
+func (s *Store) Create(id, channelID, title string, format Format, v NewVersion, maxPerChannel int) error {
 	return s.tx(func(tx *sqlx.Tx) error {
 		if err := lockChannel(tx, channelID); err != nil {
 			return err
@@ -168,8 +168,8 @@ func (s *Store) Create(id, channelID, title string, v NewVersion, maxPerChannel 
 			return &DuplicateError{ArtifactID: dup}
 		}
 		_, err = tx.Exec(`
-			INSERT INTO Agents_ChannelArtifacts (ID, ChannelID, Title, HeadVersion, LastVersion, CreatedBy, CreateAt, UpdatedBy, UpdateAt)
-			VALUES ($1, $2, $3, 1, 1, $4, $5, $4, $5)`, id, channelID, title, v.UserID, v.At)
+			INSERT INTO Agents_ChannelArtifacts (ID, ChannelID, Title, Format, HeadVersion, LastVersion, CreatedBy, CreateAt, UpdatedBy, UpdateAt)
+			VALUES ($1, $2, $3, $4, 1, 1, $5, $6, $5, $6)`, id, channelID, title, string(format), v.UserID, v.At)
 		if err != nil {
 			return fmt.Errorf("failed to insert channel artifact: %w", err)
 		}

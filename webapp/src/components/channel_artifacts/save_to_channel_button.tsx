@@ -14,16 +14,14 @@ import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 import {PinIcon, PinOutlineIcon} from '@mattermost/compass-icons/components';
 
-import {
-    ChannelArtifactEntry,
-    createChannelArtifact,
-} from '@/client';
+import {ChannelArtifactEntry} from '@/client';
 import {getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
 import {AnimatedModalShell} from '../animated_modal_shell';
 
 import {canAddChannelBookmarks, pinLibraryArtifactBookmark} from './bookmark';
 import {useChannelLibrary} from './library';
+import {getChannelLibraryClient} from './library_client';
 
 interface Props {
     fileId: string;
@@ -158,12 +156,12 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
             return;
         }
         try {
-            const entry = await createChannelArtifact({
-                channel_id: channelId,
-                post_id: postId,
-                file_id: fileId,
+            const entry = await getChannelLibraryClient().write({
+                channelId,
+                postId,
+                fileId,
                 title: title.trim() || defaultTitle(),
-                ...(replaceId ? {replace_id: replaceId} : {}),
+                ...(replaceId ? {replaceId} : {}),
             });
             store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
             await pinSaved(entry.id, entry.title);

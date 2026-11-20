@@ -226,7 +226,7 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
-	channelArtifacts      *channelartifacts.Service
+	channelLibrary        channelartifacts.Manager
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -423,6 +423,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/channel-artifacts/:id/info", a.handleGetChannelArtifactInfo)
 	router.GET("/channel-artifacts/:id/versions", a.handleListChannelArtifactVersions)
 	router.GET("/channel-artifacts/:id/token", a.handleGetChannelArtifactToken)
+	router.GET("/channel-artifacts/:id/content", a.handleGetChannelArtifactContent)
 	router.GET("/channel-artifacts/:id/download", a.handleDownloadChannelArtifact)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)

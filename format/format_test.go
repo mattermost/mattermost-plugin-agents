@@ -869,6 +869,16 @@ func TestWriteChannelArtifact(t *testing.T) {
 			notContains: []string{"\nID: forged", "Availability:"},
 		},
 		{
+			name:     "the format is reported",
+			entry:    channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Charter", Format: channelartifacts.FormatMarkdown, Available: true},
+			contains: []string{"Format: markdown\n"},
+		},
+		{
+			name:        "rows without a format omit the line",
+			entry:       channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Old", Available: true},
+			notContains: []string{"Format:"},
+		},
+		{
 			name:     "unavailable source is reported",
 			entry:    channelartifacts.Entry{ID: "artifactid012345678901234", Title: "Gone", Available: false},
 			contains: []string{"Availability: unavailable"},

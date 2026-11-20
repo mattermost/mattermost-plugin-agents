@@ -145,10 +145,15 @@ export async function getArtifactTokenFor(ref: ArtifactRef, nonce: string, versi
     });
 }
 
+export type ChannelArtifactFormat = 'html' | 'markdown';
+
 export type ChannelArtifactEntry = {
     id: string;
     channel_id: string;
     title: string;
+
+    // Servers that predate Markdown send no format; those entries are HTML.
+    format?: ChannelArtifactFormat;
 
     // The current version number.
     version: number;
@@ -205,6 +210,7 @@ export async function createChannelArtifact(body: {
     file_id: string;
     title?: string;
     replace_id?: string;
+    format?: ChannelArtifactFormat;
 }): Promise<ChannelArtifactEntry> {
     const url = `${baseRoute()}/channel-artifacts`;
     const response = await fetch(url, Client4.getOptions({
@@ -251,6 +257,17 @@ export async function deleteChannelArtifactVersion(id: string, version: number):
     const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
     if (response.ok) {
         return response.json();
+    }
+    throw artifactError(url, response);
+}
+
+// The source text of a Markdown artifact, at one version or the current one.
+export async function getChannelArtifactContent(id: string, version?: number): Promise<string> {
+    const base = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/content`;
+    const url = version && version > 0 ? `${base}?version=${version}` : base;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.text();
     }
     throw artifactError(url, response);
 }

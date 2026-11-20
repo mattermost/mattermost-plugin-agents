@@ -91,20 +91,20 @@ type ListChannelArtifactsArgs struct {
 // GetChannelArtifactArgs represents arguments for get_channel_artifact.
 type GetChannelArtifactArgs struct {
 	ArtifactID     string `json:"artifact_id" jsonschema:"The channel artifact ID from list_channel_artifacts,minLength=26,maxLength=26"`
-	IncludeContent *bool  `json:"include_content,omitempty" jsonschema:"When true (default), include the HTML source as text"`
-	Offset         int    `json:"offset,omitempty" jsonschema:"Character offset to start reading the HTML from (default 0),minimum=0"`
-	ContentLimit   int    `json:"content_limit,omitempty" jsonschema:"Maximum HTML characters to return (default 8000, maximum 20000),minimum=0,maximum=20000"`
+	IncludeContent *bool  `json:"include_content,omitempty" jsonschema:"When true (default), include the artifact source (HTML or Markdown) as text"`
+	Offset         int    `json:"offset,omitempty" jsonschema:"Character offset to start reading the content from (default 0),minimum=0"`
+	ContentLimit   int    `json:"content_limit,omitempty" jsonschema:"Maximum content characters to return (default 8000, maximum 20000),minimum=0,maximum=20000"`
 	Version        int    `json:"version,omitempty" jsonschema:"Version to read (default: the current version),minimum=0"`
 }
 
 const (
-	listChannelArtifactsDescription = "List the interactive HTML apps (dashboards, calculators, reports, small tools) saved to a channel's Channel artifacts panel. " +
+	listChannelArtifactsDescription = "List the interactive HTML apps (dashboards, calculators, reports, small tools) and Markdown documents (charters, summaries, notes) saved to a channel's Channel artifacts panel. " +
 		"Use when the user refers to a saved, pinned or shared artifact or app in a channel, or before opening one. " +
 		"Requires channel_id; use get_channel_info or search_channels to find it from a channel name. " +
 		"Returns id, title, version, source agent, whether the source message and file still exist, and last update time."
 	getChannelArtifactDescription = "Open one saved channel artifact by id (from list_channel_artifacts). " +
-		"Returns metadata and, by default, the artifact's HTML source as text so you can answer questions about it or revise it. " +
-		"The HTML is read from the original message's file, so it is unavailable once that message or file is deleted. " +
+		"Returns metadata and, by default, the artifact's source (HTML or Markdown) as text so you can answer questions about it or revise it. " +
+		"The content is read from the original message's file, so it is unavailable once that message or file is deleted. " +
 		"Parameters: artifact_id (required), include_content (default true), offset (character offset, default 0), " +
 		"content_limit (characters, default 8000, maximum 20000), version (default: current). " +
 		"When has_more is true, call again with offset set to next_offset to read the rest."
@@ -173,11 +173,11 @@ func (p *MattermostToolProvider) toolGetChannelArtifact(mcpContext *MCPToolConte
 	}
 
 	var b strings.Builder
-	b.WriteString("Saved channel artifact (interactive HTML app, not a post file attachment):\n\n")
+	b.WriteString("Saved channel artifact (interactive HTML app or Markdown document, not a post file attachment):\n\n")
 	format.WriteChannelArtifact(&b, format.ChannelArtifactEntry{Entry: view.Entry})
 
 	if view.ContentIncluded {
-		fmt.Fprintf(&b, "HTML content (characters %d-%d of %d)", view.Offset, view.Offset+view.Returned, view.TotalRunes)
+		fmt.Fprintf(&b, "%s content (characters %d-%d of %d)", contentLabel(view.Entry.Format), view.Offset, view.Offset+view.Returned, view.TotalRunes)
 		if view.HasMore {
 			fmt.Fprintf(&b, "; more remains: call again with offset=%d", view.NextOffset)
 		}
@@ -185,6 +185,13 @@ func (p *MattermostToolProvider) toolGetChannelArtifact(mcpContext *MCPToolConte
 		b.WriteString(view.Content)
 	}
 	return b.String(), nil
+}
+
+func contentLabel(f channelartifacts.Format) string {
+	if f == channelartifacts.FormatMarkdown {
+		return "Markdown"
+	}
+	return "HTML"
 }
 
 // channelArtifactsToolsMiddleware omits the channel artifact tools from

@@ -13,13 +13,9 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {CloseIcon, DownloadOutlineIcon, FileCodeOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
-import {
-    deleteChannelArtifactVersion,
-    listChannelArtifactVersions,
-    rollbackChannelArtifact,
-    type ArtifactKind,
-    type ChannelArtifactVersionRecord,
-} from '@/client';
+import type {ArtifactKind, ChannelArtifactVersionRecord} from '@/client';
+
+import {getChannelLibraryClient} from '../channel_artifacts/library_client';
 
 import {cancelPendingConsent} from './artifact_broker';
 import ArtifactFrame, {ArtifactFrameHandle} from './artifact_frame';
@@ -30,6 +26,11 @@ interface Props {
     fileId: string;
     fileName: string;
     artifactKind?: ArtifactKind;
+
+    // Shows a document the host renders itself, such as Markdown, in place of
+    // the sandboxed frame. revision changes when the shown version is reloaded.
+    // Library artifacts only.
+    renderDocument?: (version: number, revision: number) => React.ReactNode;
 
     // Opened by the viewer's trusted click: see ArtifactFrame.
     startedByClick?: boolean;
@@ -70,6 +71,7 @@ const HTMLArtifactFullscreen = ({
     fileId,
     fileName,
     artifactKind = 'file',
+    renderDocument,
     startedByClick = false,
     onClose,
     canEdit = false,
@@ -80,6 +82,15 @@ const HTMLArtifactFullscreen = ({
     const rootRef = useRef<HTMLDivElement>(null);
     const closeRef = useRef<HTMLButtonElement>(null);
     const frameRef = useRef<ArtifactFrameHandle>(null);
+    const markdown = Boolean(renderDocument);
+    const [documentRevision, setDocumentRevision] = useState(0);
+    const reloadBody = (trusted: boolean) => {
+        if (markdown) {
+            setDocumentRevision((n) => n + 1);
+        } else {
+            frameRef.current?.reload(trusted);
+        }
+    };
 
     const store = useStore();
 
@@ -108,11 +119,10 @@ const HTMLArtifactFullscreen = ({
             return undefined; // eslint-disable-line no-undefined
         }
         let cancelled = false;
-        listChannelArtifactVersions(fileId).then((resp) => {
+        getChannelLibraryClient().versions(fileId).then((list) => {
             if (cancelled) {
                 return;
             }
-            const list = (resp.versions || []).slice().sort((a, b) => b.version - a.version);
             const previousHead = followedHeadRef.current;
             setVersions(list);
             setHead(headVersion);
@@ -174,7 +184,7 @@ const HTMLArtifactFullscreen = ({
         const removed = viewVersion;
         let entry;
         try {
-            entry = await deleteChannelArtifactVersion(fileId, removed);
+            entry = await getChannelLibraryClient().removeVersion(fileId, removed);
         } catch {
             setRemoveError(true);
             setRestoring(false);
@@ -187,10 +197,9 @@ const HTMLArtifactFullscreen = ({
         setHead(entry.version);
         setViewVersion(entry.version);
         setVersions((current) => current.filter((v) => v.version !== removed).map((v) => ({...v, head: v.version === entry.version})));
-        frameRef.current?.reload(true);
+        reloadBody(true);
         try {
-            const resp = await listChannelArtifactVersions(fileId);
-            setVersions((resp.versions || []).slice().sort((a, b) => b.version - a.version));
+            setVersions(await getChannelLibraryClient().versions(fileId));
         } catch {
             // Keep the locally updated list.
         }
@@ -204,19 +213,17 @@ const HTMLArtifactFullscreen = ({
         setRestoring(true);
         setRestoreError(false);
         try {
-            const entry = await rollbackChannelArtifact(fileId, viewVersion);
+            const entry = await getChannelLibraryClient().rollback(fileId, viewVersion);
             store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
             const nextHead = entry.version || viewVersion;
             setHead(nextHead);
             setViewVersion(nextHead);
             try {
-                const resp = await listChannelArtifactVersions(fileId);
-                const list = (resp.versions || []).slice().sort((a, b) => b.version - a.version);
-                setVersions(list);
+                setVersions(await getChannelLibraryClient().versions(fileId));
             } catch {
                 // The head already moved. A later headVersion change reloads the menu.
             }
-            frameRef.current?.reload(true);
+            reloadBody(true);
         } catch {
             setRestoreError(true);
         } finally {
@@ -247,7 +254,7 @@ const HTMLArtifactFullscreen = ({
                 <Tag
                     size='small'
                     type='info'
-                    label={<FormattedMessage defaultMessage='Interactive'/>}
+                    label={markdown ? <FormattedMessage defaultMessage='Document'/> : <FormattedMessage defaultMessage='Interactive'/>}
                 />
                 {artifactKind === 'library' && versions.length > 0 && (
                     <VersionSelect
@@ -309,7 +316,7 @@ const HTMLArtifactFullscreen = ({
                     </RestoreError>
                 )}
                 <Spacer/>
-                <ArtifactNotice/>
+                {!markdown && <ArtifactNotice/>}
                 <Divider/>
                 <IconButton
                     size='small'
@@ -328,7 +335,7 @@ const HTMLArtifactFullscreen = ({
                     icon={<Icon glyph={<RefreshIcon/>}/>}
                     aria-label={reloadLabel}
                     title={reloadLabel}
-                    onClick={(e) => frameRef.current?.reload(e.nativeEvent.isTrusted)}
+                    onClick={(e) => reloadBody(e.nativeEvent.isTrusted)}
                     data-testid='html-artifact-fullscreen-reload'
                 />
                 <Divider/>
@@ -343,17 +350,23 @@ const HTMLArtifactFullscreen = ({
                 />
             </Header>
             <Body>
-                <ArtifactFrame
-                    key={artifactKind === 'library' ? viewVersion : 'file'}
-                    ref={frameRef}
-                    fileId={fileId}
-                    fileName={fileName}
-                    artifactKind={artifactKind}
-                    version={artifactKind === 'library' ? viewVersion : 0}
-                    displayMode='fullscreen'
-                    startedByClick={startedByClick}
-                    onEscape={onClose}
-                />
+                {renderDocument ? (
+                    <Document key={viewVersion}>
+                        {renderDocument(viewVersion, documentRevision)}
+                    </Document>
+                ) : (
+                    <ArtifactFrame
+                        key={artifactKind === 'library' ? viewVersion : 'file'}
+                        ref={frameRef}
+                        fileId={fileId}
+                        fileName={fileName}
+                        artifactKind={artifactKind}
+                        version={artifactKind === 'library' ? viewVersion : 0}
+                        displayMode='fullscreen'
+                        startedByClick={startedByClick}
+                        onEscape={onClose}
+                    />
+                )}
             </Body>
             <FocusSentinel
                 tabIndex={0} // eslint-disable-line agents/no-noninteractive-tabindex -- focus-trap sentinel that wraps Tab back into the dialog
@@ -412,6 +425,17 @@ const Body = styled.div`
     min-height: 0;
     padding: var(--spacing-sm, 12px);
     background: rgba(var(--center-channel-color-rgb), 0.04);
+`;
+
+// The reader scrolls inside the same inset panel the artifact frame has.
+const Document = styled.div`
+    flex: 1;
+    min-height: 0;
+    padding: var(--spacing-sm, 12px) var(--spacing-md, 16px);
+    overflow: auto;
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+    border-radius: 4px;
+    background: var(--center-channel-bg);
 `;
 
 const Title = styled.h2`

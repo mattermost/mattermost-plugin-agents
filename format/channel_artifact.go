@@ -20,7 +20,7 @@ type ChannelArtifactEntry struct {
 }
 
 // WriteChannelArtifact writes catalog metadata for a channel library artifact.
-// These are saved HTML library entries, not ordinary post file attachments.
+// These are saved library entries (HTML or Markdown), not ordinary post file attachments.
 func WriteChannelArtifact(w *strings.Builder, entry ChannelArtifactEntry) {
 	if entry.HeaderLabel != "" {
 		writeHeader(w, entry.HeaderLabel)
@@ -32,6 +32,9 @@ func WriteChannelArtifact(w *strings.Builder, entry ChannelArtifactEntry) {
 	fmt.Fprintf(w, "ID: %s\n", e.ID)
 	fmt.Fprintf(w, "Title: %s\n", lineBreakReplacer.Replace(e.Title))
 	fmt.Fprintf(w, "Channel ID: %s\n", e.ChannelID)
+	if e.Format != "" {
+		fmt.Fprintf(w, "Format: %s\n", e.Format)
+	}
 	fmt.Fprintf(w, "Version: %d\n", e.Version)
 	if e.SHA256 != "" {
 		sha := e.SHA256
@@ -67,7 +70,7 @@ func ChannelArtifactList(entries []*channelartifacts.Entry) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Found %d channel library artifact(s). These are saved HTML library entries for the channel, not ordinary post file attachments.\n\n", len(entries))
+	fmt.Fprintf(&b, "Found %d channel library artifact(s). These are saved library entries (interactive HTML or Markdown documents) for the channel, not ordinary post file attachments.\n\n", len(entries))
 	for i, e := range entries {
 		WriteChannelArtifact(&b, ChannelArtifactEntry{
 			HeaderLabel: fmt.Sprintf("Artifact %d", i+1),

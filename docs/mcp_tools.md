@@ -119,8 +119,8 @@ Both tools are hidden while channel artifacts are off, and agents inside Matterm
 
 | Tool | Type | What it does |
 |---|---|---|
-| `list_channel_artifacts` | Read-only | List the HTML apps saved to a channel: id, title, version, source agent, and whether the source message and file still exist |
-| `get_channel_artifact` | Read-only | Read one saved app's metadata and HTML source as text, in windows of up to 20,000 characters (`offset`, `content_limit`, `version`) |
+| `list_channel_artifacts` | Read-only | List the HTML apps and Markdown documents saved to a channel: id, title, format, version, source agent, and whether the source message and file still exist |
+| `get_channel_artifact` | Read-only | Read one saved artifact's metadata and its HTML or Markdown source as text, in windows of up to 20,000 characters (`offset`, `content_limit`, `version`) |
 
 Content is read under your file download policy. A deleted source returns an error. Agents inside Mattermost can also save and remove artifacts with the built-in `SaveChannelArtifact` and `RemoveChannelArtifact` tools, which aren't part of the MCP server.
 
