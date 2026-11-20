@@ -60,18 +60,20 @@ export default ChatTitleDropdown;
 
 // Host shrink path: a flex header will not give a standalone button a definite width unless this
 // wrapper participates with min-width: 0. Grow stays off so a short title does not stretch and push
-// the agent name away. The absolute max lives on TitleDropdown so the button itself is capped.
+// the agent name away. Cap here too: max-width on the button alone is cyclic against an auto-sized
+// Trigger (intrinsic sizing treats min(100%, …) as none), so the wrapper would still take the full
+// title width and leave a gap that crowds AgentName.
 const Trigger = styled.span`
     display: flex;
     flex: 0 1 auto;
     justify-content: flex-start;
     min-width: 0;
-    max-width: 100%;
+    max-width: ${TITLE_MAX_WIDTH};
     overflow: hidden;
 `;
 
-// Fill the Trigger and cap the button so a long title ellipsizes instead of eating the header
-// (compass handles overflow, start-align, and __content/__label shrink).
+// Fill the capped Trigger; keep the same max on the button so the dropdown itself is capped when
+// inspected or composed outside this wrapper (compass handles overflow / start-align / label shrink).
 const TitleDropdown = styled(Dropdown)`
     && {
         width: 100%;

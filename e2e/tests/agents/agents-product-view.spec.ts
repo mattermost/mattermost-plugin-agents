@@ -480,9 +480,11 @@ test.describe('Agents product view', () => {
 
         // Real layout: the label overflows its box and CSS ellipsizes; the new-chat control stays in view.
         const metrics = await trigger.evaluate((button) => {
+            const wrap = button.parentElement;
             const label = button.querySelector('[class*="dropdown__label"]') as HTMLElement | null;
             const heading = button.querySelector('h1');
             const style = getComputedStyle(button);
+            const wrapStyle = wrap ? getComputedStyle(wrap) : null;
             const labelStyle = label ? getComputedStyle(label) : null;
             const surface = heading ?? label;
             return {
@@ -490,6 +492,9 @@ test.describe('Agents product view', () => {
                 textAlign: style.textAlign,
                 minWidth: style.minWidth,
                 maxWidth: style.maxWidth,
+                wrapMaxWidth: wrapStyle?.maxWidth ?? '',
+                wrapWidth: wrap?.getBoundingClientRect().width ?? 0,
+                buttonWidth: button.getBoundingClientRect().width,
                 labelOverflow: labelStyle?.overflow ?? '',
                 labelTextOverflow: labelStyle?.textOverflow ?? '',
                 surfaceScrollWidth: surface?.scrollWidth ?? 0,
@@ -509,6 +514,9 @@ test.describe('Agents product view', () => {
         expect(parseFloat(metrics.minWidth)).toBe(0);
         // getComputedStyle resolves rem to px (Mattermost root makes 40rem → 400px).
         expect(metrics.maxWidth).toMatch(/^min\(100%, \d+(\.\d+)?(px|rem)\)$/);
+        expect(metrics.wrapMaxWidth).toMatch(/^min\(100%, \d+(\.\d+)?(px|rem)\)$/);
+        // Wrapper and button share the same used width — no leftover gap from a cyclic max-width.
+        expect(Math.abs(metrics.wrapWidth - metrics.buttonWidth)).toBeLessThan(1);
         expect(metrics.labelOverflow).toBe('hidden');
         expect(metrics.labelTextOverflow).toBe('ellipsis');
         expect(metrics.surfaceScrollWidth).toBeGreaterThan(metrics.surfaceClientWidth);

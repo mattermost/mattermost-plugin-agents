@@ -41,7 +41,8 @@ describe('ChatTitleDropdown truncation', () => {
         expect(triggerStyle.overflow).toBe('hidden');
         expect(parseFloat(triggerStyle.minWidth)).toBe(0);
 
-        // Fill the Trigger and keep the absolute max on the dropdown button itself.
+        // Cap on both: Trigger for flex intrinsic sizing, button so the dropdown itself is capped.
+        expect(triggerStyle.maxWidth).toBe('min(100%, 40rem)');
         expect(getComputedStyle(button).width).toBe('100%');
         expect(getComputedStyle(button).maxWidth).toBe('min(100%, 40rem)');
 
