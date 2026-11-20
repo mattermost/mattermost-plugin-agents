@@ -1379,6 +1379,19 @@ export function restoreAgentVersion(agentId: string, version: number): Promise<U
 
 // deleteAgentVersions permanently deletes the given versions, or with 'all'
 // every version except the current one, and resolves to how many were deleted.
+// AgentSetupThread is the setup thread POST /agents/:id/setup opens in the
+// caller's DM with the agent.
+export type AgentSetupThread = {
+    channelId: string;
+    rootPostId: string;
+    botUserId: string;
+};
+
+/** Opens an auto-setup conversation with the agent (POST /agents/:id/setup). */
+export async function startAgentSetup(agentId: string): Promise<AgentSetupThread> {
+    return fetchAgentJSON(`${agentRoute(agentId)}/setup`, {method: 'POST'});
+}
+
 export async function deleteAgentVersions(agentId: string, versions: number[] | 'all'): Promise<number> {
     const body = versions === 'all' ? {all: true} : {versions};
     const result: {deleted: number} = await fetchAgentJSON(`${agentRoute(agentId)}/versions`, {method: 'DELETE', body: JSON.stringify(body)});

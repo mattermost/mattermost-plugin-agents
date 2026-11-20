@@ -5,7 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {useSelector} from 'react-redux';
 
-import {deleteAgent, getAgents, getServices} from '@/client';
+import {deleteAgent, getAgents, getServices, startAgentSetup} from '@/client';
 import {useAgentLimit, useLicenseLevel} from '@/license';
 import {userHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport, readAgentExportFile} from '@/utils/agent_export';
@@ -62,6 +62,7 @@ jest.mock('@/client', () => ({
     getAgents: jest.fn(),
     getServices: jest.fn(),
     deleteAgent: jest.fn(),
+    startAgentSetup: jest.fn(),
 }));
 
 jest.mock('@/utils/permissions', () => ({
@@ -75,7 +76,7 @@ jest.mock('@/utils/agent_export', () => ({
 
 jest.mock('./agent_row', () => ({
     __esModule: true,
-    default: ({agent, servicesLoaded, onDelete, onExport}: {agent: UserAgent; servicesLoaded: boolean; onDelete: (agent: UserAgent) => void; onExport: (agent: UserAgent) => void}) => (
+    default: ({agent, servicesLoaded, onDelete, onExport, onSetUp}: {agent: UserAgent; servicesLoaded: boolean; onDelete: (agent: UserAgent) => void; onExport: (agent: UserAgent) => void; onSetUp: (agent: UserAgent) => void}) => (
         <div
             data-testid='agent-row'
             data-services-loaded={String(servicesLoaded)}
@@ -92,6 +93,12 @@ jest.mock('./agent_row', () => ({
                 onClick={() => onExport(agent)}
             >
                 {`Export ${agent.displayName}`}
+            </button>
+            <button
+                type='button'
+                onClick={() => onSetUp(agent)}
+            >
+                {`Set up ${agent.displayName}`}
             </button>
         </div>
     ),
@@ -135,6 +142,7 @@ const mockUseLicenseLevel = useLicenseLevel as unknown as jest.Mock;
 const mockGetAgents = getAgents as unknown as jest.Mock;
 const mockGetServices = getServices as unknown as jest.Mock;
 const mockDeleteAgent = deleteAgent as unknown as jest.Mock;
+const mockStartAgentSetup = startAgentSetup as unknown as jest.Mock;
 const mockUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
 const mockDownloadAgentExport = downloadAgentExport as unknown as jest.Mock;
 const mockReadAgentExportFile = readAgentExportFile as unknown as jest.Mock;
@@ -409,6 +417,36 @@ describe('AgentsList import and export', () => {
         mockDownloadAgentExport.mockRejectedValueOnce({message: 'Export is not allowed.'});
         fireEvent.click(screen.getByRole('button', {name: 'Export Agent a1'}));
         expect(await screen.findByText('Export is not allowed.')).not.toBeNull();
+    });
+});
+
+describe('AgentsList agent setup', () => {
+    test('opens the setup thread in the chat with the agent', async () => {
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+        mockStartAgentSetup.mockResolvedValue({channelId: 'dm1', rootPostId: 'root1', botUserId: 'bot1'});
+        const onStartChat = jest.fn();
+
+        renderList({onStartChat});
+
+        await screen.findByText('Agent a1');
+        fireEvent.click(screen.getByRole('button', {name: 'Set up Agent a1'}));
+
+        await waitFor(() => expect(onStartChat).toHaveBeenCalledWith('bot1', 'root1'));
+        expect(mockStartAgentSetup).toHaveBeenCalledWith('a1');
+    });
+
+    test('shows why setup could not start and stays on the list', async () => {
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+        mockStartAgentSetup.mockRejectedValue({message: 'agent auto-setup is turned off'});
+        const onStartChat = jest.fn();
+
+        renderList({onStartChat});
+
+        await screen.findByText('Agent a1');
+        fireEvent.click(screen.getByRole('button', {name: 'Set up Agent a1'}));
+
+        expect(await screen.findByText('agent auto-setup is turned off')).not.toBeNull();
+        expect(onStartChat).not.toHaveBeenCalled();
     });
 });
 

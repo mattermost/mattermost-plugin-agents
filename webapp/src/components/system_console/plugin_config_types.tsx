@@ -30,6 +30,7 @@ export type PluginConfig = {
     enableHTMLArtifacts?: boolean,
     enableChannelMentionToolCalling: boolean,
     enableAmbientAutoReply?: boolean,
+    enableAgentAutoSetup?: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
