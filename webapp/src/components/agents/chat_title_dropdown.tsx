@@ -5,6 +5,9 @@ import React from 'react';
 import styled from 'styled-components';
 
 import {Dropdown} from '@mattermost/compass-ui/components/dropdown';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
+
+import {TooltipTrigger} from '@/components/dropdown';
 
 // Caps the button so a long chat title never pushes the buttons beside it off the bar. No compass
 // token for a width of this size.
@@ -31,27 +34,34 @@ interface ChatTitleDropdownProps extends DropdownButtonProps {
 // The title of an agent chat as a compass Dropdown trigger: the product's chat header and the RHS
 // title open the same menu from it. The menu's reference (the ref) and its other reference props
 // (handlers, aria attributes) are passed on to the button. The wrapper caps width and supplies the
-// flex shrink path a standalone button needs to ellipsize in the header.
+// flex shrink path a standalone button needs to ellipsize in the header. WithTooltip shows the full
+// name on hover (native title is unreliable and not the host pattern).
 const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, heading = false, ...buttonProps}: ChatTitleDropdownProps) => {
     // React 19 passes `ref` to a function component as a prop, and the compass Dropdown spreads its
     // other props onto its button, so the ref reaches the button; its props type does not list it.
     const refProp = {ref} as Record<string, unknown>;
     return (
         <Trigger>
-            <TitleDropdown
-                {...buttonProps}
-                {...refProp}
-                size='large'
-                isOpen={expanded}
-                aria-label={ariaLabel}
-                aria-haspopup='menu'
-                aria-expanded={expanded}
+            <WithTooltip
                 title={label}
-                data-testid={testId}
-                onClick={onClick}
+                disabled={expanded}
             >
-                {heading ? <Heading>{label}</Heading> : label}
-            </TitleDropdown>
+                <TitleTooltipTrigger>
+                    <TitleDropdown
+                        {...buttonProps}
+                        {...refProp}
+                        size='large'
+                        isOpen={expanded}
+                        aria-label={ariaLabel}
+                        aria-haspopup='menu'
+                        aria-expanded={expanded}
+                        data-testid={testId}
+                        onClick={onClick}
+                    >
+                        {heading ? <Heading>{label}</Heading> : <Truncate>{label}</Truncate>}
+                    </TitleDropdown>
+                </TitleTooltipTrigger>
+            </WithTooltip>
         </Trigger>
     );
 };
@@ -70,13 +80,24 @@ const Trigger = styled.span`
     overflow: hidden;
 `;
 
+// WithTooltip clones this span with hover/focus handlers; it must keep the shrink path between
+// Trigger and the button (default TooltipTrigger is only inline-flex).
+const TitleTooltipTrigger = styled(TooltipTrigger)`
+    display: flex;
+    flex: 1 1 0%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+`;
+
 // The compass label is nowrap and the wrappers around it shrink no smaller than their content, so a
 // long title would run past the bar: let them shrink and end the label in an ellipsis. (The class
-// names are compass's generated ones.) flex: 1 1 0% (not width: 100%) gives the button a definite
+// names are compass's generated ones.) flex: 1 1 0% + width: 100% gives the button a definite
 // shrink width inside Trigger; start-align overrides the UA button text-align: center.
 const TitleDropdown = styled(Dropdown)`
     && {
         flex: 1 1 0%;
+        width: 100%;
         min-width: 0;
         max-width: 100%;
         overflow: hidden;
@@ -96,19 +117,35 @@ const TitleDropdown = styled(Dropdown)`
         display: flex;
         justify-content: flex-start;
         width: 100%;
+        max-width: 100%;
     }
 
     && [class*='dropdown__content'] {
+        display: flex;
         flex: 1 1 0%;
+        max-width: 100%;
         overflow: hidden;
     }
 
     && [class*='dropdown__label'] {
+        display: block;
+        flex: 1 1 0%;
+        max-width: 100%;
         overflow: hidden;
-        flex-shrink: 1;
         text-align: start;
         text-overflow: ellipsis;
+        white-space: nowrap;
     }
+`;
+
+// Owned ellipsis surface so truncation does not depend only on compass label styles winning.
+const Truncate = styled.span`
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 `;
 
 // Takes the label's typography (the compass Dropdown sets it for its size).

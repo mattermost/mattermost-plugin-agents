@@ -30,9 +30,14 @@ describe('ChatTitleDropdown truncation', () => {
 
         const button = screen.getByTestId('agent-chat-menu-button');
         expect(button.textContent).toContain(title);
+        expect(button.getAttribute('title')).toBeNull();
         expect(screen.getByTestId('header-action')).toBeTruthy();
 
-        const trigger = button.parentElement;
+        const tooltip = screen.getByTestId('with-tooltip');
+        expect(tooltip.getAttribute('data-title')).toBe(title);
+        expect(tooltip.getAttribute('data-disabled')).toBe('false');
+
+        const trigger = tooltip.parentElement;
         expect(trigger).toBeTruthy();
 
         const triggerStyle = getComputedStyle(trigger!);
@@ -41,19 +46,47 @@ describe('ChatTitleDropdown truncation', () => {
         expect(triggerStyle.overflow).toBe('hidden');
         expect(parseFloat(triggerStyle.minWidth)).toBe(0);
 
+        const tooltipTriggerStyle = getComputedStyle(button.parentElement!);
+        expect(tooltipTriggerStyle.display).toBe('flex');
+        expect(parseFloat(tooltipTriggerStyle.minWidth)).toBe(0);
+        expect(tooltipTriggerStyle.overflow).toBe('hidden');
+
         const buttonStyle = getComputedStyle(button);
         expect(buttonStyle.overflow).toBe('hidden');
         expect(buttonStyle.justifyContent).toBe('flex-start');
         expect(buttonStyle.textAlign).toBe('start');
+        expect(buttonStyle.width).toBe('100%');
         expect(parseFloat(buttonStyle.minWidth)).toBe(0);
 
         const label = button.querySelector('[class*="dropdown__label"]');
         expect(label).toBeTruthy();
         expect(getComputedStyle(label!).textOverflow).toBe('ellipsis');
         expect(getComputedStyle(label!).overflow).toBe('hidden');
+        expect(getComputedStyle(label!).display).toBe('block');
+
+        const truncate = label!.firstElementChild;
+        expect(truncate).toBeTruthy();
+        expect(getComputedStyle(truncate!).textOverflow).toBe('ellipsis');
+        expect(getComputedStyle(truncate!).overflow).toBe('hidden');
 
         button.click();
         expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
+    test('disables the full-name tooltip while the menu is open', () => {
+        render(
+            <ChatTitleDropdown
+                label='Quarterly plan'
+                ariaLabel='Quarterly plan'
+                expanded={true}
+                onClick={jest.fn()}
+                testId='agent-chat-menu-button'
+            />,
+        );
+
+        const tooltip = screen.getByTestId('with-tooltip');
+        expect(tooltip.getAttribute('data-title')).toBe('Quarterly plan');
+        expect(tooltip.getAttribute('data-disabled')).toBe('true');
     });
 });
 
