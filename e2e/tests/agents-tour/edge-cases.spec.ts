@@ -53,19 +53,19 @@ test.describe('Agents Tour - Edge Cases', () => {
         await expect(pulsatingDot).toBeVisible({ timeout: 10000 });
         await pulsatingDot.click();
 
-        const tourPopover = page.locator('.tour-tip-tippy');
-        await expect(tourPopover).toBeVisible({ timeout: 5000 });
+        // TourPoint tip-origin host is 0×0 — assert on tour content visibility.
+        const title = page.getByText('Agents are ready to help');
+        await expect(title).toBeVisible({ timeout: 5000 });
 
         await page.setViewportSize({ width: 800, height: 600 });
-        await expect(tourPopover).toBeVisible();
-        await expect(page.getByText('Agents are ready to help')).toBeVisible();
+        await expect(title).toBeVisible();
 
         await page.setViewportSize({ width: 1400, height: 900 });
-        await expect(tourPopover).toBeVisible();
+        await expect(title).toBeVisible();
 
         const closeButton = page.getByTestId('agents-tour-close');
         await expect(closeButton).toBeVisible();
         await closeButton.click();
-        await expect(tourPopover).not.toBeVisible({ timeout: 5000 });
+        await expect(title).not.toBeVisible({ timeout: 5000 });
     });
 });

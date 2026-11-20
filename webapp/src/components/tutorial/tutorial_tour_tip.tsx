@@ -101,6 +101,10 @@ function resolvePlacement(
     return placement;
 }
 
+// Estimated card height used only for flip/fit when the TourPoint tip-origin
+// host reports a 0×0 bounding box (compass-ui ≥ alpha.34).
+const TIP_SIZE_FALLBACK_HEIGHT = 240;
+
 export function computeAnchoredPosition(
     triggerRect: RectLike,
     tipSize: SizeLike,
@@ -112,35 +116,34 @@ export function computeAnchoredPosition(
     const resolvedPlacement = resolvePlacement(triggerRect, tipSize, placement, distance, viewport);
     const [side, alignment] = resolvedPlacement.split('-');
 
+    // TourPoint's root is a 0×0 tip origin — place that origin on the trigger
+    // edge facing the tip. The card/pointer lay out around (0,0).
     let top = 0;
     let left = 0;
 
     if (side === 'left' || side === 'right') {
-        left = side === 'left' ? triggerRect.left - tipSize.width - distance : triggerRect.right + distance;
+        left = side === 'left' ? triggerRect.left - distance : triggerRect.right + distance;
         if (alignment === 'start') {
             top = triggerRect.top + skidding;
         } else if (alignment === 'end') {
-            top = (triggerRect.bottom - tipSize.height) + skidding;
+            top = triggerRect.bottom + skidding;
         } else {
-            top = ((triggerRect.top + (triggerRect.height / 2)) - (tipSize.height / 2)) + skidding;
+            top = triggerRect.top + (triggerRect.height / 2) + skidding;
         }
     } else {
-        top = side === 'top' ? triggerRect.top - tipSize.height - distance : triggerRect.bottom + distance;
+        top = side === 'top' ? triggerRect.top - distance : triggerRect.bottom + distance;
         if (alignment === 'start') {
             left = triggerRect.left + skidding;
         } else if (alignment === 'end') {
-            left = (triggerRect.right - tipSize.width) + skidding;
+            left = triggerRect.right + skidding;
         } else {
-            left = ((triggerRect.left + (triggerRect.width / 2)) - (tipSize.width / 2)) + skidding;
+            left = triggerRect.left + (triggerRect.width / 2) + skidding;
         }
     }
 
-    const maxLeft = Math.max(VIEWPORT_PADDING, viewport.width - tipSize.width - VIEWPORT_PADDING);
-    const maxTop = Math.max(VIEWPORT_PADDING, viewport.height - tipSize.height - VIEWPORT_PADDING);
-
     return {
-        top: Math.min(Math.max(VIEWPORT_PADDING, top), maxTop),
-        left: Math.min(Math.max(VIEWPORT_PADDING, left), maxLeft),
+        top: Math.min(Math.max(VIEWPORT_PADDING, top), viewport.height - VIEWPORT_PADDING),
+        left: Math.min(Math.max(VIEWPORT_PADDING, left), viewport.width - VIEWPORT_PADDING),
         placement: resolvedPlacement,
     };
 }
@@ -249,9 +252,13 @@ const TutorialTourTip: React.FC<Props> = ({
         }
         const triggerRect = triggerElement.getBoundingClientRect();
         const tipRect = tipRef.current.getBoundingClientRect();
+        // Tip-origin hosts report 0×0; keep a card-sized estimate for side flips.
         const next = computeAnchoredPosition(
             triggerRect,
-            {width: tipRect.width || width, height: tipRect.height},
+            {
+                width: tipRect.width || width,
+                height: tipRect.height || TIP_SIZE_FALLBACK_HEIGHT,
+            },
             placement,
             [offsetSkidding, offsetDistance],
             {width: window.innerWidth, height: window.innerHeight},
