@@ -62,6 +62,10 @@ type Conversations struct {
 	meetingSummaries  MeetingSummaryRegenerator
 	ambientLimiter    *ambientLimiter
 
+	operationsMu sync.RWMutex
+	operations   map[string]OperationTools
+	projectGate  ProjectGate
+
 	// rootCtx overrides lifecycle.Context() for approved tool runs. Tests only.
 	rootCtx                  stdcontext.Context
 	toolRunHeartbeatInterval time.Duration

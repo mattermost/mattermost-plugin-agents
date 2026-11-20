@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -92,6 +93,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 		},
 		func(c *llm.Context) { c.Team = &model.Team{Name: "eng", DisplayName: "Engineering"} },
 		func(c *llm.Context) { c.UnconnectedMCPServers = testUnconnectedMCPServers() },
+		func(c *llm.Context) { c.ToolsScoped = true },
 	}
 
 	for _, toolMode := range toolModes {
@@ -594,4 +596,31 @@ func dynamicMetaToolStore() *llm.ToolStore {
 		},
 	})
 	return store
+}
+
+func TestStandardPersonalityScopedTurnDropsNameLookupAdvice(t *testing.T) {
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{{
+		Name: "get_channel_info",
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			return "", nil
+		},
+	}})
+
+	for _, scoped := range []bool{false, true} {
+		context := &llm.Context{
+			BotName: "agent",
+			Tools:   store,
+			Channel: &model.Channel{Id: "channel-id", Type: "O", Name: "ops", DisplayName: "Ops"},
+			Team:    &model.Team{Id: "team-id", Name: "acme", DisplayName: "Acme"},
+		}
+		context.ToolsScoped = scoped
+
+		output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, context)
+		require.NoError(t, err)
+		assert.Equal(t, !scoped, strings.Contains(output, "should use tools to look them up"), "scoped=%t", scoped)
+		assert.Equal(t, scoped, strings.Contains(output, "Its channel ID is 'channel-id'. Its team ID is 'team-id'."), "scoped=%t", scoped)
+	}
 }

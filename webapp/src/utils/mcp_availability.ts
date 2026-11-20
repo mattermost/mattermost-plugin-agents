@@ -22,7 +22,7 @@ export type MCPAvailabilityServer = {
 };
 
 function isLocalMCPServer(kind: MCPServerKind): boolean {
-    return kind === 'embedded' || kind === 'plugin';
+    return kind === 'embedded' || kind === 'plugin' || kind === 'builtin';
 }
 
 // Mutually exclusive UI status for one MCP server. Compute once per row.

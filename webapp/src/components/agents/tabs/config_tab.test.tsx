@@ -76,6 +76,8 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         autoEnableNewMCPTools: true,
         mcpDynamicToolLoading: true,
         useServiceAccountAuth: true,
+        scopedChannelMode: false,
+        scopedExtraChannelIds: [],
         model: '',
         enableVision: true,
         disableTools: false,

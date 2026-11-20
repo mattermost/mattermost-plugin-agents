@@ -21,21 +21,21 @@ type MattermostMCPServer struct {
 	config       tools.ServerConfig
 }
 
-// newPluginCallbackServices builds the HTTP search and file-content services
-// that call back to the Agents plugin's /search/raw and /files/content
-// endpoints on the given Mattermost server URL.
-func newPluginCallbackServices(mmServerURL string) (*tools.HTTPSemanticSearchService, *tools.HTTPFileContentService) {
+// newPluginCallbackServices builds the HTTP search, file-content, and channel
+// artifacts services that call back to the Agents plugin endpoints on the given
+// Mattermost server URL.
+func newPluginCallbackServices(mmServerURL string) (*tools.HTTPSemanticSearchService, *tools.HTTPFileContentService, *tools.HTTPChannelArtifactsService) {
 	pluginURL := strings.TrimRight(mmServerURL, "/") + "/plugins/mattermost-ai"
-	return tools.NewHTTPSemanticSearchService(pluginURL), tools.NewHTTPFileContentService(pluginURL)
+	return tools.NewHTTPSemanticSearchService(pluginURL), tools.NewHTTPFileContentService(pluginURL), tools.NewHTTPChannelArtifactsService(pluginURL)
 }
 
 // registerTools registers all tools using the tool provider.
-// searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable.
+// searchService, fileContentService, and channelArtifactsService are optional
+// and can be nil when the corresponding capability is unavailable.
 // allowStateChangingTools is evaluated per request; a nil predicate means
 // state-changing tools are not available.
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, allowStateChangingTools)
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, channelArtifactsService tools.ChannelArtifactsService, allowStateChangingTools func() bool) {
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, channelArtifactsService, allowStateChangingTools)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 

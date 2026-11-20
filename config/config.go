@@ -16,6 +16,12 @@ import (
 )
 
 const (
+	// DefaultChannelArtifactsMaxPerChannel and DefaultChannelArtifactVersionsToKeep
+	// apply when the matching setting is unset; they mirror the channelartifacts
+	// package defaults and the System Console placeholders.
+	DefaultChannelArtifactsMaxPerChannel = 50
+	DefaultChannelArtifactVersionsToKeep = 20
+
 	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN" // #nosec G101 -- env var key name, not a credential
 	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
@@ -38,8 +44,15 @@ type Config struct {
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
+	EnableChannelArtifacts          bool                             `json:"enableChannelArtifacts"`
+	ChannelArtifactsMaxPerChannel   int                              `json:"channelArtifactsMaxPerChannel"`
+	ChannelArtifactVersionsToKeep   int                              `json:"channelArtifactVersionsToKeep"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
+	EnableAgentAutoSetup            bool                             `json:"enableAgentAutoSetup"`
+	EnableProjectChannels           bool                             `json:"enableProjectChannels"`
+	ProjectDefaultServiceID         string                           `json:"projectDefaultServiceID"`
+	ProjectDefaultModel             string                           `json:"projectDefaultModel"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
@@ -201,6 +214,30 @@ func (c *Container) EnableHTMLArtifacts() bool {
 	return c.Config().EnableHTMLArtifacts
 }
 
+// EnableChannelArtifacts reports whether the channel artifact library is on.
+// It requires EnableHTMLArtifacts, because the library only holds HTML artifacts.
+func (c *Container) EnableChannelArtifacts() bool {
+	cfg := c.Config()
+	return cfg.EnableHTMLArtifacts && cfg.EnableChannelArtifacts
+}
+
+// ChannelArtifactsMaxPerChannel returns the per-channel artifact cap; 0 or less means the default.
+func (c *Container) ChannelArtifactsMaxPerChannel() int {
+	if n := c.Config().ChannelArtifactsMaxPerChannel; n > 0 {
+		return n
+	}
+	return DefaultChannelArtifactsMaxPerChannel
+}
+
+// ChannelArtifactVersionsToKeep returns how many versions of one artifact the
+// library keeps; 0 or less means the default.
+func (c *Container) ChannelArtifactVersionsToKeep() int {
+	if n := c.Config().ChannelArtifactVersionsToKeep; n > 0 {
+		return n
+	}
+	return DefaultChannelArtifactVersionsToKeep
+}
+
 func (c *Container) EnableChannelMentionToolCalling() bool {
 	return c.Config().EnableChannelMentionToolCalling
 }
@@ -209,6 +246,30 @@ func (c *Container) EnableChannelMentionToolCalling() bool {
 // auto-reply modes may be configured and may fire.
 func (c *Container) EnableAmbientAutoReply() bool {
 	return c.Config().EnableAmbientAutoReply
+}
+
+// EnableAgentAutoSetup reports whether agent managers may start the
+// experimental setup conversation, in which a regular agent changes its own
+// name, instructions, and tools with them.
+func (c *Container) EnableAgentAutoSetup() bool {
+	return c.Config().EnableAgentAutoSetup
+}
+
+// EnableProjectChannels reports whether the experimental project channels are
+// on: channels led by their own hidden agent.
+func (c *Container) EnableProjectChannels() bool {
+	return c.Config().EnableProjectChannels
+}
+
+// ProjectDefaultServiceID is the LLM service new project agents use.
+func (c *Container) ProjectDefaultServiceID() string {
+	return c.Config().ProjectDefaultServiceID
+}
+
+// ProjectDefaultModel is the model new project agents use; empty means the
+// service's default model.
+func (c *Container) ProjectDefaultModel() string {
+	return c.Config().ProjectDefaultModel
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {

@@ -15,9 +15,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -31,10 +34,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/projects"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
@@ -59,9 +64,12 @@ type Plugin struct {
 
 	pluginAPI            *pluginapi.Client
 	apiService           *api.API
+	agentSetup           *agentsetup.Service
+	projects             *projects.Service
 	bots                 *bots.MMBots
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
+	channelArtifacts     *channelartifacts.Service
 	mcpClientManager     *mcp.ClientManager
 	mcpHandlers          *mcpserver.PluginMCPHandlers
 	mcpLifecycle         *pluginMCPLifecycle
@@ -230,6 +238,13 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Error("Failed to backfill versions of some agents", "error", backfillErr.Error())
 	}
 
+	// Runs before agents are first loaded, so this node loads the result
+	// whether it or a peer wrote it.
+	projectToolsBackfilled, projectToolsErr := projects.BackfillAgentTools(p.store)
+	if projectToolsErr != nil {
+		pluginAPI.Log.Error("Failed to give project agents their tools", "error", projectToolsErr.Error())
+	}
+
 	// Runs after the ID migration (it matches agents to services by ID) and
 	// before runtime config is loaded, so every node — including a follower
 	// that found nothing left to migrate — loads the migrated policies and
@@ -333,6 +348,10 @@ func (p *Plugin) OnActivate() error {
 		// If we fail to ensure bots, we log the error but do not return
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
+	} else if projectToolsBackfilled > 0 {
+		if pubErr := p.PublishAgentUpdate(""); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
+		}
 	}
 	migrateAndRefresh("activation")
 
@@ -478,6 +497,37 @@ func (p *Plugin) OnActivate() error {
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
+	channelArtifactsService := channelartifacts.NewService(channelartifacts.NewStore(dbClient.DB), mmClient, bots)
+	channelLibrary := channelartifacts.NewLibrary(channelArtifactsService, func() channelartifacts.Limits {
+		return channelartifacts.Limits{
+			MaxSize:        api.ArtifactRenderLimit(mmClient.GetConfig()),
+			MaxPerChannel:  p.configuration.ChannelArtifactsMaxPerChannel(),
+			VersionsToKeep: p.configuration.ChannelArtifactVersionsToKeep(),
+		}
+	})
+	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelLibrary, &p.configuration, mmClient)
+	var projectsService *projects.Service
+	toolProvider.SetChannelArtifactTools(&mmtools.ChannelArtifactTools{
+		Library: channelLibrary,
+		Enabled: p.configuration.EnableChannelArtifacts,
+		Audit:   p.auditChannelArtifactTool,
+		ActorFor: func(ctx context.Context, llmCtx *llm.Context) (channelartifacts.Actor, bool) {
+			if llmCtx.RequestingUser != nil {
+				return channelartifacts.Actor{UserID: llmCtx.RequestingUser.Id, BotUserID: llmCtx.BotUserID, SessionID: auth.SessionIDFromContext(ctx)}, true
+			}
+			if projectsService == nil || llmCtx.Channel == nil {
+				return channelartifacts.Actor{}, false
+			}
+			project, liveErr := projectsService.LiveProject(bots.GetBotByID(llmCtx.BotUserID))
+			if liveErr != nil || project.ChannelID != llmCtx.Channel.Id {
+				return channelartifacts.Actor{}, false
+			}
+			return projectsService.ArtifactActor(project), true
+		},
+		AutoExecuteFor: func(llmCtx *llm.Context, _ string) bool {
+			return projectsService != nil && projectsService.ArtifactAutoExecute(bots.GetBotByID(llmCtx.BotUserID), llmCtx)
+		},
+	})
 	var (
 		embeddedMu     sync.Mutex
 		embeddedServer *EmbeddedMCPServer
@@ -493,7 +543,7 @@ func (p *Plugin) OnActivate() error {
 		defer embeddedMu.Unlock()
 
 		if embeddedServer == nil {
-			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
+			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, mcpChannelArtifacts, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
 			})
 			if embeddedErr != nil {
@@ -518,6 +568,7 @@ func (p *Plugin) OnActivate() error {
 	// embedded Mattermost server is connected at every level.
 	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
+	mcpClientManager.SetScopedSessions(newScopedSessionMinter(p.API, &pluginAPI.Log))
 	reinitMCP := func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	}
@@ -535,6 +586,20 @@ func (p *Plugin) OnActivate() error {
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	})
+
+	// End live scoped runs as soon as their agent can no longer run scoped
+	// (the setting was turned off, the bot went away, or a prerequisite
+	// lapsed) or no longer lists an extra channel the run can read.
+	// Every node reloads its registry and config, so this runs on each one.
+	revokeLapsedScopedRuns := func() {
+		mcpClientManager.RevokeScopedSessionsWhere(func(run *mcp.ScopedRun) bool {
+			return contextBuilder.ScopedRunLapsed(bots.GetBotByID(run.BotUserID()), run)
+		})
+	}
+	bots.AddRegistryListener(revokeLapsedScopedRuns)
+	p.configuration.RegisterUpdateListener(revokeLapsedScopedRuns)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, revokeLapsedScopedRuns)
+
 	conversationsService := conversations.New(
 		prompts,
 		mmClient,
@@ -591,7 +656,7 @@ func (p *Plugin) OnActivate() error {
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
 	pluginServers := licensedPluginServers{registry: mcpClientManager, allowed: remoteMCPAllowed}
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, func() bool {
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, mcpChannelArtifacts, func() bool {
 		return licenseChecker.Allows(enterprise.CapStateChangingTools)
 	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
@@ -643,6 +708,50 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
+	apiService.SetChannelArtifacts(channelLibrary)
+
+	agentSetupService := agentsetup.New(agentsetup.Deps{
+		Configs: apiService.AgentConfigService(),
+		Threads: conversationsService,
+		Bots:    bots,
+		Store:   p.store,
+		Config:  &p.configuration,
+		Prompts: prompts,
+		I18n:    i18nBundle,
+		Audit:   &pluginAPI.Audit,
+	})
+	conversationsService.RegisterOperation(llm.OperationAgentSetup, agentSetupService)
+	apiService.SetAgentSetup(agentSetupService)
+
+	projectsService = projects.New(projects.Deps{
+		Store:             p.store,
+		Platform:          projectPlatform{api: p.API, client: pluginAPI},
+		Bots:              bots,
+		Threads:           conversationsService,
+		Config:            &p.configuration,
+		AutoReply:         projectAutoReply{service: autoreplyService},
+		WrapUps:           projectWrapUps{client: pluginAPI, projects: func() *projects.Service { return projectsService }},
+		Artifacts:         projectArtifacts{library: channelLibrary},
+		Playbooks:         projectPlaybooks{api: p.API, siteURL: *siteURL},
+		SetupSystemPrompt: agentSetupService.SystemPrompt,
+	})
+	contextBuilder.SetProjectRuntime(projectsService)
+	conversationsService.SetProjectGate(projectsService)
+	for _, operation := range []string{llm.OperationProjectSetup, llm.OperationProjectCheckin, llm.OperationProjectRun} {
+		conversationsService.RegisterOperation(operation, projectsService)
+	}
+	convService.SetSystemPromptSuffix(func(conv *store.Conversation) string {
+		if conv == nil {
+			return ""
+		}
+		return conversationsService.ProjectSystemPromptSuffix(context.Background(), conv.BotID, conv.Operation)
+	})
+	toolProvider.AddToolSource(projectsService.ToolsForRequest)
+	agentSetupService.RegisterExtension(projectsService)
+	apiService.AgentConfigService().SetAuthorizer(projectsService.Authorizer(apiService.AgentConfigService().Authorizer()))
+	apiService.SetProjects(projectsService)
+	p.projects = projectsService
+	projectsService.StartCheckinTicker()
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
@@ -651,9 +760,16 @@ func (p *Plugin) OnActivate() error {
 
 	// Keep only what we need
 	p.apiService = apiService
+	p.agentSetup = agentSetupService
 	p.bots = bots
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
+	p.channelArtifacts = channelArtifactsService
+	if removed, sweepErr := channelArtifactsService.SweepDeletedChannels(); sweepErr != nil {
+		pluginAPI.Log.Error("Failed to sweep channel artifact rows of deleted channels", "error", sweepErr)
+	} else if removed > 0 {
+		pluginAPI.Log.Info("Removed channel artifact rows of deleted channels", "artifacts", removed)
+	}
 	p.mcpClientManager = mcpClientManager
 	p.mcpHandlers = mcpHandlers
 	p.streamingService = streamingService
@@ -674,6 +790,9 @@ func (p *Plugin) OnActivate() error {
 }
 
 func (p *Plugin) OnDeactivate() error {
+	if p.projects != nil {
+		p.projects.StopCheckinTicker()
+	}
 	// Must run before bifrost/MCP shutdown so in-flight streams can finalize.
 	p.stopStreamsForShutdown()
 
@@ -850,21 +969,41 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
-	if p.indexerService == nil {
-		return 0, nil
+	var count int64
+	if p.indexerService != nil {
+		n, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
+			return 0, err
+		}
+		count = n
+		if count > 0 {
+			p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+		}
 	}
 
-	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
-	if err != nil {
-		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
-		return 0, err
-	}
-
-	if count > 0 {
-		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+	if p.channelArtifacts != nil {
+		removed, err := p.channelArtifacts.SweepDeletedChannels()
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to sweep channel artifact rows of deleted channels", "error", err)
+			return count + removed, err
+		}
+		if removed > 0 {
+			p.pluginAPI.Log.Info("Data retention removed channel artifact rows of deleted channels", "artifacts", removed)
+			count += removed
+		}
 	}
 
 	return count, nil
+}
+
+// auditChannelArtifactTool records a library change the agent made for a user.
+func (p *Plugin) auditChannelArtifactTool(event, status, userID, channelID, artifactID string) {
+	rec := plugin.MakeAuditRecord(event, status)
+	rec.Actor.UserId = userID
+	audit.AddParam(rec, audit.KeyChannelID, channelID)
+	audit.AddParam(rec, audit.KeyChannelArtifactID, artifactID)
+	p.API.LogAuditRec(rec)
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

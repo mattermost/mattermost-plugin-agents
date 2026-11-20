@@ -39,11 +39,16 @@ func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 }
 
 type mockConfig struct {
-	bots                []llm.BotConfig
-	services            []llm.ServiceConfig
-	enableTokenLogging  bool
-	transcriptBotName   string
-	transcriptBotUserID string
+	bots                  []llm.BotConfig
+	services              []llm.ServiceConfig
+	enableTokenLogging    bool
+	transcriptBotName     string
+	transcriptBotUserID   string
+	enableProjectChannels bool
+}
+
+func (m *mockConfig) EnableProjectChannels() bool {
+	return m.enableProjectChannels
 }
 
 func (m *mockConfig) GetBots() []llm.BotConfig {

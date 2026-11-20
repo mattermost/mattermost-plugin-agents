@@ -236,3 +236,60 @@ func (l *blockingNoStreamLLM) CountTokens(context.Context, llm.CompletionRequest
 
 func (l *blockingNoStreamLLM) InputTokenLimit() int  { return 100000 }
 func (l *blockingNoStreamLLM) OutputTokenLimit() int { return 8192 }
+
+type promptCapturingLLM struct {
+	blockingNoStreamLLM
+	system string
+}
+
+func (l *promptCapturingLLM) ChatCompletionNoStream(_ context.Context, req llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
+	l.system = req.Posts[0].Message
+	return `{"should_reply": true}`, nil
+}
+
+func TestAmbientClassifierUsesProjectInstructions(t *testing.T) {
+	tests := []struct {
+		name         string
+		projectAgent bool
+		instructions string
+		want         string
+		wantNot      string
+	}{
+		{name: "project agent with no channel instructions", projectAgent: true, want: ProjectAmbientInstructions},
+		{name: "project agent with the seeded instructions", projectAgent: true, instructions: ProjectAmbientInstructions, want: ProjectAmbientInstructions},
+		{name: "project agent with its own instructions", projectAgent: true, instructions: "Only answer questions about deploys.", want: "Only answer questions about deploys.", wantNot: ProjectAmbientInstructions},
+		{name: "regular agent with no channel instructions", wantNot: ProjectAmbientInstructions},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			post := &model.Post{Id: "p1", UserId: "u1", Message: "baseline profiling is done, starting on the cart re-price query", CreateAt: 1}
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.EXPECT().GetUser("u1").Return(&model.User{Id: "u1", Username: "bob"}, nil)
+
+			promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
+			require.NoError(t, err)
+			cfg := llm.BotConfig{ID: "b1", Name: "bot"}
+			if tt.projectAgent {
+				cfg.ProjectChannelID = "c1"
+			}
+			capture := &promptCapturingLLM{}
+			bot := bots.NewBot(cfg, llm.ServiceConfig{}, &model.Bot{UserId: "b1", Username: "bot"}, capture)
+			mockAPI := &plugintest.API{}
+			mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+			mockAPI.On("GetTeam", "t1").Return(&model.Team{Id: "t1"}, nil).Maybe()
+			contextBuilder := llmcontext.NewLLMContextBuilder(pluginapi.NewClient(mockAPI, nil), nil, nil, nil)
+			c := &Conversations{prompts: promptsManager, mmClient: mmClient, contextBuilder: contextBuilder}
+
+			channel := &model.Channel{Id: "c1", TeamId: "t1", Type: model.ChannelTypeOpen}
+			setting := &autoreply.Setting{Mode: autoreply.ModeAmbient, Instructions: tt.instructions}
+			require.NoError(t, c.classifyAmbientReply(context.Background(), bot, setting, post, &model.User{Id: "u1", Username: "bob"}, channel, []*model.Post{post}))
+			if tt.want != "" {
+				require.Contains(t, capture.system, tt.want)
+			}
+			if tt.wantNot != "" {
+				require.NotContains(t, capture.system, tt.wantNot)
+			}
+		})
+	}
+}

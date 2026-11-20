@@ -20,8 +20,8 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-	MaxToolTurns, UseServiceAccountAuth, Skills,
-	CreateAt, UpdateAt, DeleteAt`
+	MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs, Skills,
+	CreateAt, UpdateAt, DeleteAt, SetupCompletedAt, ProjectChannelID`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
 // nil and [] both encode as "[]", as does a marshal error.
@@ -93,10 +93,14 @@ type agentRow struct {
 	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
 	MaxToolTurns            int    `db:"maxtoolturns"`
 	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
+	ScopedChannelMode       bool   `db:"scopedchannelmode"`
+	ScopedExtraChannelIDs   string `db:"scopedextrachannelids"`
 	Skills                  string `db:"skills"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
+	SetupCompletedAt        int64  `db:"setupcompletedat"`
+	ProjectChannelID        string `db:"projectchannelid"`
 }
 
 // toBotConfig converts an agentRow (DB scan result) to an *llm.BotConfig.
@@ -122,9 +126,12 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		StructuredOutputEnabled: r.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		MaxToolTurns:            r.MaxToolTurns,
 		UseServiceAccountAuth:   r.UseServiceAccountAuth,
+		ScopedChannelMode:       r.ScopedChannelMode,
 		CreateAt:                r.CreateAt,
 		UpdateAt:                r.UpdateAt,
 		DeleteAt:                r.DeleteAt,
+		SetupCompletedAt:        r.SetupCompletedAt,
+		ProjectChannelID:        r.ProjectChannelID,
 	}
 
 	if err := unmarshalJSONSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
@@ -144,6 +151,9 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 	}
 	if err := unmarshalJSONSlice(r.EnabledNativeTools, &cfg.EnabledNativeTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledNativeTools: %w", err)
+	}
+	if err := unmarshalJSONSlice(r.ScopedExtraChannelIDs, &cfg.ScopedExtraChannelIDs); err != nil {
+		return nil, fmt.Errorf("failed to parse ScopedExtraChannelIDs: %w", err)
 	}
 	if r.Skills != "" {
 		if err := json.Unmarshal([]byte(r.Skills), &cfg.Skills); err != nil {
@@ -187,9 +197,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			MaxToolTurns, UseServiceAccountAuth, Skills,
-			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
+			MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs, Skills,
+			CreateAt, UpdateAt, DeleteAt, ProjectChannelID
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -216,10 +226,13 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
+		cfg.ScopedChannelMode,
+		marshalJSONSlice(cfg.ScopedExtraChannelIDs),
 		marshalSkills(cfg.Skills),
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
+		cfg.ProjectChannelID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
@@ -255,6 +268,26 @@ func (s *Store) GetAgent(id string) (*llm.BotConfig, error) {
 	return row.toBotConfig()
 }
 
+// MarkAgentSetupCompleted records that agentID finished its auto-setup
+// conversation at completedAt, unless it already had. It reports whether this
+// call recorded it, and records no version: completion is lifecycle metadata,
+// not configuration.
+func (s *Store) MarkAgentSetupCompleted(agentID string, completedAt int64) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE Agents_UserAgents SET SetupCompletedAt = $1
+		WHERE ID = $2 AND DeleteAt = 0 AND SetupCompletedAt = 0`,
+		completedAt, agentID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent %q set up: %w", agentID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent %q set up: %w", agentID, err)
+	}
+	return rows > 0, nil
+}
+
 // ListAgents returns all active (non-deleted) agents, ordered by creation time descending.
 func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 	var rows []agentRow
@@ -283,7 +316,7 @@ func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 // CountActiveAgents returns the number of non-deleted agents.
 func (s *Store) CountActiveAgents() (int, error) {
 	var count int
-	if err := s.db.Get(&count, `SELECT COUNT(*) FROM Agents_UserAgents WHERE DeleteAt = 0`); err != nil {
+	if err := s.db.Get(&count, `SELECT COUNT(*) FROM Agents_UserAgents WHERE DeleteAt = 0 AND ProjectChannelID = ''`); err != nil {
 		return 0, fmt.Errorf("failed to count active agents: %w", err)
 	}
 	return count, nil
@@ -321,14 +354,26 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 // and one whose pre-update state differs from its latest version gets that
 // state recorded as a "system" version first. It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
-func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) error {
+	_, err := s.updateAgent(cfg, meta, nil)
+	return err
+}
+
+// UpdateAgentIfUnchanged is UpdateAgent for an agent whose UpdateAt is still
+// expectedUpdateAt. It returns false, writing nothing, when the agent changed
+// since the caller read it.
+func (s *Store) UpdateAgentIfUnchanged(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt int64) (bool, error) {
+	return s.updateAgent(cfg, meta, &expectedUpdateAt)
+}
+
+func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt *int64) (updated bool, err error) {
 	if err = validateAgentVersionMeta(meta); err != nil {
-		return err
+		return false, err
 	}
 
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return fmt.Errorf("failed to begin agent update transaction: %w", err)
+		return false, fmt.Errorf("failed to begin agent update transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -338,15 +383,18 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 
 	current, err := lockActiveAgentTx(tx, cfg.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if current == nil {
-		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+		return false, fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+	if expectedUpdateAt != nil && current.UpdateAt != *expectedUpdateAt {
+		return false, tx.Rollback()
 	}
 
 	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Millisecond timestamps can collide when create and update run in the same ms; ensure UpdateAt advances.
@@ -381,9 +429,11 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			StructuredOutputEnabled = $21,
 			MaxToolTurns = $22,
 			UseServiceAccountAuth = $23,
-			Skills = $24,
-			UpdateAt = $25
-		WHERE ID = $26 AND DeleteAt = 0`,
+			ScopedChannelMode = $24,
+			ScopedExtraChannelIDs = $25,
+			Skills = $26,
+			UpdateAt = $27
+		WHERE ID = $28 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -407,34 +457,36 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
+		cfg.ScopedChannelMode,
+		marshalJSONSlice(cfg.ScopedExtraChannelIDs),
 		marshalSkills(cfg.Skills),
 		cfg.UpdateAt,
 		cfg.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update agent %q: %w", cfg.ID, err)
+		return false, fmt.Errorf("failed to update agent %q: %w", cfg.ID, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to check rows affected for agent %q: %w", cfg.ID, err)
+		return false, fmt.Errorf("failed to check rows affected for agent %q: %w", cfg.ID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+		return false, fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
 
 	snapshot := agentVersionSnapshot(cfg)
 	if _, err = insertAgentVersionTx(tx, cfg.ID, latest+1, snapshot, meta, changedVersionFields(latestConfig, snapshot), now); err != nil {
-		return err
+		return false, err
 	}
 	if err = s.pruneAgentVersionsTx(tx, cfg.ID, latest+1); err != nil {
-		return err
+		return false, err
 	}
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit agent update: %w", err)
+		return false, fmt.Errorf("failed to commit agent update: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // DeleteAgent performs a soft delete by setting DeleteAt to the current

@@ -18,8 +18,8 @@ import {
     LLMBot,
 } from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
-import {BotsHandler, SetLinkPolicyHandler, setupRedux} from './redux';
-import {getLinkPolicy} from './selectors';
+import {BotsHandler, SetLinkPolicyHandler, pluginReducer, setupRedux} from './redux';
+import {getLinkPolicy, getProjectAgents, getProjectChannelsEnabled, isAgentBotUserId} from './selectors';
 import manifest from './manifest';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
@@ -264,7 +264,7 @@ describe('fetchAndStoreBots', () => {
     test('dispatches the bots and feature flags, and returns the bots', async () => {
         const bots = [makeBot('a')];
         const linkPolicy = {kind: 'allowlist', allowedDomains: [{host: 'example.com', wildcard: false}]};
-        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: true, linkPolicy, htmlArtifactsEnabled: true});
+        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: true, linkPolicy, htmlArtifactsEnabled: true, scopedSessionsSupported: true});
         const dispatch = jest.fn();
 
         await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
@@ -272,6 +272,43 @@ describe('fetchAndStoreBots', () => {
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
         expect(dispatch).toHaveBeenCalledWith({type: SetLinkPolicyHandler, linkPolicy});
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_HTML_ARTIFACTS_ENABLED', htmlArtifactsEnabled: true});
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_SCOPED_SESSIONS_SUPPORTED', scopedSessionsSupported: true});
+    });
+
+    test('stores hidden project agents apart from the bots, so pickers never list them', async () => {
+        const store = createStore((state: any = {}, action: any) => ({
+            entities: {users: {currentUserId: 'me'}},
+            ['plugins-' + manifest.id]: pluginReducer(state['plugins-' + manifest.id], action),
+        }));
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('regular')], projectChannelsEnabled: true, projectAgents: [makeBot('hidden')]});
+
+        await fetchAndStoreBots(store.dispatch);
+
+        const state = store.getState() as any;
+        expect(getProjectChannelsEnabled(state)).toBe(true);
+        expect(getProjectAgents(state).map((agent) => agent.id)).toEqual(['hidden']);
+        expect(state['plugins-' + manifest.id].bots.map((bot: LLMBot) => bot.id)).toEqual(['regular']);
+        expect(isAgentBotUserId(state, 'hidden')).toBe(true);
+        expect(isAgentBotUserId(state, 'regular')).toBe(true);
+        expect(isAgentBotUserId(state, 'someone')).toBe(false);
+
+        const {result} = renderHook(() => useBotlist(), {
+            wrapper: ({children}: {children: React.ReactNode}) => <Provider store={store}>{children}</Provider>,
+        });
+        expect(result.current.bots?.map((bot) => bot.id)).toEqual(['regular']);
+    });
+
+    test('a server that predates project channels leaves them off with no project agents', async () => {
+        const store = createStore((state: any = {}, action: any) => ({
+            ['plugins-' + manifest.id]: pluginReducer(state['plugins-' + manifest.id], action),
+        }));
+        mockGetAIBots.mockResolvedValue({bots: [makeBot('regular')]});
+
+        await fetchAndStoreBots(store.dispatch);
+
+        const state = store.getState() as any;
+        expect(getProjectChannelsEnabled(state)).toBe(false);
+        expect(getProjectAgents(state)).toEqual([]);
     });
 
     test('falls back to the plain text link policy when the server omits linkPolicy', async () => {
@@ -341,8 +378,34 @@ describe('fetchAndStoreBots', () => {
     test('propagates fetch failures to the caller', async () => {
         const error = new Error('network');
         mockGetAIBots.mockRejectedValue(error);
+        const dispatch = jest.fn();
 
-        await expect(fetchAndStoreBots(jest.fn())).rejects.toBe(error);
+        await expect(fetchAndStoreBots(dispatch)).rejects.toBe(error);
+
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+    });
+
+    test('does not record a failure after a newer bot fetch has started', async () => {
+        let rejectFirst: (error: Error) => void = () => {
+            throw new Error('the first bot fetch did not start');
+        };
+        mockGetAIBots.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+            rejectFirst = reject;
+        }));
+        mockGetAIBots.mockResolvedValueOnce({bots: [makeBot('a')], channelArtifactsEnabled: true});
+        const dispatch = jest.fn();
+
+        const first = fetchAndStoreBots(dispatch);
+        const second = fetchAndStoreBots(dispatch);
+        await expect(second).resolves.toHaveLength(1);
+        rejectFirst(new Error('stale'));
+        await expect(first).rejects.toThrow('stale');
+
+        expect(dispatch).not.toHaveBeenCalledWith({type: 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED'});
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'SET_CHANNEL_ARTIFACTS_ENABLED',
+            channelArtifactsEnabled: true,
+        }));
     });
 });
 

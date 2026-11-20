@@ -90,6 +90,8 @@ export type UserAgent = {
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading?: boolean;
     useServiceAccountAuth: boolean;
+    scopedChannelMode?: boolean;
+    scopedExtraChannelIDs?: string[] | null;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -110,6 +112,12 @@ export type UserAgent = {
 
     // Only on GET /agents: whether the current user may edit, export and delete the agent.
     canManage?: boolean;
+
+    // Only on GET /agents: whether the current user may set the agent up by chatting with it.
+    canSetUp?: boolean;
+
+    // When the agent finished its auto-setup conversation; absent when it never did.
+    setupCompletedAt?: number;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -149,6 +157,8 @@ export type CreateAgentRequest = {
 
     // Required so payload builders can't silently drop it on full-replace PUT.
     useServiceAccountAuth: boolean;
+    scopedChannelMode: boolean;
+    scopedExtraChannelIDs: string[];
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -182,6 +192,8 @@ export type UpdateAgentRequest = {
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
     useServiceAccountAuth: boolean;
+    scopedChannelMode: boolean;
+    scopedExtraChannelIDs: string[];
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -204,7 +216,7 @@ export type ServiceInfo = {
 }
 
 // Mirrors the Source column of the agent versions table on the backend.
-export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system';
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system' | 'self_setup';
 
 // AgentVersionSummary is one entry of GET /agents/:id/versions (newest first).
 // changedFields holds BotConfig JSON keys (e.g. "customInstructions"); names only.
@@ -263,4 +275,52 @@ export type AgentExportDocument = {
     exportedAt: number;
     agentVersion: number;
     agent: AgentExportAgent;
+}
+
+export type ScopedChannelModeBlocker = 'service_account_off' | 'all_tools_enabled' | 'license' | 'channel_tool_calling_off' | 'server_unsupported';
+
+export type ScopedTeamClosedReason = 'archived' | 'invite_only' | 'group_constrained' | 'domain_restricted' | 'policy_enforced' | 'other';
+
+export type ScopedOpenTeamGrantOff = 'compliance_mode' | 'users_cannot_join_teams' | 'unknown';
+
+export type ScopedAccessTeam = {
+    id: string;
+    displayName: string;
+}
+
+export type ScopedExtraChannelStatus = 'readable' | 'missing' | 'archived' | 'restricted' | 'unsupported_type';
+
+export type ScopedToolRemoval = 'not_named' | 'plugin_server' | 'write_tool' | 'needs_wider_access' | 'no_service_account' | 'unavailable' | 'not_opted_in' | 'builtin';
+
+// What an agent's scoped channel runs can access, as the server computes it.
+export type ScopedAccessReport = {
+    configured: boolean;
+    active: boolean;
+    blockers: ScopedChannelModeBlocker[];
+    channels: {
+        triggeringTeamPublicChannels: boolean;
+        openTeams: {
+            enabled: boolean;
+            disabledReason?: ScopedOpenTeamGrantOff;
+            openCount: number;
+            closedCount: number;
+            open: ScopedAccessTeam[];
+            closed: Array<ScopedAccessTeam & {reasons: ScopedTeamClosedReason[]}>;
+        };
+        extraChannels: Array<{
+            id: string;
+            displayName?: string;
+            teamName?: string;
+            type?: string;
+            status: ScopedExtraChannelStatus;
+        }>;
+    };
+    tools: Array<{
+        serverOrigin: string;
+        serverName?: string;
+        serverKind: 'remote' | 'embedded' | 'plugin' | 'builtin';
+        name: string;
+        offered: boolean;
+        reason?: ScopedToolRemoval;
+    }>;
 }

@@ -1,0 +1,51 @@
+ALTER TABLE Agents_UserAgents
+    ADD COLUMN IF NOT EXISTS ProjectChannelID VARCHAR(26) NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS Agents_Projects (
+    ChannelID VARCHAR(26) PRIMARY KEY,
+    TeamID VARCHAR(26) NOT NULL,
+    AgentID VARCHAR(26) NOT NULL DEFAULT '',
+    AgentBotUserID VARCHAR(26) NOT NULL DEFAULT '',
+    State VARCHAR(16) NOT NULL,
+    LeadUserID VARCHAR(26) NOT NULL,
+    ReplyMode VARCHAR(16) NOT NULL DEFAULT 'ambient',
+    SetupRootPostID VARCHAR(26) NOT NULL DEFAULT '',
+    BoardChannelID VARCHAR(26) NOT NULL DEFAULT '',
+    PlaybookRunID VARCHAR(26) NOT NULL DEFAULT '',
+    CharterArtifactID VARCHAR(26) NOT NULL DEFAULT '',
+    WrapUpArtifactID VARCHAR(26) NOT NULL DEFAULT '',
+    StatusNote TEXT NOT NULL DEFAULT '',
+    StatusUpdateAt BIGINT NOT NULL DEFAULT 0,
+    CheckinCron VARCHAR(64) NOT NULL DEFAULT '',
+    CheckinTimezone VARCHAR(64) NOT NULL DEFAULT '',
+    NextCheckinAt BIGINT NOT NULL DEFAULT 0,
+    LastCheckinAt BIGINT NOT NULL DEFAULT 0,
+    LastCheckinPostID VARCHAR(26) NOT NULL DEFAULT '',
+    CreatedBy VARCHAR(26) NOT NULL,
+    CreatedFrom VARCHAR(16) NOT NULL,
+    CreateAt BIGINT NOT NULL,
+    UpdateAt BIGINT NOT NULL,
+    EndedBy VARCHAR(26) NOT NULL DEFAULT '',
+    EndedAt BIGINT NOT NULL DEFAULT 0,
+    EndedWithoutWrapUp BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE TABLE IF NOT EXISTS Agents_ProjectThreads (
+    RootPostID VARCHAR(26) PRIMARY KEY,
+    ChannelID VARCHAR(26) NOT NULL,
+    Kind VARCHAR(16) NOT NULL,
+    ExternalID VARCHAR(128) NOT NULL,
+    CardID VARCHAR(26) NOT NULL DEFAULT '',
+    StartedBy VARCHAR(26) NOT NULL,
+    CreateAt BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS Agents_ProjectGrants (
+    ProjectChannelID VARCHAR(26) NOT NULL,
+    TargetType VARCHAR(16) NOT NULL,
+    TargetID VARCHAR(26) NOT NULL,
+    Role VARCHAR(16) NOT NULL,
+    GrantedAt BIGINT NOT NULL,
+    RevokedAt BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (ProjectChannelID, TargetType, TargetID)
+);

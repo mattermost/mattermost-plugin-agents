@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
@@ -20,10 +21,10 @@ func TestInMemoryServerCreation(t *testing.T) {
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil, func() bool { return true })
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil, nil, func() bool { return true })
 	require.NoError(t, err)
 
 	// Test creating a client transport (without validation by passing nil resolver)
-	_, err = server.CreateConnectionForUser("test_user_123", "", nil)
+	_, err = server.CreateConnectionForUser(context.Background(), "test_user_123", "", nil)
 	require.NoError(t, err)
 }

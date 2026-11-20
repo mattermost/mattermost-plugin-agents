@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 35
+// Audit event names for every state-changing operation in the plugin: 40
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -37,6 +37,16 @@ const (
 	AuditEventDeleteAgent       = "deleteAgent"
 	AuditEventUpdateAgentAvatar = "updateAgentAvatar"
 
+	// Agent auto-setup: opening a setup conversation. Each write the agent
+	// then makes is audited by the agentsetup package as agentSelfSetup.
+	AuditEventStartAgentSetup = "startAgentSetup"
+
+	// Project channels. Reading projects and checklists is not audited.
+	AuditEventCreateProject         = "createProject"
+	AuditEventEndProject            = "endProject"
+	AuditEventTransferProjectLead   = "transferProjectLead"
+	AuditEventUpdateProjectSchedule = "updateProjectSchedule"
+
 	// Agent versioning. Listing and viewing versions are read-only and are not audited.
 	AuditEventRestoreAgentVersion = "restoreAgentVersion"
 	AuditEventDeleteAgentVersions = "deleteAgentVersions"
@@ -52,6 +62,14 @@ const (
 	// Conversation management by its owner.
 	AuditEventRenameConversation  = "renameConversation"
 	AuditEventArchiveConversation = "archiveConversation"
+
+	// Channel artifact library.
+	AuditEventCreateChannelArtifact        = "createChannelArtifact"
+	AuditEventUpdateChannelArtifact        = "updateChannelArtifact"
+	AuditEventReplaceChannelArtifact       = "replaceChannelArtifact"
+	AuditEventRollbackChannelArtifact      = "rollbackChannelArtifact"
+	AuditEventDeleteChannelArtifact        = "deleteChannelArtifact"
+	AuditEventDeleteChannelArtifactVersion = "deleteChannelArtifactVersion"
 
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
@@ -123,6 +141,15 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleDeleteAgent):       AuditEventDeleteAgent,
 		handlerFuncName(a.handleUploadAgentAvatar): AuditEventUpdateAgentAvatar,
 
+		// Agent auto-setup.
+		handlerFuncName(a.handleStartAgentSetup): AuditEventStartAgentSetup,
+
+		// Project channels.
+		handlerFuncName(a.handleCreateProject):         AuditEventCreateProject,
+		handlerFuncName(a.handleEndProject):            AuditEventEndProject,
+		handlerFuncName(a.handleTransferProjectLead):   AuditEventTransferProjectLead,
+		handlerFuncName(a.handleUpdateProjectSchedule): AuditEventUpdateProjectSchedule,
+
 		// Agent versioning.
 		handlerFuncName(a.handleRestoreAgentVersion): AuditEventRestoreAgentVersion,
 		handlerFuncName(a.handleDeleteAgentVersions): AuditEventDeleteAgentVersions,
@@ -138,6 +165,13 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Conversation management.
 		handlerFuncName(a.handleRenameConversation):  AuditEventRenameConversation,
 		handlerFuncName(a.handleArchiveConversation): AuditEventArchiveConversation,
+
+		// Channel artifact library.
+		handlerFuncName(a.handleCreateChannelArtifact):        AuditEventCreateChannelArtifact,
+		handlerFuncName(a.handlePatchChannelArtifact):         AuditEventUpdateChannelArtifact,
+		handlerFuncName(a.handleDeleteChannelArtifactVersion): AuditEventDeleteChannelArtifactVersion,
+		handlerFuncName(a.handleRollbackChannelArtifact):      AuditEventRollbackChannelArtifact,
+		handlerFuncName(a.handleDeleteChannelArtifact):        AuditEventDeleteChannelArtifact,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,

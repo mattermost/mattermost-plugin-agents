@@ -30,6 +30,12 @@ var (
 )
 
 const (
+	// KeyChannelArtifactID identifies a channel-artifact library entry.
+	KeyChannelArtifactID = "agents.channel_artifact.id"
+
+	// KeyChannelArtifactVersion is the version a rollback targets or a delete removes.
+	KeyChannelArtifactVersion = "agents.channel_artifact.version"
+
 	// KeyCallerPluginID identifies the calling plugin on inter-plugin bridge
 	// routes. It must not be named "plugin_id": the server unconditionally
 	// stamps that parameter with this plugin's own ID when the record is
@@ -39,6 +45,19 @@ const (
 	// KeyMCPPluginID identifies the target plugin of an admin operation on a
 	// plugin-backed MCP server. Distinct from KeyCallerPluginID (the actor).
 	KeyMCPPluginID = "agents.mcp_plugin.id"
+
+	// KeyScopeExtraChannelCount is how many admin-picked extra channels a
+	// scoped session covers; KeyScopeOpenTeamPublicChannels is whether it
+	// covers every public channel on open teams.
+	KeyScopeExtraChannelCount      = "agents.scope.extra_channel_count"
+	KeyScopeOpenTeamPublicChannels = "agents.scope.open_team_public_channels"
+
+	// KeyScopeTriggeringTeamPublicChannels is whether a scoped session covers
+	// every public channel on the team of the channel that triggered it.
+	KeyScopeTriggeringTeamPublicChannels = "agents.scope.triggering_team_public_channels"
+
+	// KeyMCPServerKind is where a tool ran: builtin, embedded, plugin, or remote.
+	KeyMCPServerKind = "agents.mcp.server_kind"
 
 	// KeyMCPSignInsClearedServerIDs lists the remote MCP servers whose users'
 	// saved sign-ins a configuration change removed.

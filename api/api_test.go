@@ -71,6 +71,9 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	allowedLinkDomains              string
 	enableHTMLArtifacts             bool
+	enableChannelArtifacts          bool
+	channelArtifactsMaxPerChannel   int
+	channelArtifactVersionsToKeep   int
 	enableChannelMentionToolCalling bool
 	enableAmbientAutoReply          bool
 	mcpConfig                       mcp.Config
@@ -102,6 +105,24 @@ func (tc *testConfigImpl) LinkPolicy() config.LinkPolicy {
 
 func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
 	return tc.enableHTMLArtifacts
+}
+
+func (tc *testConfigImpl) EnableChannelArtifacts() bool {
+	return tc.enableHTMLArtifacts && tc.enableChannelArtifacts
+}
+
+func (tc *testConfigImpl) ChannelArtifactsMaxPerChannel() int {
+	if tc.channelArtifactsMaxPerChannel <= 0 {
+		return config.DefaultChannelArtifactsMaxPerChannel
+	}
+	return tc.channelArtifactsMaxPerChannel
+}
+
+func (tc *testConfigImpl) ChannelArtifactVersionsToKeep() int {
+	if tc.channelArtifactVersionsToKeep <= 0 {
+		return config.DefaultChannelArtifactVersionsToKeep
+	}
+	return tc.channelArtifactVersionsToKeep
 }
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
@@ -669,6 +690,7 @@ func mockVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	snap.BotUserID = ""
 	snap.CreatorID = ""
 	snap.CreateAt, snap.UpdateAt, snap.DeleteAt = 0, 0, 0
+	snap.SetupCompletedAt = 0
 	nilIfEmpty := func(s []string) []string {
 		if len(s) == 0 {
 			return nil
@@ -873,6 +895,15 @@ func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersion
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
 	m.recordVersion(cfg, existing, meta)
 	return nil
+}
+
+func (m *mockAgentStore) MarkAgentSetupCompleted(agentID string, completedAt int64) (bool, error) {
+	cfg, ok := m.agents[agentID]
+	if !ok || cfg.DeleteAt != 0 || cfg.SetupCompletedAt != 0 {
+		return false, nil
+	}
+	cfg.SetupCompletedAt = completedAt
+	return true, nil
 }
 
 func (m *mockAgentStore) DeleteAgent(id string) error {
@@ -1485,6 +1516,7 @@ func TestAdminRouter(t *testing.T) {
 	for urlName, url := range map[string]string{
 		"reindex_status":            "/admin/reindex/status",
 		"mcp_tools":                 "/admin/mcp/tools",
+		"agent_scoped_access":       "/admin/agents/agent-1/scoped_access",
 		"mcp_vetted_seed":           "/admin/mcp/vetted-tool-seed",
 		"mcp_suggested_description": "/admin/mcp/server-id/suggested-description",
 		"mcp_server_tools":          "/admin/mcp/server-id/tools",

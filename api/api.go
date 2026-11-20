@@ -22,9 +22,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentconfig"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -66,6 +68,9 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
+	EnableChannelArtifacts() bool
+	ChannelArtifactsMaxPerChannel() int
+	ChannelArtifactVersionsToKeep() int
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
@@ -223,6 +228,10 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+	channelLibrary        channelartifacts.Manager
+	agentConfig           *agentconfig.Service
+	agentSetup            AgentSetup
+	projects              Projects
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -315,6 +324,7 @@ func New(
 		autoReplyStore:        autoReplyStore,
 		accessChecker:         accessChecker,
 	}
+	a.agentConfig = newAgentConfigService(a)
 	a.auditEvents = buildAuditEventRegistry(a)
 	return a
 }
@@ -417,6 +427,21 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/artifacts/:fileid", a.handleGetArtifact)
 	router.GET("/artifacts/:fileid/token", a.handleGetArtifactToken)
+	router.GET("/channel-artifacts", a.handleListChannelArtifacts)
+	router.POST("/channel-artifacts", a.handleCreateChannelArtifact)
+	// MCP callbacks must be registered before /channel-artifacts/:id so "mcp" is not captured as an id.
+	router.POST("/channel-artifacts/mcp/list", a.handleMCPListChannelArtifacts)
+	router.POST("/channel-artifacts/mcp/get", a.handleMCPGetChannelArtifact)
+	router.PATCH("/channel-artifacts/:id", a.handlePatchChannelArtifact)
+	router.POST("/channel-artifacts/:id/rollback", a.handleRollbackChannelArtifact)
+	router.DELETE("/channel-artifacts/:id", a.handleDeleteChannelArtifact)
+	router.DELETE("/channel-artifacts/:id/versions/:version", a.handleDeleteChannelArtifactVersion)
+	router.GET("/channel-artifacts/:id", a.handleGetChannelArtifact)
+	router.GET("/channel-artifacts/:id/info", a.handleGetChannelArtifactInfo)
+	router.GET("/channel-artifacts/:id/versions", a.handleListChannelArtifactVersions)
+	router.GET("/channel-artifacts/:id/token", a.handleGetChannelArtifactToken)
+	router.GET("/channel-artifacts/:id/content", a.handleGetChannelArtifactContent)
+	router.GET("/channel-artifacts/:id/download", a.handleDownloadChannelArtifact)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)
 	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
@@ -437,6 +462,7 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	agentRouter.POST("/:agentid/setup", a.handleStartAgentSetup)
 	agentRouter.GET("/:agentid/versions", a.handleListAgentVersions)
 	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
 	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
@@ -447,6 +473,15 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
+
+	projectRouter := router.Group("/projects")
+	projectRouter.POST("", a.handleCreateProject)
+	projectRouter.GET("", a.handleListProjects)
+	projectRouter.GET("/:channelid", a.handleGetProject)
+	projectRouter.POST("/:channelid/end", a.handleEndProject)
+	projectRouter.POST("/:channelid/transfer-lead", a.handleTransferProjectLead)
+	projectRouter.PUT("/:channelid/schedule", a.handleUpdateProjectSchedule)
+	projectRouter.GET("/:channelid/checklist", a.handleGetProjectChecklist)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks. Semantic search is
@@ -519,6 +554,7 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
 	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
+	adminRouter.GET("/agents/:agentid/scoped_access", a.handleGetAgentScopedAccess)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
@@ -836,8 +872,17 @@ type AIBotsResponse struct {
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 	// LinkPolicy is what the webapp enforces; AllowUnsafeLinks is kept for
 	// API compatibility.
-	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
-	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
+	LinkPolicy              config.LinkPolicy `json:"linkPolicy"`
+	HTMLArtifactsEnabled    bool              `json:"htmlArtifactsEnabled"`
+	ChannelArtifactsEnabled bool              `json:"channelArtifactsEnabled"`
+	// ScopedSessionsSupported reports whether this server can create the
+	// scoped sessions scoped channel mode runs on.
+	ScopedSessionsSupported bool `json:"scopedSessionsSupported"`
+	// ProjectChannelsEnabled reports whether users can create project channels.
+	ProjectChannelsEnabled bool `json:"projectChannelsEnabled"`
+	// ProjectAgents are the hidden agents of the project channels the user
+	// can read, so their posts render as agent posts. Never listed in pickers.
+	ProjectAgents []AIBotInfo `json:"projectAgents"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -870,13 +915,14 @@ func (a *API) defaultBotUserID() string {
 	return ""
 }
 
-// getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo, error) {
+// getAIBotsForUser returns the AI bots available to a user, and separately
+// the hidden project agents of the project channels the user can read.
+func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo, []AIBotInfo, error) {
 	allBots := a.bots.GetAllBots()
 
 	chattedBotIDs, err := a.conversationStore.GetBotDMBotIDsForUser(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get the agents the user has chats with: %w", err)
+		return nil, nil, fmt.Errorf("failed to get the agents the user has chats with: %w", err)
 	}
 	chatted := make(map[string]bool, len(chattedBotIDs))
 	for _, id := range chattedBotIDs {
@@ -886,8 +932,21 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo,
 	// Get the info from all the bots.
 	// Put the default bot first.
 	bots := make([]AIBotInfo, 0, len(allBots))
+	projectAgents := []AIBotInfo{}
 	defaultBotID := a.defaultBotUserID()
 	for _, bot := range allBots {
+		if bot.IsProjectAgent() {
+			if a.projects != nil && a.projects.Available() &&
+				a.pluginAPI.User.HasPermissionToChannel(userID, bot.GetConfig().ProjectChannelID, model.PermissionReadChannelContent) {
+				projectAgents = append(projectAgents, AIBotInfo{
+					ID:             bot.GetMMBot().UserId,
+					DisplayName:    bot.GetMMBot().DisplayName,
+					Username:       bot.GetMMBot().Username,
+					LastIconUpdate: bot.GetMMBot().LastIconUpdate,
+				})
+			}
+			continue
+		}
 		// Don't return bots the user is excluded from using.
 		if a.bots.CheckUsageRestrictionsForUser(ctx, bot, userID) != nil {
 			continue
@@ -927,12 +986,12 @@ func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo,
 		}
 	}
 
-	return bots, nil
+	return bots, projectAgents, nil
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(c.Request.Context(), userID)
+	bots, projectAgents, err := a.getAIBotsForUser(c.Request.Context(), userID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -942,11 +1001,15 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:                 bots,
-		SearchEnabled:        searchEnabled,
-		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
-		LinkPolicy:           a.config.LinkPolicy(),
-		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		Bots:                    bots,
+		SearchEnabled:           searchEnabled,
+		AllowUnsafeLinks:        a.config.AllowUnsafeLinks(),
+		LinkPolicy:              a.config.LinkPolicy(),
+		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
+		ChannelArtifactsEnabled: a.config.EnableChannelArtifacts(),
+		ScopedSessionsSupported: a.contextBuilder.ServerSupportsScopedSessions(),
+		ProjectChannelsEnabled:  a.projects != nil && a.projects.Available() && a.contextBuilder.ServerSupportsScopedSessions(),
+		ProjectAgents:           projectAgents,
 	})
 }
 

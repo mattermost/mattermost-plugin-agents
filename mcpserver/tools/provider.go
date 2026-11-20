@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -79,6 +80,10 @@ type MCPTool struct {
 	// ReadOnly is true when the tool only retrieves data. State-changing tools
 	// are available at Enterprise and above.
 	ReadOnly bool
+
+	// ScopedUnsupported is true for a read-only tool that cannot work under a
+	// scoped session; see scopedUnsupportedTools.
+	ScopedUnsupported bool
 }
 
 type ToolProvider interface {
@@ -109,17 +114,19 @@ type MattermostToolProvider struct {
 	mmServerURL             string // Mattermost server URL for API communication (internal URL if set, otherwise external)
 	devMode                 bool
 	accessMode              AccessMode
-	trackAIGenerated        bool                  // Whether to add ai_generated_by props to posts
-	searchService           SemanticSearchService // Optional semantic search service, can be nil
-	fileContentService      FileContentService    // Optional file content service for read_file, can be nil
-	allowStateChangingTools func() bool           // Evaluated per request; nil fails closed
+	trackAIGenerated        bool                    // Whether to add ai_generated_by props to posts
+	searchService           SemanticSearchService   // Optional semantic search service, can be nil
+	fileContentService      FileContentService      // Optional file content service for read_file, can be nil
+	channelArtifactsService ChannelArtifactsService // Optional channel library artifacts; nil means unavailable
+	allowStateChangingTools func() bool             // Evaluated per request; nil fails closed
 }
 
 // NewMattermostToolProvider creates a new tool provider.
 // searchService is optional and can be nil if semantic search is not available.
+// channelArtifactsService is optional and can be nil if channel artifacts are not available.
 // allowStateChangingTools is a runtime predicate evaluated on each tools/list
 // and tools/call; a nil predicate means state-changing tools are not available.
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, allowStateChangingTools func() bool) *MattermostToolProvider {
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, channelArtifactsService ChannelArtifactsService, allowStateChangingTools func() bool) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -135,6 +142,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 		trackAIGenerated:        config.GetTrackAIGenerated(),
 		searchService:           searchService,
 		fileContentService:      fileContentService,
+		channelArtifactsService: channelArtifactsService,
 		allowStateChangingTools: allowStateChangingTools,
 	}
 }
@@ -150,6 +158,7 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		p.getChannelTools,
 		p.getChannelMemberTools,
 		p.getBookmarkTools,
+		p.getChannelArtifactTools,
 		p.getUserTools,
 		p.getStatusTools,
 		p.getTeamTools,
@@ -169,6 +178,9 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	var mcpTools []MCPTool
 	for _, group := range groups {
 		mcpTools = append(mcpTools, group()...)
+	}
+	for i := range mcpTools {
+		_, mcpTools[i].ScopedUnsupported = scopedUnsupportedTools[mcpTools[i].Name]
 	}
 	return mcpTools
 }
@@ -196,6 +208,13 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	// State-changing tools are listed and callable when allowStateChangingTools
 	// reports they are available (Enterprise and above).
 	mcpServer.AddReceivingMiddleware(stateChangingToolsMiddleware(stateChanging, p.allowStateChangingTools))
+	mcpServer.AddReceivingMiddleware(channelArtifactsToolsMiddleware(p.channelArtifactsEnabled))
+}
+
+// channelArtifactsEnabled reports whether the channel artifact tools are on.
+// Without a service they are off.
+func (p *MattermostToolProvider) channelArtifactsEnabled() bool {
+	return p.channelArtifactsService != nil && p.channelArtifactsService.Enabled()
 }
 
 // stateChangingAllowed reports whether state-changing tools are available.
@@ -278,6 +297,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			ReadOnlyHint: mcpTool.ReadOnly,
 		},
 	}
+	if mcpTool.ScopedUnsupported {
+		tool.Meta = mcp.Meta{llm.ScopedUnsupportedMetaKey: true}
+	}
 
 	// Set the InputSchema from the MCPTool schema
 	if mcpTool.Schema != nil {
@@ -332,7 +354,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			p.logger.Debug("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + err.Error()},
+					&mcp.TextContent{Text: toolErrorText(err)},
 				},
 				IsError: true,
 			}, nil
@@ -353,6 +375,31 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 
 	// Register the tool using the Server.AddTool method
 	server.AddTool(tool, handler)
+}
+
+// scopedOutOfScopeErrorID is the Mattermost error ID of a request a scoped
+// session may not make. The server answers the same way for something that
+// does not exist and for something outside the scope, so the model is told
+// both.
+const scopedOutOfScopeErrorID = "api.context.scoped_session_out_of_scope"
+
+// scopedOutOfScopeMessage is what a scoped agent's model sees for such a
+// failure, in place of the server's internal error.
+const scopedOutOfScopeMessage = "Error: not found, or not accessible in this agent's scope"
+
+func toolErrorText(err error) string {
+	if isOutOfScopeError(err) {
+		return scopedOutOfScopeMessage
+	}
+	return "Error: " + err.Error()
+}
+
+// isOutOfScopeError reports whether err is the server's answer to a request a
+// scoped session may not make, which is also its answer to one for something
+// that does not exist.
+func isOutOfScopeError(err error) bool {
+	var appErr *model.AppError
+	return (errors.As(err, &appErr) && strings.HasPrefix(appErr.Id, scopedOutOfScopeErrorID)) || strings.Contains(err.Error(), scopedOutOfScopeErrorID)
 }
 
 // authenticatedClientAndUserID returns the authenticated client and, when the

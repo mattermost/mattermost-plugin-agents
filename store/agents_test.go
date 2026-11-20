@@ -44,6 +44,8 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
 		MaxToolTurns:            42,
 		UseServiceAccountAuth:   true,
+		ScopedChannelMode:       true,
+		ScopedExtraChannelIDs:   []string{"extra-1", "extra-2"},
 	}
 }
 
@@ -104,6 +106,8 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.True(t, fetched.StructuredOutputEnabled) //nolint:staticcheck // deprecated field still round-trips through the store
 	assert.Equal(t, 42, fetched.MaxToolTurns)
 	assert.True(t, fetched.UseServiceAccountAuth)
+	assert.True(t, fetched.ScopedChannelMode)
+	assert.Equal(t, []string{"extra-1", "extra-2"}, fetched.ScopedExtraChannelIDs)
 }
 
 // TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
@@ -225,6 +229,8 @@ func TestAgentUpdate(t *testing.T) {
 	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
 	agent.UseServiceAccountAuth = false
+	agent.ScopedChannelMode = false
+	agent.ScopedExtraChannelIDs = nil
 
 	require.NoError(t, s.UpdateAgent(agent, SystemAgentVersionMeta()))
 
@@ -242,11 +248,47 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
 	assert.False(t, fetched.UseServiceAccountAuth)
+	assert.False(t, fetched.ScopedChannelMode)
+	assert.Nil(t, fetched.ScopedExtraChannelIDs)
 
 	// Immutable fields should not change
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)
 	assert.Equal(t, agent.BotUserID, fetched.BotUserID)
 	assert.Equal(t, agent.CreateAt, fetched.CreateAt)
+}
+
+func TestAgentUpdateIfUnchanged(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	agent := testAgent("creator-1", "agent-1", "Agent 1")
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	stale, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+
+	edited := *stale
+	edited.DisplayName = "Edited meanwhile"
+	require.NoError(t, s.UpdateAgent(&edited, SystemAgentVersionMeta()))
+
+	backfill := *stale
+	backfill.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: "embedded://mattermost", ToolName: "read_channel"}}
+	ok, err := s.UpdateAgentIfUnchanged(&backfill, SystemAgentVersionMeta(), stale.UpdateAt)
+	require.NoError(t, err)
+	assert.False(t, ok, "a stale snapshot is not written")
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Edited meanwhile", fetched.DisplayName, "the concurrent edit survives")
+	assert.Equal(t, stale.EnabledMCPTools, fetched.EnabledMCPTools)
+
+	fresh := *fetched
+	fresh.EnabledMCPTools = backfill.EnabledMCPTools
+	ok, err = s.UpdateAgentIfUnchanged(&fresh, SystemAgentVersionMeta(), fetched.UpdateAt)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	fetched, err = s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backfill.EnabledMCPTools, fetched.EnabledMCPTools)
+	assert.Equal(t, "Edited meanwhile", fetched.DisplayName)
 }
 
 func TestAgentUpdateNonexistent(t *testing.T) {
@@ -526,4 +568,44 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)
 	assert.GreaterOrEqual(t, fetched.UpdateAt, originalCreateAt)
+}
+
+func TestMarkAgentSetupCompleted(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	agent := testAgent("creator-1", "setup-agent", "Setup Agent")
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	deleted := testAgent("creator-1", "deleted-agent", "Deleted Agent")
+	require.NoError(t, s.CreateAgent(deleted, SystemAgentVersionMeta()))
+	require.NoError(t, s.DeleteAgent(deleted.ID))
+
+	marked, err := s.MarkAgentSetupCompleted(agent.ID, 1000)
+	require.NoError(t, err)
+	assert.True(t, marked)
+
+	marked, err = s.MarkAgentSetupCompleted(agent.ID, 2000)
+	require.NoError(t, err)
+	assert.False(t, marked, "a second completion must not move the timestamp")
+
+	marked, err = s.MarkAgentSetupCompleted(deleted.ID, 1000)
+	require.NoError(t, err)
+	assert.False(t, marked, "a deleted agent is never marked")
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), fetched.SetupCompletedAt)
+
+	// Saving the agent keeps the completion and records no version for it.
+	fetched.DisplayName = "Renamed"
+	require.NoError(t, s.UpdateAgent(fetched, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceSelfSetup}))
+	saved, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), saved.SetupCompletedAt)
+
+	page, err := s.ListAgentVersions(agent.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, page.Versions, 2, "create plus the self-setup save; marking setup complete adds none")
+	assert.Equal(t, AgentVersionSourceSelfSetup, page.Versions[0].Source)
+	assert.Equal(t, []string{"displayName"}, page.Versions[0].ChangedFields)
 }

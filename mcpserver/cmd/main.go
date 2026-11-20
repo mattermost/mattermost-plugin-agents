@@ -259,7 +259,7 @@ func runServer(cfg cliConfig) error {
 			PersonalAccessToken: token,
 		}
 
-		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger, nil, nil)
+		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger, nil, nil, nil)
 	case "http":
 		httpConfig := mcpserver.HTTPConfig{
 			MMServerURL:         mmServerURL,

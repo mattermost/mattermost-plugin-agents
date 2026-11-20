@@ -90,9 +90,9 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 
 	// Enable PATs at container start. SetConfig after boot can return success
 	// before the setting is live, which flakes CreateUserAccessToken.
-	cfg := &model.Config{}
-	cfg.SetDefaults()
-	cfg.ServiceSettings.EnableUserAccessTokens = model.NewPointer(true)
+	// Only the settings to change: a defaulted config would also patch values
+	// the container's server version may not accept.
+	cfg := &model.Config{ServiceSettings: model.ServiceSettings{EnableUserAccessTokens: model.NewPointer(true)}}
 
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
 	var container *mmcontainer.Container
@@ -154,17 +154,24 @@ func (suite *TestSuite) TearDown() {
 
 // CreateMCPServer creates and configures an MCP server for testing
 func (suite *TestSuite) CreateMCPServer(devMode bool) {
-	suite.createMCPServerWithConfig(devMode, nil)
+	suite.createMCPServerWithConfig(devMode, nil, nil)
 }
 
 // CreateMCPServerWithFileService creates an MCP server with a custom file content service.
 // The eval container has no plugin installed, so the production HTTP callback would 404 —
 // tests inject a Client4-backed service instead.
 func (suite *TestSuite) CreateMCPServerWithFileService(devMode bool, fileContentService tools.FileContentService) {
-	suite.createMCPServerWithConfig(devMode, fileContentService)
+	suite.createMCPServerWithConfig(devMode, fileContentService, nil)
 }
 
-func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentService tools.FileContentService) {
+// CreateMCPServerWithChannelArtifacts creates an MCP server with a custom channel
+// artifacts service. The eval container has no plugin installed, so the production
+// HTTP callback would 404.
+func (suite *TestSuite) CreateMCPServerWithChannelArtifacts(devMode bool, channelArtifactsService tools.ChannelArtifactsService) {
+	suite.createMCPServerWithConfig(devMode, nil, channelArtifactsService)
+}
+
+func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentService tools.FileContentService, channelArtifactsService tools.ChannelArtifactsService) {
 	require.NotNil(suite.t, suite.logger, "Logger must be initialized")
 	require.NotEmpty(suite.t, suite.serverURL, "Server URL must be set")
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
@@ -174,7 +181,7 @@ func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentServi
 		DevMode:             devMode,
 		PersonalAccessToken: suite.adminToken,
 	}
-	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService)
+	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService, channelArtifactsService)
 	require.NoError(suite.t, err, "Failed to create MCP server")
 
 	suite.mcpServer = mcpServer

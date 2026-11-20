@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -41,6 +43,9 @@ type turnRequest struct {
 	conv    *store.Conversation
 	trigger *model.Post
 	post    *model.Post
+	// operation is the operation of the conversation a new thread's first
+	// turn will create; turns of an existing conversation use conv's.
+	operation string
 }
 
 // turnPolicy is the resolved behavior of one turn. Every entry point that
@@ -59,6 +64,9 @@ type turnPolicy struct {
 	// in a channel (auto_run_everywhere), for runs nobody is present to
 	// approve.
 	autoEverywhereOnly bool
+	// scoped runs the turn's tools on a scoped session limited to the channel
+	// content the requester can read, so every tool may run without approval.
+	scoped bool
 }
 
 // resolveTurnPolicy checks that req may run and derives how it runs. Gates
@@ -79,9 +87,26 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		if err := c.bots.CheckUsageRestrictions(ctx, req.user.Id, req.bot, req.channel); err != nil {
 			return nil, err
 		}
+		if llmcontext.ScopedChannelModeConfigured(req.bot) && llmcontext.ScopedChannelModeAppliesTo(req.channel) &&
+			(c.contextBuilder == nil ||
+				(c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel) && !c.contextBuilder.RequesterCanUseScopedChannelMode(req.user.Id, req.channel))) {
+			return nil, llmcontext.ErrScopedRequesterCannotReadTeamChannels
+		}
 		if err := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); err != nil {
 			return nil, err
 		}
+	}
+
+	if err := c.checkProjectTurn(ctx, req, isDM); err != nil {
+		return nil, err
+	}
+
+	if !isDM && req.conv == nil && req.operation == "" && req.bot.IsProjectAgent() {
+		op, err := c.projectThreadOperation(req)
+		if err != nil {
+			return nil, err
+		}
+		req.operation = op
 	}
 
 	if req.conv == nil && isDM && req.trigger != nil && req.trigger.RootId != "" {
@@ -112,6 +137,18 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		p.interactive = initiator != nil && initiatingUser != nil && !isAutomatedInvoker(initiator, initiatingUser)
 	} else {
 		p.setChannelRunTools(initiator, initiatingUser)
+		p.scoped = p.toolsEnabled && c.contextBuilder != nil && c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel)
+	}
+	if req.bot.IsProjectAgent() {
+		// A project turn runs scoped or not at all, never unscoped with
+		// approvals.
+		if !p.scoped {
+			return nil, fmt.Errorf("%w: scoped mode is not available", ErrProjectTurnRefused)
+		}
+		// The project's tool allowlist, its argument binder, and the scope
+		// bound unattended turns, so they are not limited to tools that
+		// auto-run everywhere. Tools that always ask are dropped instead.
+		p.autoEverywhereOnly = false
 	}
 	return p, nil
 }
@@ -177,6 +214,15 @@ func (c *Conversations) runInitiator(conv *store.Conversation, post *model.Post)
 		return nil, nil, fmt.Errorf("failed to get the run's initiating user: %w", err)
 	}
 	return initiator, initiatingUser, nil
+}
+
+// effectiveOperation is the operation of the turn's conversation, or of the
+// conversation a new thread's first turn will create.
+func (p *turnPolicy) effectiveOperation() string {
+	if p.conv != nil {
+		return p.conv.Operation
+	}
+	return p.operation
 }
 
 // isAnalysisOperation reports whether conversations of operation replay
@@ -309,23 +355,38 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if p.isDM {
 		opts = append(opts, builder.WithLLMContextDirectMessage())
 	}
+	if p.scoped {
+		opts = append(opts, builder.WithLLMContextScopedChannelTurn(p.scopedTurn()))
+	}
 	if p.autoEverywhereOnly {
 		opts = append(opts, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
 	}
-	opts = append(opts, builder.WithLLMContextSkills(p.conv == nil || p.conv.Operation == llm.OperationConversation))
+	operation := p.effectiveOperation()
+	opts = append(opts, builder.WithLLMContextSkills(operation == "" || operation == llm.OperationConversation))
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
 	llmContext := p.c.buildConversationContextWithTools(ctx, p.bot, p.user, p.channel, prefsLogMessage, opts...)
+	if p.bot.IsProjectAgent() && !llmContext.ToolsScoped {
+		llmContext.ReleaseScopedSession()
+		return nil, fmt.Errorf("%w: the scoped session is unavailable", ErrProjectTurnRefused)
+	}
 	skillsCfg := p.bot.GetConfig()
 	if !p.interactive {
 		skillsCfg.Skills.AllowPersonal = false
 		skillsCfg.Skills.EnabledSharedIDs = nil
 	}
 	if err := builder.AddSkillTools(llmContext, skillsCfg); err != nil {
+		llmContext.ReleaseScopedSession()
 		return nil, fmt.Errorf("failed to load skills: %w", err)
+	}
+	if tools, ok := p.c.registeredOperation(operation); ok && tools != nil {
+		if llmContext.Tools == nil {
+			llmContext.Tools = llm.NewToolStore()
+		}
+		llmContext.Tools.AddTools(builder.AuditScopedToolCalls(llmContext, p.bot, p.user.Id, tools.OperationTools(ctx, p.bot, llmContext)))
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():
@@ -338,7 +399,37 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	case p.autoEverywhereOnly:
 		p.c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
+	if p.scoped && !p.interactive {
+		dropAlwaysAskTools(llmContext)
+	}
+	if p.bot.IsProjectAgent() && !p.interactive && operation == llm.OperationProjectRun {
+		keepReadOnlyTools(llmContext)
+	}
 	return llmContext, nil
+}
+
+// scopedTurn identifies the turn in the scoped session's audit records.
+func (p *turnPolicy) scopedTurn() llm.ScopedTurn {
+	turn := llm.ScopedTurn{}
+	switch {
+	case p.trigger != nil:
+		turn.TriggerPostID = p.trigger.Id
+		turn.ThreadRootID = cmp.Or(p.trigger.RootId, p.trigger.Id)
+	case p.post != nil:
+		respondingTo, _ := p.post.GetProp(streaming.RespondingToProp).(string)
+		turn.TriggerPostID = cmp.Or(respondingTo, p.post.Id)
+		turn.ThreadRootID = cmp.Or(p.post.RootId, p.post.Id)
+	}
+	if p.conv != nil {
+		turn.ConversationID = p.conv.ID
+		if p.conv.RootPostID != nil {
+			turn.ThreadRootID = *p.conv.RootPostID
+		}
+	} else {
+		turn.ConversationID = p.c.existingThreadConversationID(p.bot, p.user, turn.ThreadRootID)
+	}
+	turn.ConversationPending = turn.ConversationID == ""
+	return turn
 }
 
 // autoExecute decides, per tool call, whether the call runs without the
@@ -361,6 +452,27 @@ func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 		}
 		if p.c.remoteMCPDecisionAllowed(lookup.ServerOrigin) != nil {
 			return false
+		}
+		if llmCtx.ToolsScoped {
+			// Once the run's session has ended, because the run finished or
+			// its agent's scoped mode lapsed, nothing runs unasked.
+			if llmCtx.ScopedSessionReleased() {
+				return false
+			}
+			// Everything a scoped catalog reads is within the scope, but an
+			// interaction tool needs the user's answer, and an always-ask
+			// tool reaches outside it.
+			if lookup.Tool.UserInteraction != "" || lookup.Tool.AlwaysAsk {
+				return false
+			}
+			// A tool the admin has disabled never runs, whatever the catalog
+			// holds. Built-ins have no per-tool policy.
+			if lookup.ServerOrigin != "" {
+				if _, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName); !enabled {
+					return false
+				}
+			}
+			return true
 		}
 		// Only honored for built-ins: an MCP tool carrying the flag must
 		// still go through policy.

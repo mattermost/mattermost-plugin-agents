@@ -3,7 +3,7 @@
 
 import {createIntl, type IntlShape} from 'react-intl';
 
-import {changedFieldLabel, changedFieldLabels, differingConfigFields, formatRelativeTime} from './agent_version_labels';
+import {changedFieldLabel, changedFieldLabels, differingConfigFields, formatRelativeTime, versionSourceLabel} from './agent_version_labels';
 
 // Message ids are derived from defaultMessage at build time; mirror that here.
 const real = createIntl({locale: 'en', defaultLocale: 'en', onError: () => null});
@@ -24,6 +24,15 @@ describe('changedFieldLabel', () => {
         {field: 'service', expected: 'Service'},
     ])('labels $field as "$expected"', ({field, expected}) => {
         expect(changedFieldLabel(intl, field)).toBe(expected);
+    });
+});
+
+describe('versionSourceLabel', () => {
+    test.each([
+        {source: 'self_setup' as const, restoredFromVersion: 0, expected: 'Self-setup'},
+        {source: 'update' as const, restoredFromVersion: 0, expected: 'Edited'},
+    ])('labels $source as "$expected"', ({source, restoredFromVersion, expected}) => {
+        expect(versionSourceLabel(intl, {source, restoredFromVersion})).toBe(expected);
     });
 });
 

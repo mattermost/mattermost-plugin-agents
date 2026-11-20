@@ -78,8 +78,14 @@ Everything is under **Agents > Settings**, in the **General**, **AI services**, 
 | General | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
 | General | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
 | General | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
+| General | Enable channel artifacts (experimental) | `enableChannelArtifacts` | Off | [Channel artifacts](channel_artifacts.md) |
+| General | Max artifacts per channel | `channelArtifactsMaxPerChannel` | 50 | [Channel artifacts](channel_artifacts.md#turn-it-on) |
+| General | Versions to keep per artifact | `channelArtifactVersionsToKeep` | 20 | [Channel artifacts](channel_artifacts.md#turn-it-on) |
+| General | Enable project channels | `enableProjectChannels` | Off | [Project channels](project_channels.md) |
+| General | Project agent service, Project agent model | `projectDefaultServiceID`, `projectDefaultModel` | Empty | [Project channels](project_channels.md#turn-it-on) |
 | General | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
 | General | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
+| General | Enable agent auto-setup (experimental) | `enableAgentAutoSetup` | Off | [Create and manage agents](managing_agents.md#set-up-an-agent-by-chatting-with-it) |
 | General | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
 | Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
 | Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |

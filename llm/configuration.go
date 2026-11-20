@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
@@ -25,6 +26,10 @@ const DefaultMaxToolTurns = 30
 // MaxAllowedMaxToolTurns caps user-provided MaxToolTurns to keep runaway loops bounded
 // even if a misconfigured agent requests an unreasonably high value.
 const MaxAllowedMaxToolTurns = 250
+
+// MaxScopedExtraChannels caps the admin-picked extra channels a scoped agent
+// may read.
+const MaxScopedExtraChannels = 50
 
 // StructuredOutputPolicy declares how a service handles a requested
 // JSONOutputFormat schema. It is stored per service because the capability
@@ -205,6 +210,18 @@ type BotConfig struct {
 	// Embedded Mattermost and plugin MCP servers still run as the requesting user.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 
+	// ScopedChannelMode runs this agent's tools in channels on a short-lived
+	// scoped session for its bot instead of the requester's credentials. The
+	// session can read the triggering channel, every public channel on an
+	// open team, and ScopedExtraChannelIDs, and nothing else, so tool calls
+	// run without approval. It requires UseServiceAccountAuth and an explicit
+	// MCP allowlist (AutoEnableNewMCPTools off). DMs are unaffected.
+	ScopedChannelMode bool `json:"scopedChannelMode"`
+
+	// ScopedExtraChannelIDs are admin-picked channels a scoped channel turn
+	// may also read, wherever the agent is used.
+	ScopedExtraChannelIDs []string `json:"scopedExtraChannelIDs"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`
@@ -260,6 +277,18 @@ type BotConfig struct {
 	CreateAt     int64    `json:"createAt,omitempty"`
 	UpdateAt     int64    `json:"updateAt,omitempty"`
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
+	// SetupCompletedAt is when the agent finished its auto-setup
+	// conversation; 0 means it never did. Agent saves never change it.
+	SetupCompletedAt int64 `json:"setupCompletedAt,omitempty"`
+	// ProjectChannelID is set on the hidden agent that leads a project
+	// channel. Such an agent works only in that channel and is never listed.
+	// Only the projects service sets it.
+	ProjectChannelID string `json:"projectChannelID,omitempty"`
+}
+
+// IsProjectAgent reports whether the agent leads a project channel.
+func (c BotConfig) IsProjectAgent() bool {
+	return c.ProjectChannelID != ""
 }
 
 // UnmarshalJSON defaults fields whose zero value is not their behavior from
@@ -305,6 +334,23 @@ func (c *BotConfig) Validate() error {
 	}
 	if c.MaxToolTurns > MaxAllowedMaxToolTurns {
 		return fmt.Errorf("maxToolTurns must be less than or equal to %d", MaxAllowedMaxToolTurns)
+	}
+	if c.ScopedChannelMode && !c.UseServiceAccountAuth {
+		return errors.New("scopedChannelMode requires useServiceAccountAuth")
+	}
+	if c.ScopedChannelMode && c.AutoEnableNewMCPTools {
+		return errors.New("scopedChannelMode requires an explicit MCP tool allowlist (autoEnableNewMCPTools off)")
+	}
+	if c.ScopedChannelMode && slices.ContainsFunc(c.EnabledMCPTools, func(t EnabledMCPTool) bool { return t.ToolName == MCPServerToolWildcard }) {
+		return errors.New("scopedChannelMode requires every MCP tool to be named in enabledMCPTools; all-tools entries are not allowed")
+	}
+	if len(c.ScopedExtraChannelIDs) > MaxScopedExtraChannels {
+		return fmt.Errorf("scopedExtraChannelIDs exceeds the maximum of %d channels", MaxScopedExtraChannels)
+	}
+	for _, id := range c.ScopedExtraChannelIDs {
+		if !model.IsValidId(id) {
+			return errors.New("scopedExtraChannelIDs contains an invalid channel ID")
+		}
 	}
 	return c.Skills.Validate()
 }

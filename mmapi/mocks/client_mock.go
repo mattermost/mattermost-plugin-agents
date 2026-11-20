@@ -214,6 +214,57 @@ func (_c *MockClient_DM_Call) RunAndReturn(run func(senderID string, receiverID 
 	return _c
 }
 
+// DeletePost provides a mock function for the type MockClient
+func (_mock *MockClient) DeletePost(postID string) error {
+	ret := _mock.Called(postID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeletePost")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(string) error); ok {
+		r0 = returnFunc(postID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockClient_DeletePost_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeletePost'
+type MockClient_DeletePost_Call struct {
+	*mock.Call
+}
+
+// DeletePost is a helper method to define mock.On call
+//   - postID string
+func (_e *MockClient_Expecter) DeletePost(postID any) *MockClient_DeletePost_Call {
+	return &MockClient_DeletePost_Call{Call: _e.mock.On("DeletePost", postID)}
+}
+
+func (_c *MockClient_DeletePost_Call) Run(run func(postID string)) *MockClient_DeletePost_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_DeletePost_Call) Return(err error) *MockClient_DeletePost_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockClient_DeletePost_Call) RunAndReturn(run func(postID string) error) *MockClient_DeletePost_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetChannel provides a mock function for the type MockClient
 func (_mock *MockClient) GetChannel(channelID string) (*model.Channel, error) {
 	ret := _mock.Called(channelID)
@@ -1995,6 +2046,63 @@ func (_c *MockClient_PublishWebSocketEvent_Call) Return() *MockClient_PublishWeb
 
 func (_c *MockClient_PublishWebSocketEvent_Call) RunAndReturn(run func(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)) *MockClient_PublishWebSocketEvent_Call {
 	_c.Run(run)
+	return _c
+}
+
+// RolesGrantPermission provides a mock function for the type MockClient
+func (_mock *MockClient) RolesGrantPermission(roleNames []string, permissionID string) bool {
+	ret := _mock.Called(roleNames, permissionID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RolesGrantPermission")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func([]string, string) bool); ok {
+		r0 = returnFunc(roleNames, permissionID)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockClient_RolesGrantPermission_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RolesGrantPermission'
+type MockClient_RolesGrantPermission_Call struct {
+	*mock.Call
+}
+
+// RolesGrantPermission is a helper method to define mock.On call
+//   - roleNames []string
+//   - permissionID string
+func (_e *MockClient_Expecter) RolesGrantPermission(roleNames any, permissionID any) *MockClient_RolesGrantPermission_Call {
+	return &MockClient_RolesGrantPermission_Call{Call: _e.mock.On("RolesGrantPermission", roleNames, permissionID)}
+}
+
+func (_c *MockClient_RolesGrantPermission_Call) Run(run func(roleNames []string, permissionID string)) *MockClient_RolesGrantPermission_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 []string
+		if args[0] != nil {
+			arg0 = args[0].([]string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_RolesGrantPermission_Call) Return(b bool) *MockClient_RolesGrantPermission_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockClient_RolesGrantPermission_Call) RunAndReturn(run func(roleNames []string, permissionID string) bool) *MockClient_RolesGrantPermission_Call {
+	_c.Call.Return(run)
 	return _c
 }
 

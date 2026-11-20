@@ -31,6 +31,15 @@ const (
 	OperationBridgeAgent              = "bridge_agent"
 	OperationBridgeService            = "bridge_service"
 	OperationAmbientClassification    = "ambient_classification"
+	// OperationAgentSetup is a conversation in which an agent sets itself up
+	// with the person managing it.
+	OperationAgentSetup = "agent_setup"
+	// Project channel operations: setup, scheduled check-ins, run threads and
+	// the wrap-up when a project ends.
+	OperationProjectSetup   = "project_setup"
+	OperationProjectCheckin = "project_checkin"
+	OperationProjectRun     = "project_run"
+	OperationProjectWrapUp  = "project_wrapup"
 )
 
 // tool_auth_mode identifies which auth mode the request's tool catalog was built with.

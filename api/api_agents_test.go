@@ -22,6 +22,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/projects"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -1214,6 +1216,63 @@ func TestDeleteAgentDeactivatesBot(t *testing.T) {
 	// Verify soft-deleted in store
 	agent := e.agentStore.agents["agent-1"]
 	assert.NotZero(t, agent.DeleteAt)
+}
+
+func TestDeleteAgentOnlyDeletesRetiredProjectAgents(t *testing.T) {
+	const channelID = "projectchannel000000000000"
+	tests := []struct {
+		name        string
+		project     *store.Project
+		wantDeleted bool
+	}{
+		// CreateProject records the agent on the project after creating it.
+		{name: "provisioning, before the agent is recorded", project: &store.Project{State: store.ProjectStateProvisioning}},
+		{name: "provisioning", project: &store.Project{State: store.ProjectStateProvisioning, AgentID: "agent-1"}},
+		{name: "active", project: &store.Project{State: store.ProjectStateActive, AgentID: "agent-1"}},
+		{name: "ending", project: &store.Project{State: store.ProjectStateEnding, AgentID: "agent-1"}},
+		{name: "ended", project: &store.Project{State: store.ProjectStateEnded, AgentID: "agent-1"}, wantDeleted: true},
+		{name: "active with another agent", project: &store.Project{State: store.ProjectStateActive, AgentID: "agent-2"}, wantDeleted: true},
+		{name: "never finished being created", wantDeleted: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.agentStore.agents["agent-1"] = &llm.BotConfig{
+				ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+				DisplayName: "Launch agent", Name: "project-launch", ServiceID: "svc-1",
+				ProjectChannelID: channelID,
+			}
+			project := &store.Project{ChannelID: "elsewhere"}
+			if tt.project != nil {
+				project = tt.project
+				project.ChannelID = channelID
+			}
+			e.api.SetProjects(projects.New(projects.Deps{
+				Store:     projectStoreStub{project: project},
+				Platform:  projectPlatformStub{},
+				Bots:      e.bots,
+				Threads:   projectThreadsStub{},
+				Config:    projectsEnabled{},
+				AutoReply: projectAutoReplyStub{},
+			}))
+			if tt.wantDeleted {
+				e.mockAPI.On("UpdateBotActive", "bot-1", false).Return(&model.Bot{}, nil).Maybe()
+			}
+
+			recorder := doRequest(e.api, http.MethodDelete, "/agents/agent-1", nil, testUserID)
+			if !tt.wantDeleted {
+				require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+				assert.Contains(t, recorder.Body.String(), "end the project instead")
+				assert.Zero(t, e.agentStore.agents["agent-1"].DeleteAt, "the project's agent must stay")
+				return
+			}
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+			assert.NotZero(t, e.agentStore.agents["agent-1"].DeleteAt)
+		})
+	}
 }
 
 func TestDeleteAgentClearsSettingsThatReferencedIt(t *testing.T) {

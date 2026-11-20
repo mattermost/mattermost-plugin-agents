@@ -247,6 +247,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUpdateAgent, method: http.MethodPut, path: "/agents/agentid"},
 		{event: AuditEventDeleteAgent, method: http.MethodDelete, path: "/agents/agentid"},
 		{event: AuditEventUpdateAgentAvatar, method: http.MethodPost, path: "/agents/agentid/avatar"},
+		{event: AuditEventStartAgentSetup, method: http.MethodPost, path: "/agents/agentid/setup"},
 		{event: AuditEventRestoreAgentVersion, method: http.MethodPost, path: "/agents/agentid/versions/1/restore"},
 		{event: AuditEventDeleteAgentVersions, method: http.MethodDelete, path: "/agents/agentid/versions"},
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
@@ -255,6 +256,11 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUpdateChannelAutoReply, method: http.MethodPut, path: "/channel/channelid/autoreply"},
 		{event: AuditEventRenameConversation, method: http.MethodPut, path: "/conversations/conversationid/title"},
 		{event: AuditEventArchiveConversation, method: http.MethodPost, path: "/conversations/conversationid/archive"},
+		{event: AuditEventCreateChannelArtifact, method: http.MethodPost, path: "/channel-artifacts"},
+		{event: AuditEventUpdateChannelArtifact, method: http.MethodPatch, path: "/channel-artifacts/artifactid"},
+		{event: AuditEventDeleteChannelArtifactVersion, method: http.MethodDelete, path: "/channel-artifacts/artifactid/versions/1"},
+		{event: AuditEventRollbackChannelArtifact, method: http.MethodPost, path: "/channel-artifacts/artifactid/rollback"},
+		{event: AuditEventDeleteChannelArtifact, method: http.MethodDelete, path: "/channel-artifacts/artifactid"},
 		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
 		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
 		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},
@@ -271,6 +277,10 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventDeleteServicePolicy, method: http.MethodDelete, path: "/admin/services/serviceid/access_policy"},
 		{event: AuditEventPutMCPPolicy, method: http.MethodPut, path: "/admin/mcp/serverid/access_policy"},
 		{event: AuditEventDeleteMCPPolicy, method: http.MethodDelete, path: "/admin/mcp/serverid/access_policy"},
+		{event: AuditEventCreateProject, method: http.MethodPost, path: "/projects"},
+		{event: AuditEventEndProject, method: http.MethodPost, path: "/projects/channelid/end"},
+		{event: AuditEventTransferProjectLead, method: http.MethodPost, path: "/projects/channelid/transfer-lead"},
+		{event: AuditEventUpdateProjectSchedule, method: http.MethodPut, path: "/projects/channelid/schedule"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is

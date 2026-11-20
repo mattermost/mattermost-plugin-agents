@@ -43,6 +43,9 @@ type Config interface {
 	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
 	GetTranscriptBotUserID() string
+	// EnableProjectChannels gates project agents: while it is off they are
+	// left out of the registry, which deactivates their bots on every node.
+	EnableProjectChannels() bool
 }
 
 // AgentStore provides read access to user-created agents from the database.
@@ -68,6 +71,10 @@ type MMBots struct {
 	metrics                llm.MetricsObserver
 
 	tokenSinksMu sync.Mutex
+
+	registryListenersMu sync.Mutex
+	registryListeners   []func()
+
 	// ensureMu serializes registry rebuilds on this node, so a full rebuild
 	// that read the agents before a RefreshAgent cannot swap its stale
 	// registry in afterwards. EnsureBots takes it after the cluster mutex;
@@ -219,6 +226,11 @@ func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, dbAgentBotSet, map[
 		if err != nil {
 			return nil, dbAgentBotSet{}, nil, fmt.Errorf("failed to list user agents: %w", err)
 		}
+	}
+	if !b.config.EnableProjectChannels() {
+		dbAgents = slices.DeleteFunc(slices.Clone(dbAgents), func(cfg *llm.BotConfig) bool {
+			return cfg != nil && cfg.IsProjectAgent()
+		})
 	}
 	dbNames := make(map[string]struct{}, len(dbAgents))
 	for _, cfg := range dbAgents {
@@ -473,9 +485,9 @@ func (b *MMBots) EnsureBots() error {
 		return nil
 	}
 
-	previousMMBots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner(botOwnerID), pluginapi.BotIncludeDeleted())
+	previousMMBots, err := b.listOwnedBots()
 	if err != nil {
-		return fmt.Errorf("failed to list bots: %w", err)
+		return err
 	}
 	botCfgs := currentBotCfgs
 
@@ -545,6 +557,7 @@ func (b *MMBots) EnsureBots() error {
 		b.lastEnsuredServiceCfgs = nil
 		b.forceRefresh = true
 		b.botsLock.Unlock()
+		b.notifyRegistryChange()
 		return nil
 	}
 	// Store deep copies of the successfully ensured configs for optimistic checking.
@@ -561,8 +574,47 @@ func (b *MMBots) EnsureBots() error {
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
 	b.forceRefresh = false
 	b.botsLock.Unlock()
+	b.notifyRegistryChange()
 
 	return nil
+}
+
+// botListPageSize is how many bot accounts EnsureBots reads per page. Every
+// project adds one, so the plugin can own more than fit in one page.
+const botListPageSize = 200
+
+// listOwnedBots returns every bot account the plugin owns, deleted ones
+// included, reading every page.
+func (b *MMBots) listOwnedBots() ([]*model.Bot, error) {
+	var all []*model.Bot
+	for page := 0; ; page++ {
+		bots, err := b.pluginAPI.Bot.List(page, botListPageSize, pluginapi.BotOwner(botOwnerID), pluginapi.BotIncludeDeleted())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list bots: %w", err)
+		}
+		all = append(all, bots...)
+		if len(bots) < botListPageSize {
+			return all, nil
+		}
+	}
+}
+
+// AddRegistryListener registers fn to run after this node's bot registry is
+// rebuilt. Listeners run on their own goroutine, so they may do network or
+// DB work without holding up the rebuild.
+func (b *MMBots) AddRegistryListener(fn func()) {
+	b.registryListenersMu.Lock()
+	defer b.registryListenersMu.Unlock()
+	b.registryListeners = append(b.registryListeners, fn)
+}
+
+func (b *MMBots) notifyRegistryChange() {
+	b.registryListenersMu.Lock()
+	listeners := slices.Clone(b.registryListeners)
+	b.registryListenersMu.Unlock()
+	for _, fn := range listeners {
+		go fn()
+	}
 }
 
 // newUnsyncedBot validates botCfg and returns its bot, with the agent's model
@@ -676,6 +728,7 @@ func (b *MMBots) RefreshAgent(agentID string) error {
 
 	bot, err := b.rebuildAgentBot(agentID)
 	b.replaceAgentBot(agentID, bot)
+	b.notifyRegistryChange()
 	return err
 }
 
@@ -1066,8 +1119,10 @@ func (b *MMBots) GetBotByUsernameOrFirst(botUsername string) *Bot {
 
 	b.botsLock.RLock()
 	defer b.botsLock.RUnlock()
-	if len(b.bots) > 0 {
-		return b.bots[0]
+	for _, bot := range b.bots {
+		if !bot.cfg.IsProjectAgent() {
+			return bot
+		}
 	}
 
 	return nil
@@ -1101,6 +1156,16 @@ func (b *MMBots) GetBotForDMChannel(channel *model.Channel) *Bot {
 // IsAnyBot returns true if the given user is an AI bot.
 func (b *MMBots) IsAnyBot(userID string) bool {
 	return b.GetBotByID(userID) != nil
+}
+
+// AgentDisplayName returns the display name of the agent with this bot user
+// ID, or "" when no agent has it.
+func (b *MMBots) AgentDisplayName(userID string) string {
+	bot := b.GetBotByID(userID)
+	if bot == nil || bot.GetMMBot() == nil {
+		return ""
+	}
+	return bot.GetMMBot().DisplayName
 }
 
 // GetBotMentioned returns the bot mentioned in the text, if any. A bot is

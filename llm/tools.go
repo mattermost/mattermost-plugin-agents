@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -44,6 +45,16 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// ReadOnly marks an embedded Mattermost MCP tool that only retrieves data.
+	// It is only set for the embedded server, whose annotations the plugin
+	// controls; other servers' read-only hints are not trusted.
+	ReadOnly bool
+
+	// ScopedUnsupported marks an embedded Mattermost MCP tool that cannot work
+	// under a scoped session, because the REST routes it needs are outside any
+	// read-only scope. Like ReadOnly, it is only set for the embedded server.
+	ScopedUnsupported bool
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.
@@ -61,7 +72,19 @@ type Tool struct {
 	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
 	// scheduling a later resume). Only honored for tools with an empty
 	// ServerOrigin — MCP tools must never auto-execute through this flag.
+	// A provider that sets it per request, such as the channel artifact
+	// tools' AutoExecuteFor hook, must default to false.
 	AutoExecute bool
+
+	// ScopedOptIn marks a built-in tool that a scoped channel turn, which runs
+	// every tool without asking, offers only when the agent's allowlist names
+	// it under BuiltinToolsOrigin.
+	ScopedOptIn bool
+
+	// AlwaysAsk makes a call need the requester's approval even in a scoped
+	// turn, which otherwise runs every tool unasked. It is for tools with an
+	// effect outside the scope, such as starting external work or deleting.
+	AlwaysAsk bool
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a
@@ -745,6 +768,29 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	}
 }
 
+// BuiltinToolsOrigin is the allowlist origin under which EnabledMCPTools name
+// built-in tools. The tools themselves have an empty ServerOrigin.
+const BuiltinToolsOrigin = "builtin://mattermost-agents"
+
+// FilterScopedOptInTools drops the built-in tools marked ScopedOptIn that the
+// allowlist does not name under BuiltinToolsOrigin. Only an exact name
+// matches; a wildcard entry opts in nothing.
+func FilterScopedOptInTools(tools []Tool, allowlist []EnabledMCPTool) []Tool {
+	named := make(map[string]bool)
+	for _, entry := range allowlist {
+		if NormalizeMCPServerOrigin(entry.ServerOrigin) == BuiltinToolsOrigin {
+			named[entry.ToolName] = true
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(tools), func(tool Tool) bool {
+		return tool.ScopedOptIn && !named[tool.Name]
+	})
+}
+
+// ScopedUnsupportedMetaKey is the MCP tool _meta key through which the embedded
+// Mattermost server marks a tool as ScopedUnsupported.
+const ScopedUnsupportedMetaKey = "mattermost-agents/scoped_unsupported"
+
 // MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
 const MCPServerToolWildcard = "*"
 
@@ -843,6 +889,16 @@ func FilterMCPToolsByEnabledAllowlist(tools []Tool, allowlist []EnabledMCPTool) 
 		return tools
 	}
 	return FilterMCPToolsByAllowlist(tools, mcpToolAllowlist(tools, allowlist))
+}
+
+// FilterMCPToolsByExplicitAllowlist is FilterMCPToolsByEnabledAllowlist
+// without wildcard expansion: an MCP tool passes only when an allowlist entry
+// names it.
+func FilterMCPToolsByExplicitAllowlist(tools []Tool, allowlist []EnabledMCPTool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	return FilterMCPToolsByAllowlist(tools, mcpToolAllowlist(nil, allowlist))
 }
 
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose

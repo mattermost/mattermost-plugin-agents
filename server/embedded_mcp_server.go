@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,11 +25,11 @@ type EmbeddedMCPServer struct {
 }
 
 // NewEmbeddedMCPServer creates a new embedded MCP server instance
-// searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable.
+// searchService, fileContentService, and channelArtifactsService are optional
+// and can be nil when the corresponding capability is unavailable.
 // allowStateChangingTools is a runtime predicate evaluated per request; a nil
 // predicate means state-changing tools are not available.
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) (*EmbeddedMCPServer, error) {
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, channelArtifactsService tools.ChannelArtifactsService, allowStateChangingTools func() bool) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -59,7 +60,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	mcpLogger := NewPluginAPILoggerAdapter(logger)
 
 	// Create the in-memory MCP server
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService, allowStateChangingTools)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService, channelArtifactsService, allowStateChangingTools)
 	if err != nil {
 		return nil, err
 	}
@@ -75,13 +76,13 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 // CreateClientTransport creates a new in-memory transport for a client connection.
 // sessionToken is the session's token when the caller already holds it; it
 // covers lookups that miss a just-created session on a lagging DB read replica.
-func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (e *EmbeddedMCPServer) CreateClientTransport(connCtx context.Context, userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// The resolver closes over pluginAPI so the mcpserver can get fresh
 	// tokens without storing raw tokens in context.
 	tokenResolver := newSessionTokenResolver(pluginAPI.Session.Get, e.logger, userID, sessionID, sessionToken)
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
+	clientTransport, err := e.server.CreateConnectionForUser(connCtx, userID, sessionID, tokenResolver)
 	if err != nil {
 		return nil, err
 	}

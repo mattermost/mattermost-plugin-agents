@@ -52,6 +52,7 @@ func (c transcriptionBotsConfig) EnableTokenUsageLogToPlugin() bool {
 func (c transcriptionBotsConfig) EnableTokenUsageLogToFile() bool { return false }
 func (c transcriptionBotsConfig) GetTranscriptGenerator() string  { return "" }
 func (c transcriptionBotsConfig) GetTranscriptBotUserID() string  { return c.userID }
+func (c transcriptionBotsConfig) EnableProjectChannels() bool     { return false }
 
 func allowPluginLogs(api *plugintest.API) {
 	for _, method := range []string{"LogDebug", "LogInfo", "LogWarn", "LogError"} {

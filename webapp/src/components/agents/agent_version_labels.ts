@@ -23,6 +23,8 @@ export function versionSourceLabel(intl: IntlShape, summary: Pick<AgentVersionSu
         return intl.formatMessage({defaultMessage: 'Restored'});
     case 'system':
         return intl.formatMessage({defaultMessage: 'System'});
+    case 'self_setup':
+        return intl.formatMessage({defaultMessage: 'Self-setup'});
     default:
         return intl.formatMessage({defaultMessage: 'Edited'});
     }
@@ -113,6 +115,9 @@ export function changedFieldLabel(intl: IntlShape, field: string): string {
         return intl.formatMessage({defaultMessage: 'Dynamic tool loading'});
     case 'useServiceAccountAuth':
         return intl.formatMessage({defaultMessage: 'Service account authentication'});
+    case 'scopedChannelMode':
+    case 'scopedExtraChannelIDs':
+        return intl.formatMessage({defaultMessage: 'Scoped channel mode'});
     case 'reasoningEnabled':
     case 'reasoningEffort':
     case 'thinkingBudget':

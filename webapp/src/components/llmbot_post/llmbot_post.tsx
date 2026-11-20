@@ -19,8 +19,7 @@ import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
-import {LLMBot} from '@/bots';
-import manifest from '@/manifest';
+import {isAgentBotUserId} from '@/selectors';
 
 import {isValidId} from '@/utils/ids';
 import {displayNameFor, selectTeammateNameDisplay} from '@/utils/teammate_name';
@@ -103,11 +102,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Anti-impersonation: plugin props are trusted only on posts authored by a
     // known agent bot, since any user can set props on their own posts.
-    const authorIsAgentBot = useSelector<GlobalState & Record<string, unknown>, boolean>((state) => {
-        const pluginState = state['plugins-' + manifest.id] as {bots?: LLMBot[] | null} | undefined;
-        const bots = pluginState?.bots;
-        return Boolean(bots?.some((bot) => bot.id === props.post.user_id));
-    });
+    const authorIsAgentBot = useSelector<GlobalState, boolean>((state) => isAgentBotUserId(state as never, props.post.user_id));
 
     // Post props are free-form JSON; a conversation_id that is not a
     // well-formed id is treated as absent so no request is built from it and

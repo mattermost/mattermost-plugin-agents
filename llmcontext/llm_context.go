@@ -5,17 +5,24 @@ package llmcontext
 
 import (
 	stdcontext "context"
+	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ToolProvider provides built-in tools for a bot and context
@@ -42,6 +49,22 @@ type MCPServerDescriber interface {
 }
 
 var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
+
+// ScopedSessionMinter mints the per-run scoped sessions scoped channel turns
+// connect with.
+type ScopedSessionMinter interface {
+	MintScopedSession(ctx stdcontext.Context, req mcp.ScopedSessionRequest) (*mcp.ScopedRun, error)
+	// ScopedSessionsAvailable reports whether this node's server can create
+	// scoped sessions.
+	ScopedSessionsAvailable() bool
+}
+
+var _ ScopedSessionMinter = (*mcp.ClientManager)(nil)
+
+// channelToolCallingConfig is the admin toggle for tool calling in channels.
+type channelToolCallingConfig interface {
+	EnableChannelMentionToolCalling() bool
+}
 
 // SkillProvider provides the skill tools and catalog for a request.
 type SkillProvider interface {
@@ -71,6 +94,9 @@ type Builder struct {
 	skillProvider   SkillProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
+
+	projectMu      sync.RWMutex
+	projectRuntime ProjectRuntime
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -314,6 +340,298 @@ func (b *Builder) UsesServiceAccountCatalog(bot *bots.Bot) bool {
 	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.licenseChecker.Allows(enterprise.CapMCPServiceAccount)
 }
 
+// WithLLMContextScopedChannelTurn asks for this channel-triggered turn's tools
+// to run on a scoped session for the agent's bot. It only takes effect when
+// ScopedChannelModeActive holds for the turn's channel; the caller must then
+// call ReleaseScopedSession on the context when the run ends. Must be
+// configured before tools are built.
+func (b *Builder) WithLLMContextScopedChannelTurn(turn llm.ScopedTurn) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.ScopedTurn = &turn
+	}
+}
+
+// WithLLMContextScopedCatalogPreview limits MCP tools to those a scoped turn
+// of bot in the context's channel would carry, without minting a session. It
+// is for catalog previews only; turns that run tools use
+// WithLLMContextScopedChannelTurn. Must be configured before tools are built.
+func (b *Builder) WithLLMContextScopedCatalogPreview(bot *bots.Bot) llm.ContextOption {
+	return func(c *llm.Context) {
+		if !b.ScopedChannelModeActive(bot, c.Channel) {
+			return
+		}
+		c.ToolCatalog.ScopedPreview = true
+		keep := c.ToolCatalog.KeepMCPTool
+		c.ToolCatalog.KeepMCPTool = func(tool llm.Tool) bool {
+			return mcp.ScopedCatalogAllows(tool) && (keep == nil || keep(tool))
+		}
+	}
+}
+
+// ScopedChannelModeConfigured reports whether bot has scoped channel mode
+// turned on, whether or not its prerequisites currently hold.
+func ScopedChannelModeConfigured(bot *bots.Bot) bool {
+	return bot != nil && bot.GetConfig().ScopedChannelMode
+}
+
+// ScopedChannelModeActive is the one decision for whether bot's turns in
+// channel run their tools on a scoped session: the agent setting is on, every
+// prerequisite holds right now, and channel is a public or private channel.
+// DMs and group messages never run scoped.
+func (b *Builder) ScopedChannelModeActive(bot *bots.Bot, channel *model.Channel) bool {
+	return ScopedChannelModeAppliesTo(channel) && b.ScopedChannelModeAvailable(bot)
+}
+
+// ScopedChannelModeAppliesTo reports whether scoped channel mode can apply in
+// channel at all: only public and private channels, never DMs or group messages.
+func ScopedChannelModeAppliesTo(channel *model.Channel) bool {
+	return channel != nil && (channel.Type == model.ChannelTypeOpen || channel.Type == model.ChannelTypePrivate)
+}
+
+// ScopedChannelModeAvailable is ScopedChannelModeActive without the channel:
+// whether bot's channel turns can run scoped right now.
+func (b *Builder) ScopedChannelModeAvailable(bot *bots.Bot) bool {
+	return ScopedChannelModeConfigured(bot) && len(b.ScopedChannelModeBlockers(bot)) == 0
+}
+
+// ScopedChannelModeBlocker names a prerequisite of scoped channel mode that
+// does not currently hold.
+type ScopedChannelModeBlocker string
+
+const (
+	ScopedBlockedServiceAccountOff     ScopedChannelModeBlocker = "service_account_off"
+	ScopedBlockedAllToolsEnabled       ScopedChannelModeBlocker = "all_tools_enabled"
+	ScopedBlockedLicense               ScopedChannelModeBlocker = "license"
+	ScopedBlockedChannelToolCallingOff ScopedChannelModeBlocker = "channel_tool_calling_off"
+	ScopedBlockedServerUnsupported     ScopedChannelModeBlocker = "server_unsupported"
+)
+
+// ScopedChannelModeBlockers lists the prerequisites of scoped channel mode
+// that bot does not currently meet, whether or not the mode is turned on.
+func (b *Builder) ScopedChannelModeBlockers(bot *bots.Bot) []ScopedChannelModeBlocker {
+	if bot == nil {
+		return []ScopedChannelModeBlocker{ScopedBlockedServiceAccountOff}
+	}
+	cfg := bot.GetConfig()
+	var blockers []ScopedChannelModeBlocker
+	if !cfg.UseServiceAccountAuth {
+		blockers = append(blockers, ScopedBlockedServiceAccountOff)
+	}
+	if cfg.AutoEnableNewMCPTools {
+		blockers = append(blockers, ScopedBlockedAllToolsEnabled)
+	}
+	if !b.licenseChecker.Allows(enterprise.CapMCPServiceAccount) {
+		blockers = append(blockers, ScopedBlockedLicense)
+	}
+	if !b.channelToolCallingEnabled() {
+		blockers = append(blockers, ScopedBlockedChannelToolCallingOff)
+	}
+	if !b.ServerSupportsScopedSessions() {
+		blockers = append(blockers, ScopedBlockedServerUnsupported)
+	}
+	return blockers
+}
+
+// ScopedRunLapsed reports whether a live scoped run of bot must end: the agent
+// can no longer run scoped, the run can read an extra channel the agent no
+// longer lists, or the run can use a tool, built-in web search included, that
+// the agent's allowlist no longer names.
+func (b *Builder) ScopedRunLapsed(bot *bots.Bot, run *mcp.ScopedRun) bool {
+	if bot == nil || !b.ScopedChannelModeAvailable(bot) {
+		return true
+	}
+	cfg := bot.GetConfig()
+	if slices.ContainsFunc(run.ExtraChannelIDs(), func(id string) bool {
+		return !slices.Contains(cfg.ScopedExtraChannelIDs, id)
+	}) {
+		return true
+	}
+	return slices.ContainsFunc(run.EnabledTools(), func(granted llm.EnabledMCPTool) bool {
+		return !slices.ContainsFunc(cfg.EnabledMCPTools, func(current llm.EnabledMCPTool) bool {
+			return current.ToolName == granted.ToolName &&
+				llm.NormalizeMCPServerOrigin(current.ServerOrigin) == llm.NormalizeMCPServerOrigin(granted.ServerOrigin)
+		})
+	})
+}
+
+// ServerSupportsScopedSessions reports whether the Mattermost server can mint
+// scoped sessions, as probed when the plugin started on this node.
+func (b *Builder) ServerSupportsScopedSessions() bool {
+	if b == nil {
+		return false
+	}
+	minter, ok := b.mcpToolProvider.(ScopedSessionMinter)
+	return ok && minter.ScopedSessionsAvailable()
+}
+
+func (b *Builder) channelToolCallingEnabled() bool {
+	cfg, ok := b.configProvider.(channelToolCallingConfig)
+	return ok && cfg.EnableChannelMentionToolCalling()
+}
+
+// ErrScopedRequesterCannotReadChannel is returned when a scoped turn's
+// requester cannot read the channel the session would be scoped to.
+var ErrScopedRequesterCannotReadChannel = errors.New("requester cannot read the scoped turn's channel")
+
+// ErrScopedRequesterCannotReadTeamChannels is returned for a requester of an
+// agent in scoped channel mode who cannot read public channels on the
+// channel's team (guests, or a role scheme that withholds the permission): the
+// scope reads those channels on the requester's behalf.
+var ErrScopedRequesterCannotReadTeamChannels = errors.New("this agent can only be used by people who can read public channels on the team")
+
+// RequesterCanUseScopedChannelMode reports whether requesterID may use a
+// scoped-mode agent in channel. It fails closed.
+func (b *Builder) RequesterCanUseScopedChannelMode(requesterID string, channel *model.Channel) bool {
+	if b == nil || requesterID == "" || channel == nil || channel.TeamId == "" {
+		return false
+	}
+	return b.pluginAPI.User.HasPermissionToTeam(requesterID, channel.TeamId, model.PermissionReadPublicChannel)
+}
+
+// mintScopedRun mints the turn's scoped session and records the grant. The
+// returned run is owned by c: ReleaseScopedSession closes it.
+func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, requesterID string) (*mcp.ScopedRun, error) {
+	cfg := bot.GetConfig()
+	rec := plugin.MakeAuditRecord(audit.EventAgentScopedSessionGrant, model.AuditStatusFail)
+	rec.Actor.UserId = requesterID
+	if sc := trace.SpanFromContext(ctx).SpanContext(); sc.HasTraceID() {
+		rec.AddMeta(audit.MetaTraceID, sc.TraceID().String())
+	}
+	audit.AddParam(rec, audit.KeyAgentID, bot.BotUserID())
+	audit.AddParam(rec, audit.KeyChannelID, c.Channel.Id)
+	audit.AddParam(rec, audit.KeyPostID, c.ToolCatalog.ScopedTurn.TriggerPostID)
+	audit.AddParam(rec, audit.KeyThreadRootPostID, c.ToolCatalog.ScopedTurn.ThreadRootID)
+	audit.AddParam(rec, audit.KeyConversationID, c.ToolCatalog.ScopedTurn.ConversationID)
+	grantsOff := scopedsession.PublicGrantsOffReason(pluginServerSettings{b.pluginAPI})
+	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, grantsOff == scopedsession.PublicGrantsOn)
+	audit.AddParam(rec, audit.KeyScopeTriggeringTeamPublicChannels, !scopedsession.TeamGrantOff(grantsOff))
+	grantDeferred := false
+	defer func() {
+		if !grantDeferred {
+			b.pluginAPI.Audit.Record(rec)
+		}
+	}()
+
+	if !b.RequesterCanUseScopedChannelMode(requesterID, c.Channel) {
+		return nil, ErrScopedRequesterCannotReadTeamChannels
+	}
+
+	// The scope grants its channel regardless of membership, so the requester
+	// must be able to read it; otherwise a caller-supplied channel (the LLM
+	// Bridge) would read through the bot what the requester cannot.
+	if !b.pluginAPI.User.HasPermissionToChannel(requesterID, c.Channel.Id, model.PermissionReadChannel) {
+		return nil, ErrScopedRequesterCannotReadChannel
+	}
+
+	minter, ok := b.mcpToolProvider.(ScopedSessionMinter)
+	if !ok {
+		return nil, mcp.ErrScopedSessionsUnavailable
+	}
+	req := mcp.ScopedSessionRequest{
+		BotUserID:       bot.BotUserID(),
+		RequesterID:     requesterID,
+		ChannelID:       c.Channel.Id,
+		TeamID:          c.Channel.TeamId,
+		ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
+		EnabledTools:    cfg.EnabledMCPTools,
+	}
+	if bot.IsProjectAgent() {
+		// A project agent reads exactly its project and writes reactions and
+		// bookmarks only there.
+		scope, scopeErr := b.projectScope(ctx, bot, c.Channel)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		req.ExtraChannelIDs = scope.ExtraChannelIDs
+		req.ExactChannels = true
+		req.WriteChannelIDs = scope.WriteChannelIDs
+		audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, false)
+		audit.AddParam(rec, audit.KeyScopeTriggeringTeamPublicChannels, false)
+	}
+	run, err := minter.MintScopedSession(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	rec.Success()
+	audit.AddParam(rec, audit.KeyScopeExtraChannelCount, len(run.ExtraChannelIDs()))
+	var recordGrant func(conversationID string)
+	if c.ToolCatalog.ScopedTurn.ConversationPending {
+		grantDeferred = true
+		recordGrant = func(conversationID string) {
+			audit.AddParam(rec, audit.KeyConversationID, conversationID)
+			b.pluginAPI.Audit.Record(rec)
+		}
+	}
+	c.SetScopedSession(func() { _ = run.Close() }, run.Closed, recordGrant)
+	return run, nil
+}
+
+// auditScopedToolCalls wraps each tool so every call a scoped turn runs, all of
+// them without asking, leaves an audit record naming the requester. Records
+// carry identifiers and the outcome only, never arguments or results.
+// User-interaction tools are answered by the user, not run, so they are left
+// as they are.
+// AuditScopedToolCalls wraps tools added to c's catalog after it was built,
+// so they are audited like the rest of a scoped catalog. Unscoped catalogs are
+// returned as they are.
+func (b *Builder) AuditScopedToolCalls(c *llm.Context, bot *bots.Bot, requesterID string, tools []llm.Tool) []llm.Tool {
+	if c == nil || !c.ToolsScoped {
+		return tools
+	}
+	return b.auditScopedToolCalls(tools, bot, requesterID)
+}
+
+func (b *Builder) auditScopedToolCalls(tools []llm.Tool, bot *bots.Bot, requesterID string) []llm.Tool {
+	wrapped := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		resolve := tool.Resolver
+		if resolve == nil || tool.UserInteraction != "" {
+			wrapped = append(wrapped, tool)
+			continue
+		}
+		name, origin := tool.Name, tool.ServerOrigin
+		tool.Resolver = func(ctx stdcontext.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+			result, err := resolve(ctx, llmCtx, args)
+
+			rec := plugin.MakeAuditRecord(audit.EventAgentScopedToolCall, model.AuditStatusFail)
+			rec.Actor.UserId = requesterID
+			if sc := trace.SpanFromContext(ctx).SpanContext(); sc.HasTraceID() {
+				rec.AddMeta(audit.MetaTraceID, sc.TraceID().String())
+			}
+			audit.AddParam(rec, audit.KeyAgentID, bot.BotUserID())
+			audit.AddParam(rec, audit.KeyToolName, name)
+			audit.AddParam(rec, audit.KeyMCPServerKind, scopedToolServerKind(origin))
+			if llmCtx != nil {
+				if llmCtx.Channel != nil {
+					audit.AddParam(rec, audit.KeyChannelID, llmCtx.Channel.Id)
+				}
+				if turn := llmCtx.ToolCatalog.ScopedTurn; turn != nil {
+					audit.AddParam(rec, audit.KeyConversationID, turn.ConversationID)
+					audit.AddParam(rec, audit.KeyPostID, turn.TriggerPostID)
+				}
+			}
+			if err == nil {
+				rec.Success()
+			}
+			b.pluginAPI.Audit.Record(rec)
+			return result, err
+		}
+		wrapped = append(wrapped, tool)
+	}
+	return wrapped
+}
+
+// scopedToolServerKind names where a scoped tool runs: "builtin" for the
+// plugin's own tools, otherwise the MCP server kind. Remote origins are
+// admin-configured URLs, so records carry only their kind; the namespaced
+// tool name identifies the server.
+func scopedToolServerKind(origin string) string {
+	if origin == "" {
+		return "builtin"
+	}
+	return mcp.ServerKind(origin)
+}
+
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools.
 func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, userID string, forceConcrete bool) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
@@ -344,7 +662,14 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	botCfg := bot.GetConfig()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
-	store.AddTools(b.toolProvider.GetTools(bot, c))
+	builtInTools := b.toolProvider.GetTools(bot, c)
+	scopedTurn := c.ToolCatalog.ScopedTurn != nil && b.ScopedChannelModeActive(bot, c.Channel)
+	if scopedTurn || c.ToolCatalog.ScopedPreview {
+		// A scoped turn runs every tool unasked, so the built-in tools that
+		// reach outside Mattermost need the admin to have named them.
+		builtInTools = llm.FilterScopedOptInTools(builtInTools, botCfg.EnabledMCPTools)
+	}
+	store.AddTools(builtInTools)
 
 	var mcpTools []llm.Tool
 	var mcpErrors *mcp.Errors
@@ -357,11 +682,35 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 			return store
 		}
 
+		var scopedRun *mcp.ScopedRun
+		if scopedTurn {
+			run, mintErr := b.mintScopedRun(ctx, c, bot, userID)
+			if mintErr != nil {
+				// Fail closed: never fall back to the requester's credentials.
+				b.pluginAPI.Log.Warn("Scoped session unavailable; this turn has no MCP tools",
+					"bot_id", bot.BotUserID(), "channel_id", c.Channel.Id, "error", mintErr.Error())
+				return store
+			}
+			scopedRun = run
+			// The caller only learns about the run once the context is built,
+			// so a panic while building the catalog must end the run here.
+			defer func() {
+				if r := recover(); r != nil {
+					c.ReleaseScopedSession()
+					panic(r)
+				}
+			}()
+		}
+
 		// Build the catalog for the appropriate auth mode. GetTools validates
 		// the request fail-closed (for example, an agent with no bot user
 		// yields an error, not tools).
 		req := mcp.UserCatalogRequest(userID)
-		if useServiceAccount {
+		switch {
+		case scopedRun != nil:
+			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
+			req = mcp.ScopedCatalogRequest(scopedRun, userID)
+		case useServiceAccount:
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
 			req = mcp.ServiceAccountCatalogRequest(bot.BotUserID(), userID)
 		}
@@ -386,6 +735,16 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		}
 		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolCatalog.DisabledMCPServerOrigins)
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
+		mcpTools = dropChannelArtifactTools(mcpTools, c)
+		if scopedRun != nil {
+			mcpTools = scopedRun.FilterCatalog(mcpTools, botCfg.EnabledMCPTools)
+			if bot.IsProjectAgent() {
+				mcpTools = append(mcpTools, b.projectPluginTools(ctx, c, bot, userID, selection)...)
+			}
+			mcpTools = b.auditScopedToolCalls(mcpTools, bot, userID)
+			store.AddTools(b.auditScopedToolCalls(builtInTools, bot, userID))
+			c.ToolsScoped = true
+		}
 
 		if mcpErrors != nil {
 			authErrors := mcpErrors.ToolAuthErrors
@@ -596,6 +955,23 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 
 	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
 		return disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)]
+	})
+}
+
+// dropChannelArtifactTools removes the built-in server's channel artifact read
+// tools unless the request is in a public or private channel. Libraries exist
+// only there, so a direct or group message, or a request with no channel, is
+// not offered the tools, and dynamic tool loading cannot discover them either.
+func dropChannelArtifactTools(tools []llm.Tool, c *llm.Context) []llm.Tool {
+	if c != nil && c.Channel != nil && channelartifacts.SupportsChannelType(c.Channel.Type) {
+		return tools
+	}
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		if tool.ServerOrigin != mcp.EmbeddedClientKey {
+			return false
+		}
+		name := llm.BareMCPToolName(tool.Name)
+		return name == channelartifacts.ListToolName || name == channelartifacts.GetToolName
 	})
 }
 

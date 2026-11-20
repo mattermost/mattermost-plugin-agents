@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ import (
 
 type stubEmbeddedServer struct{}
 
-func (s *stubEmbeddedServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *stubEmbeddedServer) CreateClientTransport(context.Context, string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, nil
 }
 
@@ -545,6 +546,7 @@ func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
 
 	allowedOnly := []string{allowedOrigin}
 	everyServer := []string{allowedOrigin, deniedOrigin, mcp.EmbeddedClientKey, pluginOrigin}
+	everyServerWithBuiltins := append(slices.Clone(everyServer), llm.BuiltinToolsOrigin)
 
 	tests := []struct {
 		name        string
@@ -557,7 +559,7 @@ func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
 		{name: "system admin outside the agent editor still has them hidden", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: allowedOnly},
 		{name: "non-admin agent editor hides denied servers", query: "purpose=agent_config", wantStatus: http.StatusOK, wantOrigins: allowedOnly},
 		{name: "system admin agent editor lists denied servers", query: "purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServer},
-		{name: "system admin service account agent editor lists denied servers", query: "catalog=service_account&purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServer},
+		{name: "system admin service account agent editor lists denied servers", query: "catalog=service_account&purpose=agent_config", isAdmin: true, wantStatus: http.StatusOK, wantOrigins: everyServerWithBuiltins},
 		{name: "unknown purpose is rejected", query: "purpose=chat", isAdmin: true, wantStatus: http.StatusBadRequest},
 	}
 
@@ -832,7 +834,7 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
 		require.Empty(t, mcpMock.getContexts)
 
-		require.Len(t, response.Servers, 2)
+		require.Len(t, response.Servers, 3)
 		require.Equal(t, "n8n", response.Servers[0].Name)
 		require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
 		require.True(t, response.Servers[0].Authenticated)
@@ -849,6 +851,29 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Empty(t, response.Servers[1].AuthURL)
 		require.False(t, response.Servers[1].ServiceAccountConfigured)
 		require.Empty(t, response.Servers[1].Tools)
+
+		builtin := response.Servers[2]
+		require.Equal(t, llm.BuiltinToolsOrigin, builtin.ServerOrigin)
+		require.Equal(t, mcp.ServerKindBuiltin, builtin.Kind)
+		var builtinTools []string
+		for _, tool := range builtin.Tools {
+			builtinTools = append(builtinTools, tool.Name)
+		}
+		require.ElementsMatch(t, []string{"WebSearch", "WebSearchFetchSource"}, builtinTools)
+	})
+
+	t.Run("the user catalog does not list built-in tools", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.api.mcpClientManager = &mockMCPClientManager{}
+		e.config.mcpConfig = mcp.Config{Enabled: true}
+
+		response, status := requestUserMCPTools(t, e.api, "")
+		require.Equal(t, http.StatusOK, status)
+		for _, server := range response.Servers {
+			require.NotEqual(t, llm.BuiltinToolsOrigin, server.ServerOrigin)
+		}
 	})
 
 	t.Run("rejects catalog=service_account without manage access", func(t *testing.T) {

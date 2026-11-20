@@ -387,7 +387,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 				fmt.Fprintf(&notFoundMsg, "%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum)
 				stepNum++
 			}
-			fmt.Fprintf(&notFoundMsg, "%d. Call get_user_channels to list all channels you have access to\n", stepNum)
+			fmt.Fprintf(&notFoundMsg, "%d. %s\n", stepNum, notFoundChannelHint(ctx))
 			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
 
 			return notFoundMsg.String(), nil
@@ -440,7 +440,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 // lookupChannelRole resolves the requesting user's role in a channel for display.
 // Returns "admin", "guest", "member", "not_member", or "" if the role cannot be determined.
 func (p *MattermostToolProvider) lookupChannelRole(ctx context.Context, client *model.Client4, channelID, userID string) string {
-	if userID == "" {
+	// A scoped session never has a membership to look up.
+	if userID == "" || runsScoped(ctx) {
 		return ""
 	}
 	member, resp, err := client.GetChannelMember(ctx, channelID, userID, "")
@@ -587,12 +588,7 @@ func (p *MattermostToolProvider) toolAddChannelMember(mcpContext *MCPToolContext
 func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context, client *model.Client4, displayName, teamID string) ([]*model.Channel, error) {
 	if teamID != "" {
 		// Search within specific team - should only return one result
-		user, _, userErr := client.GetMe(ctx, "")
-		if userErr != nil {
-			return nil, fmt.Errorf("error getting current user: %w", userErr)
-		}
-
-		channels, _, channelErr := client.GetChannelsForTeamForUser(ctx, teamID, user.Id, false, "")
+		channels, channelErr := channelsOnTeam(ctx, client, teamID)
 		if channelErr != nil {
 			return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
 		}
@@ -651,8 +647,10 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 		// Search within specific team - should only return one result
 		channel, resp, err := client.GetChannelByName(ctx, name, teamID, "")
 		if err != nil {
-			// Check if it's a 404 (not found) - this is not a technical error
-			if resp != nil && resp.StatusCode == 404 {
+			// A missing channel is not a technical error. A scoped session
+			// gets the same refusal for a missing channel as for one out of
+			// scope, so either way the caller moves on to the next lookup.
+			if (resp != nil && resp.StatusCode == 404) || isOutOfScopeError(err) {
 				return []*model.Channel{}, nil
 			}
 			// Real error (network, auth, etc.)
@@ -701,12 +699,7 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 // tryFindChannelBySubstring does a case-insensitive substring match on display names
 // within a specific team. Used as a fallback when exact matches fail.
 func (p *MattermostToolProvider) tryFindChannelBySubstring(ctx context.Context, client *model.Client4, term, teamID string) ([]*model.Channel, error) {
-	user, _, userErr := client.GetMe(ctx, "")
-	if userErr != nil {
-		return nil, fmt.Errorf("error getting current user: %w", userErr)
-	}
-
-	channels, _, channelErr := client.GetChannelsForTeamForUser(ctx, teamID, user.Id, false, "")
+	channels, channelErr := channelsOnTeam(ctx, client, teamID)
 	if channelErr != nil {
 		return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
 	}
@@ -1006,10 +999,15 @@ func (p *MattermostToolProvider) toolListTeamChannels(mcpContext *MCPToolContext
 	if err != nil {
 		return "", fmt.Errorf("error fetching public channels: %w", err)
 	}
-	private, _, err := client.GetPrivateChannelsForTeam(ctx, args.TeamID, page, perPage, "")
-	if err != nil {
-		// Private channels require additional permission; degrade gracefully.
-		p.logger.Warn("failed to fetch private channels", "error", err)
+	var private []*model.Channel
+	// The private channel listing is a membership route, which a scoped
+	// session cannot use.
+	if !runsScoped(ctx) {
+		private, _, err = client.GetPrivateChannelsForTeam(ctx, args.TeamID, page, perPage, "")
+		if err != nil {
+			// Private channels require additional permission; degrade gracefully.
+			p.logger.Warn("failed to fetch private channels", "error", err)
+		}
 	}
 
 	channels := make([]*model.Channel, 0, len(public)+len(private))

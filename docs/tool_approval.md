@@ -19,6 +19,8 @@ An agent runs tools in one of two modes. The mode is a setting on the agent, not
 
 **Service account authentication.** External MCP servers get shared credentials, while Mattermost and plugin tools still run as the initiator. The initiator still approves each call. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 
+**Scoped channel mode.** An agent in this mode runs its named tools in channels without approval, on a read-only session limited to the channel, public channels on open teams, and admin-picked channels. A project channel's agent still asks before tools that always ask, such as starting Cursor runs or changing its own setup, and leaves those tools out of turns nobody is present to approve. Bot-triggered turns still run only tools set to auto-run everywhere, except for a project channel's agent, whose bot-triggered turns keep the tools on its project allowlist other than tools that always ask. See [Scoped channel mode](mcp_integrations.md#scoped-channel-mode).
+
 ## Approval policies
 
 Admins set a policy for each tool on the **Tools** tab of the MCP settings. The agent's tool grants decide what the agent may use. They never change the policy.
@@ -40,6 +42,7 @@ Some tools have no policy:
 
 - `search_tools` and `load_tool`, the dynamic loading helpers, always run without approval.
 - The built-in `CreateFile` tool always runs without approval, because it only attaches a file to the agent's own reply. `wait_for_async_work`, which schedules the agent's own follow-up, does too.
+- The built-in `SaveChannelArtifact` and `RemoveChannelArtifact` tools change the channel artifact library, so they ask for approval. The exception is a project channel's own agent, which runs them in its project channel without asking. See [Channel artifacts](channel_artifacts.md#agents-and-the-library) and [Project channels](project_channels.md).
 - `AskUserQuestion` always waits for the user's answer.
 - The built-in web search tool (Brave or SearXNG) always asks. Native provider web search runs inside the provider, so it has no approval card.
 
@@ -83,7 +86,7 @@ In a channel, after an approved call returns, the initiator chooses **Share** or
 A post written by a bot, plugin, or OAuth app has no human who can approve.
 
 - Webhook posts never trigger an agent. Bot and plugin posts do only when they set the `activate_ai` post property.
-- A bot post that sets `activate_ai` can start a channel turn. With channel tool calling on, Mattermost removes every tool except those set to **Auto Run (Everywhere)** and the built-in helpers. With it off, the run has no tools.
+- A bot post that sets `activate_ai` can start a channel turn. With channel tool calling on, Mattermost removes every tool except those set to **Auto Run (Everywhere)** and the built-in helpers. A project channel's agent is the exception: it keeps the tools on its project allowlist, except tools that always ask. With channel tool calling off, an ordinary agent's run has no tools, and a project channel's agent doesn't run at all. See [Project channels](project_channels.md).
 - Any other automated post starts a run with no tools.
 
 There's no path where a bot approves its own call. To let an automated flow use a tool, set that tool to **Auto Run (Everywhere)** after a security review, or keep a person in the loop.
