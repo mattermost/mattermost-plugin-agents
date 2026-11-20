@@ -15,7 +15,7 @@ import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tabs} from '@mattermost/compass-ui/components/tabs';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
+import {getAgents, getServices, deleteAgent as deleteAgentAPI, startAgentSetup} from '@/client';
 import {downloadAgentExport} from '@/utils/agent_export';
 import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
@@ -30,7 +30,7 @@ import {matchesQuery} from './find_agents_search';
 type Tab = 'all' | 'yours';
 
 type AgentsListProps = {
-    onStartChat: (botUserId: string) => void;
+    onStartChat: (botUserId: string, rootId?: string) => void;
 
     // The route asks for the create flow (/agents/all/new). Closing it, or being
     // refused (no permission, plan limit), reports through onCloseCreate so the
@@ -222,6 +222,17 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
         }
     }, [intl]);
 
+    const handleSetUpAgent = useCallback(async (agent: UserAgent) => {
+        setActionError('');
+        try {
+            const thread = await startAgentSetup(agent.id);
+            onStartChat(thread.botUserId, thread.rootPostId);
+        } catch (e: any) {
+            const message = (typeof e?.message === 'string' ? e.message : '').trim();
+            setActionError(message || intl.formatMessage({defaultMessage: 'Failed to start setting up the agent.'}));
+        }
+    }, [intl, onStartChat]);
+
     const filteredAgents = agents.filter((a) => {
         if (activeTab === 'yours' && a.creatorID !== currentUserId) {
             return false;
@@ -392,6 +403,7 @@ const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsList
                                     onEdit={handleEdit}
                                     onDelete={handleDeleteRequest}
                                     onExport={handleExportAgent}
+                                    onSetUp={handleSetUpAgent}
                                 />
                             ))}
                         </AgentListContainer>

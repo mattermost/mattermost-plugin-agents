@@ -23,6 +23,8 @@ export function versionSourceLabel(intl: IntlShape, summary: Pick<AgentVersionSu
         return intl.formatMessage({defaultMessage: 'Restored'});
     case 'system':
         return intl.formatMessage({defaultMessage: 'System'});
+    case 'self_setup':
+        return intl.formatMessage({defaultMessage: 'Self-setup'});
     default:
         return intl.formatMessage({defaultMessage: 'Edited'});
     }

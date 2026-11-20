@@ -294,7 +294,7 @@ func TestAgentVersionSnapshotKeys(t *testing.T) {
 	// Cleared by agentVersionSnapshot: secrets, lifecycle metadata and IDs
 	// that restore must not change.
 	excludedKeys := []string{
-		"service", "maxFileSize", "botUserID", "creatorID", "createAt", "updateAt", "deleteAt",
+		"service", "maxFileSize", "botUserID", "creatorID", "createAt", "updateAt", "deleteAt", "setupCompletedAt",
 	}
 
 	var cfg llm.BotConfig

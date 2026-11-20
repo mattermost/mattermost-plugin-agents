@@ -21,7 +21,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	MaxToolTurns, UseServiceAccountAuth, Skills,
-	CreateAt, UpdateAt, DeleteAt`
+	CreateAt, UpdateAt, DeleteAt, SetupCompletedAt`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
 // nil and [] both encode as "[]", as does a marshal error.
@@ -97,6 +97,7 @@ type agentRow struct {
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
+	SetupCompletedAt        int64  `db:"setupcompletedat"`
 }
 
 // toBotConfig converts an agentRow (DB scan result) to an *llm.BotConfig.
@@ -125,6 +126,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		CreateAt:                r.CreateAt,
 		UpdateAt:                r.UpdateAt,
 		DeleteAt:                r.DeleteAt,
+		SetupCompletedAt:        r.SetupCompletedAt,
 	}
 
 	if err := unmarshalJSONSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
@@ -255,6 +257,26 @@ func (s *Store) GetAgent(id string) (*llm.BotConfig, error) {
 	return row.toBotConfig()
 }
 
+// MarkAgentSetupCompleted records that agentID finished its auto-setup
+// conversation at completedAt, unless it already had. It reports whether this
+// call recorded it, and records no version: completion is lifecycle metadata,
+// not configuration.
+func (s *Store) MarkAgentSetupCompleted(agentID string, completedAt int64) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE Agents_UserAgents SET SetupCompletedAt = $1
+		WHERE ID = $2 AND DeleteAt = 0 AND SetupCompletedAt = 0`,
+		completedAt, agentID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent %q set up: %w", agentID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent %q set up: %w", agentID, err)
+	}
+	return rows > 0, nil
+}
+
 // ListAgents returns all active (non-deleted) agents, ordered by creation time descending.
 func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 	var rows []agentRow
@@ -321,7 +343,22 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 // and one whose pre-update state differs from its latest version gets that
 // state recorded as a "system" version first. It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
-func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) error {
+	return s.updateAgent(cfg, meta, nil)
+}
+
+// ErrAgentChanged is returned by UpdateAgentIfUnchanged when the agent was
+// saved since the caller read it.
+var ErrAgentChanged = errors.New("the agent was changed since it was read")
+
+// UpdateAgentIfUnchanged is UpdateAgent for a read-modify-write that must not
+// overwrite a concurrent save: it writes only while the agent's UpdateAt is
+// still expectedUpdateAt, and returns ErrAgentChanged otherwise.
+func (s *Store) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta AgentVersionMeta) error {
+	return s.updateAgent(cfg, meta, &expectedUpdateAt)
+}
+
+func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt *int64) (err error) {
 	if err = validateAgentVersionMeta(meta); err != nil {
 		return err
 	}
@@ -342,6 +379,9 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 	}
 	if current == nil {
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+	if expectedUpdateAt != nil && current.UpdateAt != *expectedUpdateAt {
+		return ErrAgentChanged
 	}
 
 	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)

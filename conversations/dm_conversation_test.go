@@ -594,6 +594,7 @@ type dmTestEnv struct {
 	mmClient      *fakeMMClient
 	mcpMgr        *testMCPClientManager
 	botService    *bots.MMBots
+	builder       *llmcontext.Builder
 	botID         string
 	userID        string
 	channelID     string
@@ -712,6 +713,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		mmClient:      mmClient,
 		mcpMgr:        mcpMgr,
 		botService:    botsService,
+		builder:       contextBuilder,
 		botID:         botID,
 		userID:        userID,
 		channelID:     channelID,

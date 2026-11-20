@@ -640,6 +640,10 @@ func (m *mockConversationStore) GetBotDMBotIDsForUser(_ string) ([]string, error
 type mockAgentStore struct {
 	agents map[string]*llm.BotConfig
 
+	// beforeConditionalUpdate, when set, runs at the start of each
+	// UpdateAgentIfUnchanged, to simulate a save landing concurrently.
+	beforeConditionalUpdate func()
+
 	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
 	countErr error
 
@@ -669,6 +673,7 @@ func mockVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	snap.BotUserID = ""
 	snap.CreatorID = ""
 	snap.CreateAt, snap.UpdateAt, snap.DeleteAt = 0, 0, 0
+	snap.SetupCompletedAt = 0
 	nilIfEmpty := func(s []string) []string {
 		if len(s) == 0 {
 			return nil
@@ -873,6 +878,25 @@ func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersion
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
 	m.recordVersion(cfg, existing, meta)
 	return nil
+}
+
+func (m *mockAgentStore) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta store.AgentVersionMeta) error {
+	if m.beforeConditionalUpdate != nil {
+		m.beforeConditionalUpdate()
+	}
+	if existing, ok := m.agents[cfg.ID]; ok && existing.UpdateAt != expectedUpdateAt {
+		return store.ErrAgentChanged
+	}
+	return m.UpdateAgent(cfg, meta)
+}
+
+func (m *mockAgentStore) MarkAgentSetupCompleted(agentID string, completedAt int64) (bool, error) {
+	cfg, ok := m.agents[agentID]
+	if !ok || cfg.DeleteAt != 0 || cfg.SetupCompletedAt != 0 {
+		return false, nil
+	}
+	cfg.SetupCompletedAt = completedAt
+	return true, nil
 }
 
 func (m *mockAgentStore) DeleteAgent(id string) error {

@@ -41,6 +41,9 @@ type turnRequest struct {
 	conv    *store.Conversation
 	trigger *model.Post
 	post    *model.Post
+	// operation is the operation of the conversation a new thread's first
+	// turn will create; turns of an existing conversation use conv's.
+	operation string
 }
 
 // turnPolicy is the resolved behavior of one turn. Every entry point that
@@ -296,6 +299,15 @@ func (c *Conversations) checkSourceChannel(userID, channelID string) error {
 	return nil
 }
 
+// conversationOperation is the operation of the conversation the turn runs
+// in: the existing conversation's, or the one a new thread will create.
+func (p *turnPolicy) conversationOperation() string {
+	if p.conv != nil {
+		return p.conv.Operation
+	}
+	return p.operation
+}
+
 // buildContext builds the turn's LLM context with the tools the policy
 // allows. Skills are offered only in ordinary conversations, and runs with no
 // requester present get only built-in skills, which no user can edit.
@@ -314,7 +326,9 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
 	}
-	opts = append(opts, builder.WithLLMContextSkills(p.conv == nil || p.conv.Operation == llm.OperationConversation))
+	// A new thread with no operation becomes an ordinary conversation.
+	operation := p.conversationOperation()
+	opts = append(opts, builder.WithLLMContextSkills(operation == llm.OperationConversation || (p.conv == nil && operation == "")))
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
@@ -326,6 +340,12 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	}
 	if err := builder.AddSkillTools(llmContext, skillsCfg); err != nil {
 		return nil, fmt.Errorf("failed to load skills: %w", err)
+	}
+	if tools, ok := p.c.registeredOperation(p.conversationOperation()); ok && tools != nil {
+		if llmContext.Tools == nil {
+			llmContext.Tools = llm.NewToolStore()
+		}
+		llmContext.Tools.AddTools(tools.OperationTools(ctx, p.bot, llmContext))
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():

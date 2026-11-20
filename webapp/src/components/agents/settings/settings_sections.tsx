@@ -73,6 +73,7 @@ export const defaultConfig: PluginConfig = {
     enableHTMLArtifacts: false,
     enableChannelMentionToolCalling: false,
     enableAmbientAutoReply: false,
+    enableAgentAutoSetup: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
@@ -263,6 +264,22 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             updateConfig({enableAmbientAutoReply: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'Lets channel managers choose the ambient auto-reply modes, where the agent’s model reads each new message and decides whether the agent should reply. Every analyzed message costs an LLM call. When disabled, ambient modes cannot be saved and channels using them stop replying automatically; @mentions keep working.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable agent auto-setup'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableAgentAutoSetup)}
+                        onChange={(to) => {
+                            updateConfig({enableAgentAutoSetup: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'Adds “Set up with agent” to the actions of agents people manage. It opens a direct message in which the agent asks about its purpose and then sets its own display name and instructions, and can turn off its own tools. Each change needs the person’s approval and is saved to the agent’s version history, where it can be restored.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}

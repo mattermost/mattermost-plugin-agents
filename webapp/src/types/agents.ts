@@ -111,6 +111,12 @@ export type UserAgent = {
     // Only on GET /agents: whether the current user may edit, export and delete the agent.
     canManage?: boolean;
 
+    // Only on GET /agents: whether the current user may set the agent up by chatting with it.
+    canSetUp?: boolean;
+
+    // When the agent finished its auto-setup conversation; absent when it never did.
+    setupCompletedAt?: number;
+
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
     creatorID?: string;
@@ -204,7 +210,7 @@ export type ServiceInfo = {
 }
 
 // Mirrors the Source column of the agent versions table on the backend.
-export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system';
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'system' | 'self_setup';
 
 // AgentVersionSummary is one entry of GET /agents/:id/versions (newest first).
 // changedFields holds BotConfig JSON keys (e.g. "customInstructions"); names only.
