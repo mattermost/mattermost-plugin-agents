@@ -21,7 +21,7 @@ import (
 
 // Default models for each provider. Update these when bumping model versions.
 const (
-	DefaultOpenAIModel    = "gpt-5.6-terra"
+	DefaultOpenAIModel    = "gpt-6.1-terra"
 	DefaultAnthropicModel = "claude-sonnet-5-5"
 	// DefaultAzureModel is the deployment name in the CI Azure OpenAI resource.
 	DefaultAzureModel   = "gpt-6.1-sol"
@@ -31,7 +31,7 @@ const (
 
 	// DefaultGraderModel is pinned separately from DefaultOpenAIModel so that
 	// bumping the model under test does not silently change the judge.
-	DefaultGraderModel = "gpt-5.6-terra"
+	DefaultGraderModel = "gpt-6-luna"
 )
 
 type EvalT struct {
@@ -67,6 +67,7 @@ type Eval struct {
 	agent     roleModel
 	grader    roleModel
 	runNumber int
+	usage     *usageMeter
 }
 
 // roleModel is the model behind one role, with the names the preflight reports.
@@ -97,8 +98,15 @@ var simpleProviders = map[string]struct {
 var agentUnderTest = llm.BotConfig{ReasoningEnabled: true}
 
 // graderAgent keeps grading cheap and stable; reasoning adds latency and
-// variance without improving single-criterion rubric checks.
+// variance without improving rubric checks. OpenAI models reason at medium
+// effort unless asked for none, so the OpenAI grader asks explicitly.
 var graderAgent = llm.BotConfig{ReasoningEnabled: false}
+
+var openAIGraderAgent = llm.BotConfig{ReasoningEnabled: true, ReasoningEffort: "none"}
+
+// openAIServiceTierEnv selects the OpenAI processing tier for eval requests,
+// for example "flex", which costs half as much in exchange for latency.
+const openAIServiceTierEnv = "OPENAI_SERVICE_TIER"
 
 // resolveModel picks the model to use: the explicit override, then the
 // provider's model environment variable, then the provider default.
@@ -127,6 +135,8 @@ func serviceConfigFor(providerName string, modelOverride string) (llm.ServiceCon
 			Type:         p.serviceType,
 			APIKey:       apiKey,
 			DefaultModel: resolveModel(modelOverride, p.modelEnv, p.defaultModel),
+			// New services default to the Responses API in the admin UI.
+			UseResponsesAPI: name == "openai",
 		}, nil
 	}
 
@@ -227,6 +237,8 @@ func NewEvalWithProvider(providerName string) (*Eval, error) {
 		return nil, err
 	}
 	agent.role = "model under test"
+	meter := &usageMeter{}
+	agent.llm = agent.metered(meter, false)
 
 	// Setup grader LLM (separate from main LLM)
 	grader, err := createGraderLLM()
@@ -234,6 +246,7 @@ func NewEvalWithProvider(providerName string) (*Eval, error) {
 		return nil, fmt.Errorf("failed to create grader LLM: %w", err)
 	}
 	grader.role = "grader"
+	grader.llm = grader.metered(meter, true)
 
 	return &Eval{
 		Prompts:     prompts,
@@ -244,7 +257,18 @@ func NewEvalWithProvider(providerName string) (*Eval, error) {
 		GraderModel: grader.model,
 		agent:       agent,
 		grader:      grader,
+		usage:       meter,
 	}, nil
+}
+
+// metered wraps the role's model so its token usage is recorded with each
+// trial and OpenAI requests use the configured service tier.
+func (r roleModel) metered(meter *usageMeter, grader bool) llm.LanguageModel {
+	tier := ""
+	if r.provider == "openai" {
+		tier = os.Getenv(openAIServiceTierEnv)
+	}
+	return &meteredLLM{LanguageModel: r.llm, meter: meter, grader: grader, model: r.model, serviceTier: tier}
 }
 
 // createGraderLLM creates a separate LLM for grading based on environment variables.
@@ -260,7 +284,11 @@ func createGraderLLM() (roleModel, error) {
 		graderModel = DefaultGraderModel
 	}
 
-	return createProvider(graderProvider, graderModel, graderAgent)
+	agent := graderAgent
+	if graderProvider == "openai" {
+		agent = openAIGraderAgent
+	}
+	return createProvider(graderProvider, graderModel, agent)
 }
 
 func NumEvalsOrSkip(t *testing.T) int {
@@ -315,6 +343,9 @@ func runOnce(e *EvalT, f func(e *EvalT)) {
 	e.failures = nil
 	defer func() {
 		if line, ok := failureLine(e.recorded, e.failures, e.Failed()); ok {
+			if usage := e.usage.snapshot(); usage != (TrialUsage{}) {
+				line.Usage = &usage
+			}
 			writeLogLine(e, line)
 		}
 	}()
@@ -325,6 +356,7 @@ func runOnce(e *EvalT, f func(e *EvalT)) {
 			e.FailNow()
 		}
 	}
+	e.usage.reset()
 	f(e)
 }
 
