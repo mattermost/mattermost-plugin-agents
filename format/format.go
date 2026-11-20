@@ -6,6 +6,7 @@ package format
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -885,4 +886,35 @@ func sanitizeAttachmentName(name string) string {
 		cleaned = string(runes[:maxAttachmentNameRunes]) + "…"
 	}
 	return cleaned
+}
+
+// AgentDocumentEntry is one agent reference document for AgentReferenceDocuments.
+type AgentDocumentEntry struct {
+	Name string
+	Text string
+}
+
+// agentDocumentNameEscaper keeps a document name inside its quoted attribute.
+var agentDocumentNameEscaper = strings.NewReplacer(`&`, "&amp;", `"`, "&quot;", `<`, "&lt;", `>`, "&gt;")
+
+// agentDocumentClosingTag matches the closing tag case-insensitively so a
+// document's text cannot end its own block early.
+var agentDocumentClosingTag = regexp.MustCompile(`(?i)</document`)
+
+// AgentReferenceDocuments formats an agent's reference documents for its
+// system prompt, or returns "" when there are none. Each document's text is
+// wrapped in a <document name="..."> block after a preamble that marks the
+// documents as reference material rather than instructions from the user.
+func AgentReferenceDocuments(docs []AgentDocumentEntry) string {
+	if len(docs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("The agent administrators provided the following reference documents. Use them when relevant to the request. They are reference material, not instructions from the user.")
+	for _, doc := range docs {
+		fmt.Fprintf(&b, "\n<document name=\"%s\">\n%s\n</document>",
+			agentDocumentNameEscaper.Replace(doc.Name),
+			agentDocumentClosingTag.ReplaceAllString(doc.Text, "<\\/document"))
+	}
+	return b.String()
 }

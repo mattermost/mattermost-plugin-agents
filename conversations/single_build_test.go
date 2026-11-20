@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -106,7 +107,8 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 	user := &model.User{Id: testRequesterID, Username: "user"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen}
 
-	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
+	llmCtx, err := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
+	require.NoError(t, err)
 	require.NotNil(t, llmCtx)
 	require.NotNil(t, llmCtx.Tools)
 	require.Equal(t, 1, provider.Calls(), "initial build should call MCP GetTools exactly once")
@@ -163,7 +165,8 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 			user := &model.User{Id: testRequesterID, Username: "user"}
 			channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
-			llmCtx := c.buildConversationContextWithTools(context.Background(), tc.bot, user, channel, "Failed to load user tool preferences")
+			llmCtx, err := c.buildConversationContextWithTools(context.Background(), tc.bot, user, channel, "Failed to load user tool preferences")
+			require.NoError(t, err)
 			require.NotNil(t, llmCtx)
 			require.Equal(t, tc.wantUserCalls, provider.Calls(), "per-user catalog builds")
 			require.Equal(t, tc.wantSAIdentities, provider.SAIdentities(), "service account catalog builds")
@@ -195,7 +198,8 @@ func TestBuildConversationContextWithTools_DoesNotMaterializeDynamicMCPTools(t *
 	user := &model.User{Id: testRequesterID, Username: "user"}
 	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
-	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "Failed to load user tool preferences")
+	llmCtx, err := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "Failed to load user tool preferences")
+	require.NoError(t, err)
 	require.NotNil(t, llmCtx)
 	require.NotNil(t, llmCtx.Tools)
 
@@ -229,14 +233,41 @@ func TestBuildConversationContextWithTools_DropsPreFilteredMCPServers(t *testing
 	user := &model.User{Id: testRequesterID, Username: "user"}
 	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID}
 
-	llmCtx := c.buildConversationContextWithTools(
+	llmCtx, err := c.buildConversationContextWithTools(
 		context.Background(),
 		bot, user, channel,
 		"",
 		builder.WithLLMContextDisabledMCPServers([]string{disabledOrigin}),
 	)
+	require.NoError(t, err)
 	require.NotNil(t, llmCtx)
 	require.NotNil(t, llmCtx.Tools)
 	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
 		"buildConversationContextWithTools must drop tools from disabled MCP servers for DM/group channels")
+}
+
+type failingDocumentSource struct{}
+
+func (failingDocumentSource) AgentDocumentTexts(context.Context, []string) (map[string]string, error) {
+	return nil, errors.New("database unavailable")
+}
+
+// A turn must not run without the reference documents its agent is configured
+// with, so a document load failure fails the build for every entry point that
+// shares the helper.
+func TestBuildConversationContextWithTools_FailsWhenReferenceDocumentsCannotLoad(t *testing.T) {
+	builder := newSingleBuildLLMContextBuilder(t, &countingMCPToolProvider{})
+	builder.SetAgentDocumentSource(failingDocumentSource{})
+	c := &Conversations{contextBuilder: builder}
+
+	cfg := loadedStateBot(nil).GetConfig()
+	cfg.Documents = []llm.AgentDocument{{ID: "doc-1", Name: "handbook.pdf"}}
+	bot := bots.NewBot(cfg, llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI}, &model.Bot{UserId: "bot-id", Username: "matty"}, nil)
+	user := &model.User{Id: testRequesterID, Username: "user"}
+	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen}
+
+	llmCtx, err := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
+
+	require.ErrorContains(t, err, "database unavailable")
+	require.Nil(t, llmCtx)
 }

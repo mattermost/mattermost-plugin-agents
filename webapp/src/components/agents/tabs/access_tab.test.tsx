@@ -102,6 +102,8 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         thinkingBudget: 0,
         maxToolTurns: DefaultMaxToolTurns,
         skills: normalizeSkillsConfig(),
+        documents: [],
+        pendingDocuments: [],
         ...overrides,
     };
 }

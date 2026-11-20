@@ -13,9 +13,11 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {GlobalState} from '@mattermost/types/store';
 
-import {createAgent, getUserMCPTools, updateAgent, uploadAgentAvatar} from '@/client';
+import {createAgent, getUserMCPTools, updateAgent, uploadAgentAvatar, uploadAgentDocument} from '@/client';
 import {TooltipAboveModals} from '@/components/dropdown';
 import {
+    AgentDocument,
+    AgentDocumentReference,
     AgentExportDocument,
     UserAgent,
     CreateAgentRequest,
@@ -25,6 +27,8 @@ import {
     ServiceInfo,
     DefaultMaxToolTurns,
     MaxAllowedMaxToolTurns,
+    MaxAgentDocuments,
+    MaxAgentDocumentsTextRunes,
     SkillsConfig,
     codePointLength,
     normalizeSkillsConfig,
@@ -38,6 +42,8 @@ import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport, matchImportedMCPTools} from '@/utils/agent_export';
 
+import {PendingAgentDocument, base64ToFile, pendingFromExport, totalDocumentTextRunes} from './agent_documents';
+import {useAgentDocumentUploads} from './use_agent_document_uploads';
 import {useSettingsAccess} from './settings/use_settings_access';
 import {useAgentFilePicker} from './use_agent_file_picker';
 import ConfigTab from './tabs/config_tab';
@@ -77,6 +83,10 @@ export type AgentDraft = {
     thinkingBudget: number;
     maxToolTurns: number;
     skills: SkillsConfig;
+    documents: AgentDocument[];
+
+    // Imported documents; uploaded when the agent is saved.
+    pendingDocuments: PendingAgentDocument[];
 }
 
 const emptyDraft: AgentDraft = {
@@ -103,6 +113,8 @@ const emptyDraft: AgentDraft = {
     thinkingBudget: 0,
     maxToolTurns: DefaultMaxToolTurns,
     skills: normalizeSkillsConfig(),
+    documents: [],
+    pendingDocuments: [],
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -115,6 +127,8 @@ function cloneDraft(draft: AgentDraft): AgentDraft {
         enabledTools: [...draft.enabledTools],
         enabledNativeTools: [...draft.enabledNativeTools],
         skills: normalizeSkillsConfig(draft.skills),
+        documents: draft.documents.map((doc) => ({...doc})),
+        pendingDocuments: draft.pendingDocuments.map((doc) => ({...doc})),
     };
 }
 
@@ -122,11 +136,21 @@ function draftsEqual(a: AgentDraft, b: AgentDraft): boolean {
     return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function documentReferences(draft: AgentDraft, uploaded: AgentDocumentReference[]): AgentDocumentReference[] {
+    const refs = draft.documents.map(({id, name}) => ({id, name}));
+    for (const doc of uploaded) {
+        if (!refs.some((ref) => ref.id === doc.id)) {
+            refs.push(doc);
+        }
+    }
+    return refs;
+}
+
 /**
  * Full-document create payload from the form draft. The backend uses the UI as the sole
  * source of truth for create-time defaults, so every field is sent explicitly.
  */
-function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
+function draftToCreateAgentPayload(draft: AgentDraft, uploaded: AgentDocumentReference[]): CreateAgentRequest {
     return {
         displayName: draft.displayName,
         username: draft.username,
@@ -151,6 +175,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         thinkingBudget: draft.thinkingBudget,
         maxToolTurns: draft.maxToolTurns,
         skills: draft.skills,
+        documents: documentReferences(draft, uploaded),
     };
 }
 
@@ -158,7 +183,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
  * Full-document update payload from the form draft. PUT /agents/:id is a full-object
  * replacement, so every mutable field is sent on every save.
  */
-function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
+function draftToUpdateAgentPayload(draft: AgentDraft, uploaded: AgentDocumentReference[]): UpdateAgentRequest {
     return {
         displayName: draft.displayName,
         username: draft.username,
@@ -183,6 +208,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         thinkingBudget: draft.thinkingBudget,
         maxToolTurns: draft.maxToolTurns,
         skills: draft.skills,
+        documents: documentReferences(draft, uploaded),
     };
 }
 
@@ -212,6 +238,8 @@ function agentToDraft(agent: UserAgent, services: ServiceInfo[]): AgentDraft {
         thinkingBudget: agent.thinkingBudget ?? 0,
         maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
         skills: normalizeSkillsConfig(agent.skills),
+        documents: (agent.documents ?? []).map((doc) => ({...doc})),
+        pendingDocuments: [],
     };
 }
 
@@ -337,9 +365,22 @@ const AgentConfigView = (props: Props) => {
         }
     }, [mcpsTabDisabled, skillsTabDisabled, activeTab]);
 
+    const handleDocumentUploaded = useCallback((document: AgentDocument) => {
+        setDraft((prev) => (prev.documents.some((doc) => doc.id === document.id) ? prev : {...prev, documents: [...prev.documents, document]}));
+        setErrors((prev) => {
+            const next = {...prev};
+            delete next.documents;
+            delete next.general;
+            return next;
+        });
+    }, []);
+    const documentUploads = useAgentDocumentUploads(draft.documents, handleDocumentUploaded);
+    const resetDocumentUploads = documentUploads.reset;
+    const savedDocumentIds = useMemo(() => baselineDraft.documents.map((doc) => doc.id), [baselineDraft.documents]);
+
     const isDirty = useMemo(
-        () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
-        [draft, baselineDraft, avatarFile],
+        () => avatarFile !== null || documentUploads.uploading || !draftsEqual(draft, baselineDraft),
+        [draft, baselineDraft, avatarFile, documentUploads.uploading],
     );
 
     const requestBack = useCallback(() => {
@@ -435,6 +476,7 @@ const AgentConfigView = (props: Props) => {
         // is created on the Access tab.
         const needsAccessPolicy = restoredDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
             baselineDraft.userAccessLevel !== UserAccessLevel.AttributeBased;
+        resetDocumentUploads();
         setDraft(restoredDraft);
         setBaselineDraft(cloneDraft(restoredDraft));
         setAvatarFile(null);
@@ -445,7 +487,7 @@ const AgentConfigView = (props: Props) => {
             setActiveTab('access');
         }
         onRestored?.(restored);
-    }, [baselineDraft.userAccessLevel, onRestored, services]);
+    }, [baselineDraft.userAccessLevel, onRestored, resetDocumentUploads, services]);
 
     useEffect(() => {
         return () => {
@@ -471,6 +513,9 @@ const AgentConfigView = (props: Props) => {
             if (request !== importRequestRef.current) {
                 return;
             }
+            if (doc.schemaVersion >= 2) {
+                resetDocumentUploads();
+            }
             updateDraft({
                 ...(mode === 'create' && imported.name ? {username: imported.name} : {}),
                 ...(mode === 'create' && imported.displayName ? {displayName: imported.displayName} : {}),
@@ -481,6 +526,9 @@ const AgentConfigView = (props: Props) => {
                 autoEnableNewMCPTools: imported.autoEnableNewMCPTools,
                 enabledTools,
                 skills: normalizeSkillsConfig(imported.skills),
+
+                // Version 1 files carry no documents, so the agent keeps its own.
+                ...(doc.schemaVersion >= 2 ? {documents: [], pendingDocuments: pendingFromExport(imported.documents ?? [])} : {}),
             });
             setImportMissingServers(missingServerOrigins);
             setActiveTab('config');
@@ -493,7 +541,7 @@ const AgentConfigView = (props: Props) => {
                 setImporting(false);
             }
         }
-    }, [agent?.id, draft.useServiceAccountAuth, intl, mode, updateDraft]);
+    }, [agent?.id, draft.useServiceAccountAuth, intl, mode, resetDocumentUploads, updateDraft]);
 
     const filePicker = useAgentFilePicker(applyImport, (message) => setErrors({general: message}));
 
@@ -546,18 +594,42 @@ const AgentConfigView = (props: Props) => {
                 {max: MaxAllowedMaxToolTurns},
             );
         }
+        if (documentUploads.uploading) {
+            errs.documents = intl.formatMessage({defaultMessage: 'Wait for document uploads to finish before saving.'});
+        } else if (draft.documents.length + draft.pendingDocuments.length > MaxAgentDocuments) {
+            errs.documents = intl.formatMessage(
+                {defaultMessage: 'An agent can have at most {max} documents.'},
+                {max: MaxAgentDocuments},
+            );
+        } else if (totalDocumentTextRunes(draft.documents) > MaxAgentDocumentsTextRunes) {
+            errs.documents = intl.formatMessage(
+                {defaultMessage: 'Reference documents contain {used} characters of extracted text, over the limit of {max}. Remove a document to continue.'},
+                {
+                    used: intl.formatNumber(totalDocumentTextRunes(draft.documents)),
+                    max: intl.formatNumber(MaxAgentDocumentsTextRunes),
+                },
+            );
+        }
         return errs;
-    }, [draft, intl]);
+    }, [draft, intl, documentUploads.uploading]);
 
     const save = useCallback(async () => {
         setSaving(true);
 
         try {
+            const uploaded: AgentDocumentReference[] = [];
+            for (const pending of draft.pendingDocuments) {
+                // Sequential so documents keep the order of the imported file.
+                // eslint-disable-next-line no-await-in-loop
+                const stored = await uploadAgentDocument(base64ToFile(pending));
+                uploaded.push({id: stored.id, name: pending.name});
+            }
+
             let savedAgent: UserAgent;
             if (mode === 'create') {
-                savedAgent = await createAgent(draftToCreateAgentPayload(draft));
+                savedAgent = await createAgent(draftToCreateAgentPayload(draft, uploaded));
             } else {
-                savedAgent = await updateAgent(agent!.id, draftToUpdateAgentPayload(draft));
+                savedAgent = await updateAgent(agent!.id, draftToUpdateAgentPayload(draft, uploaded));
             }
 
             // Upload avatar if one was selected (two-step: create/update first, then avatar)
@@ -570,7 +642,9 @@ const AgentConfigView = (props: Props) => {
             }
 
             // Clear dirty state so onSaved -> onBack flow doesn't trigger discard prompt
-            setBaselineDraft(cloneDraft(draft));
+            const savedDraft = cloneDraft({...draft, documents: savedAgent.documents ?? draft.documents, pendingDocuments: []});
+            setDraft(savedDraft);
+            setBaselineDraft(cloneDraft(savedDraft));
             setAvatarFile(null);
             if (mode === 'edit') {
                 refreshHistory();
@@ -812,6 +886,11 @@ const AgentConfigView = (props: Props) => {
                         services={services}
                         errors={errors}
                         savedUsername={savedUsername}
+                        agentId={agent?.id}
+                        savedDocumentIds={savedDocumentIds}
+                        documentUploads={documentUploads.uploads}
+                        onUploadDocuments={documentUploads.upload}
+                        onDismissDocumentUpload={documentUploads.dismiss}
                     />
                 </div>
             )}

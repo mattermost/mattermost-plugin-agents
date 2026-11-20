@@ -41,6 +41,10 @@ const (
 	AuditEventRestoreAgentVersion = "restoreAgentVersion"
 	AuditEventDeleteAgentVersions = "deleteAgentVersions"
 
+	// Agent reference documents. Downloading a document or reading its
+	// text is read-only and is not audited.
+	AuditEventUploadAgentDocument = "uploadAgentDocument"
+
 	// Custom prompts.
 	AuditEventCreateCustomPrompt = "createCustomPrompt"
 	AuditEventUpdateCustomPrompt = "updateCustomPrompt"
@@ -126,6 +130,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Agent versioning.
 		handlerFuncName(a.handleRestoreAgentVersion): AuditEventRestoreAgentVersion,
 		handlerFuncName(a.handleDeleteAgentVersions): AuditEventDeleteAgentVersions,
+
+		// Agent reference documents.
+		handlerFuncName(a.handleUploadAgentDocument): AuditEventUploadAgentDocument,
 
 		// Custom prompts.
 		handlerFuncName(a.handleCreateCustomPrompt): AuditEventCreateCustomPrompt,

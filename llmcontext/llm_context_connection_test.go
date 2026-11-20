@@ -137,7 +137,7 @@ func TestGetToolsStoreOffersMCPConnections(t *testing.T) {
 			if tt.interactive {
 				opts = append(opts, builder.WithLLMContextInteractive())
 			}
-			context := buildToolsContext(builder, bot, opts...)
+			context := buildToolsContext(t, builder, bot, opts...)
 
 			tool := context.Tools.GetTool(mcp.RequestConnectionToolName)
 			if !tt.wantOffered {
@@ -183,10 +183,11 @@ func TestGetToolsStoreServiceAccountNeverOffersMCPConnections(t *testing.T) {
 		&model.Bot{UserId: "bot-user-id", Username: "matty"},
 	)
 
-	context := builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(),
+	context, err := builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel(),
 		builder.WithLLMContextInteractive(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
+	require.NoError(t, err)
 
 	assert.Nil(t, context.Tools.GetTool(mcp.RequestConnectionToolName))
 	assert.Empty(t, context.UnconnectedMCPServers)

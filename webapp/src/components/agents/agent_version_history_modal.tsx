@@ -526,6 +526,7 @@ const AgentVersionHistoryModal = ({show, onClose, agentId, agentName, services, 
                                     config={detail.config ?? {}}
                                     changedFields={detail.changedFields}
                                     services={services}
+                                    agentId={agentId}
                                 />
                             )}
                         </DetailContent>

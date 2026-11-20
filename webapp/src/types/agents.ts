@@ -26,6 +26,29 @@ export type EnabledTool = {
 // Mirrors llm.MaxSkillDescriptionRunes on the backend; also caps per-agent overrides.
 export const MaxSkillDescriptionRunes = 1024;
 
+// Reference-document limits. Mirror the constants of the same meaning on the backend.
+export const MaxAgentDocuments = 20;
+export const MaxAgentDocumentBytes = 10 * 1024 * 1024;
+export const MaxAgentDocumentsTextRunes = 100000;
+export const MaxAgentDocumentNameLength = 256;
+
+// AgentDocument matches llm.AgentDocument: a reference to an immutable, content-addressed
+// document blob. Extracted text and bytes are never part of the agent.
+export type AgentDocument = {
+    id: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    textRunes: number;
+}
+
+// The id/name pair the create and update requests carry for each document.
+export type AgentDocumentReference = {
+    id: string;
+    name: string;
+}
+
 // SkillsConfig matches llm.SkillsConfig. Shared skills are opt-in per agent;
 // descriptionOverrides is keyed by skill ID.
 export type SkillsConfig = {
@@ -98,6 +121,9 @@ export type UserAgent = {
     // Absent or null from servers that predate skills.
     skills?: SkillsConfig | null;
 
+    // Server sends nil Go slices as JSON null; absent on responses from older servers.
+    documents?: AgentDocument[] | null;
+
     /**
      * @deprecated Structured output is configured per service
      * (LLMService.structuredOutputPolicy), not per agent. The backend still
@@ -160,6 +186,8 @@ export type CreateAgentRequest = {
 
     // Required so payload builders can't silently drop it on full-replace PUT.
     skills: SkillsConfig;
+
+    documents?: AgentDocumentReference[];
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -191,6 +219,9 @@ export type UpdateAgentRequest = {
     thinkingBudget?: number;
     maxToolTurns?: number;
     skills: SkillsConfig;
+
+    // Full replace: an omitted or empty list removes every document.
+    documents?: AgentDocumentReference[];
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).
@@ -232,7 +263,8 @@ export type AgentVersionDetail = AgentVersionSummary & {
 }
 
 export const AgentExportKind = 'mattermost-agent';
-export const AgentExportSchemaVersion = 1;
+export const AgentExportSchemaVersion = 2;
+export const AgentExportSchemaVersions = [1, AgentExportSchemaVersion];
 
 // MCP tool reference inside an export document. Imports match it to a server
 // on this instance by serverOrigin.
@@ -241,8 +273,18 @@ export type AgentExportMCPTool = {
     toolName: string;
 }
 
+// A reference document inside an export document; content is the base64 of the
+// original file bytes.
+export type AgentExportDocumentFile = {
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    content: string;
+}
+
 // The `agent` section of an export document: only configuration that means
-// the same thing on every server.
+// the same thing on every server. Version 1 files have no documents.
 export type AgentExportAgent = {
     name: string;
     displayName: string;
@@ -255,11 +297,12 @@ export type AgentExportAgent = {
 
     // Skill IDs only resolve on the exporting server; elsewhere they match no skill.
     skills: SkillsConfig;
+    documents?: AgentExportDocumentFile[];
 }
 
 export type AgentExportDocument = {
     kind: typeof AgentExportKind;
-    schemaVersion: typeof AgentExportSchemaVersion;
+    schemaVersion: number;
     exportedAt: number;
     agentVersion: number;
     agent: AgentExportAgent;

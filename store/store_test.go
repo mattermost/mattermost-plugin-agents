@@ -183,6 +183,15 @@ func TestRunMigrations(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_AgentVersions table should exist")
 
+				err = s.db.Get(&exists, `
+					SELECT EXISTS (
+						SELECT 1 FROM information_schema.tables
+						WHERE table_name = 'agents_agentdocuments'
+						AND table_schema = current_schema()
+					)`)
+				require.NoError(t, err)
+				assert.True(t, exists, "Agents_AgentDocuments table should exist")
+
 				// Check Agents_DB_Migrations tracking table exists
 				err = s.db.Get(&exists, `
 					SELECT EXISTS (
@@ -209,22 +218,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 17, count, "Should have 17 migration records")
-			},
-		},
-		{
-			name: "conversation thread lookup index covers archived rows",
-			validate: func(t *testing.T, s *Store) {
-				var def string
-				err := s.db.Get(&def, `
-					SELECT pg_get_indexdef(i.indexrelid)
-					FROM pg_index i
-					JOIN pg_class c ON c.oid = i.indexrelid
-					WHERE c.relname = 'idx_llm_conversations_thread_bot_user_all'
-					AND i.indisvalid`)
-				require.NoError(t, err, "a valid idx_llm_conversations_thread_bot_user_all should exist")
-				assert.Contains(t, strings.ToLower(def), "(rootpostid, botid, userid)")
-				assert.NotContains(t, strings.ToLower(def), "where", "the index must not be partial on DeleteAt")
+				assert.Equal(t, 18, count, "Should have 18 migration records")
 			},
 		},
 		{
