@@ -59,11 +59,12 @@ const ChatTitleDropdown = ({ref, label, ariaLabel, expanded, onClick, testId, he
 export default ChatTitleDropdown;
 
 // A flex header will not ellipsize a standalone button unless this wrapper is a real flex
-// participant with a definite shrink path (overflow: hidden). Keep grow off so a short title does
-// not stretch and push the agent name away.
+// participant with a definite shrink path. Keep grow off so a short title does not stretch and push
+// the agent name away. Start-align so a content-sized button never hard-clips both ends.
 const Trigger = styled.span`
     display: flex;
     flex: 0 1 auto;
+    justify-content: flex-start;
     min-width: 0;
     max-width: ${TITLE_MAX_WIDTH};
     overflow: hidden;
@@ -71,13 +72,16 @@ const Trigger = styled.span`
 
 // The compass label is nowrap and the wrappers around it shrink no smaller than their content, so a
 // long title would run past the bar: let them shrink and end the label in an ellipsis. (The class
-// names are compass's generated ones.)
+// names are compass's generated ones.) flex: 1 1 0% (not width: 100%) gives the button a definite
+// shrink width inside Trigger; start-align overrides the UA button text-align: center.
 const TitleDropdown = styled(Dropdown)`
     && {
+        flex: 1 1 0%;
         min-width: 0;
         max-width: 100%;
-        width: 100%;
         overflow: hidden;
+        justify-content: flex-start;
+        text-align: start;
     }
 
     && [class*='dropdown__trigger'],
@@ -90,16 +94,19 @@ const TitleDropdown = styled(Dropdown)`
        there is: filling the label wrapper lets the content inside shrink. */
     && [class*='dropdown__trigger'] {
         display: flex;
+        justify-content: flex-start;
         width: 100%;
     }
 
-    && [class*='dropdown__content'],
-    && [class*='dropdown__label'] {
+    && [class*='dropdown__content'] {
+        flex: 1 1 0%;
         overflow: hidden;
-        flex-shrink: 1;
     }
 
     && [class*='dropdown__label'] {
+        overflow: hidden;
+        flex-shrink: 1;
+        text-align: start;
         text-overflow: ellipsis;
     }
 `;
@@ -109,6 +116,7 @@ const Heading = styled.h1`
     margin: 0;
     overflow: hidden;
     font: inherit;
+    text-align: start;
     text-overflow: ellipsis;
     white-space: nowrap;
 `;
