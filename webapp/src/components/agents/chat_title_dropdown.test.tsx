@@ -7,12 +7,11 @@ import styled from 'styled-components';
 
 import ChatTitleDropdown from './chat_title_dropdown';
 
-// jsdom has no layout engine. This is a shrink-path guard (same idea as
-// tool_activity_display layout tests): assert the styles that let a flex header
-// ellipsize from the start of the title instead of hard-clipping both ends.
-// Browser/visual coverage of the ellipsis glyph itself is a follow-up.
+// jsdom has no layout engine, and compass CSS modules are identity-obj-proxy in Jest, so
+// getComputedStyle only sees our styled-components host shrink path. Compass's own Dropdown
+// tests cover the ellipsis rules; browser/visual coverage of the glyph is a follow-up.
 describe('ChatTitleDropdown truncation', () => {
-    test('keeps a start-aligned shrink path for a long title in a narrow flex header', () => {
+    test('constrains the compass trigger in a narrow flex header and keeps the native title', () => {
         const title = 'A very long chat title that should not push header actions off the bar';
         const onClick = jest.fn();
         render(
@@ -42,23 +41,13 @@ describe('ChatTitleDropdown truncation', () => {
         expect(triggerStyle.overflow).toBe('hidden');
         expect(parseFloat(triggerStyle.minWidth)).toBe(0);
 
-        const buttonStyle = getComputedStyle(button);
-        expect(buttonStyle.overflow).toBe('hidden');
-        expect(buttonStyle.justifyContent).toBe('flex-start');
-        expect(buttonStyle.textAlign).toBe('start');
-        expect(buttonStyle.width).toBe('100%');
-        expect(parseFloat(buttonStyle.minWidth)).toBe(0);
+        // Fill the Trigger so compass ellipsis gets a definite width at runtime.
+        expect(getComputedStyle(button).width).toBe('100%');
+        expect(getComputedStyle(button).maxWidth).toBe('100%');
 
         const label = button.querySelector('[class*="dropdown__label"]');
         expect(label).toBeTruthy();
-        expect(getComputedStyle(label!).textOverflow).toBe('ellipsis');
-        expect(getComputedStyle(label!).overflow).toBe('hidden');
-        expect(getComputedStyle(label!).display).toBe('block');
-
-        const truncate = label!.firstElementChild;
-        expect(truncate).toBeTruthy();
-        expect(getComputedStyle(truncate!).textOverflow).toBe('ellipsis');
-        expect(getComputedStyle(truncate!).overflow).toBe('hidden');
+        expect(label!.textContent).toBe(title);
 
         button.click();
         expect(onClick).toHaveBeenCalledTimes(1);
