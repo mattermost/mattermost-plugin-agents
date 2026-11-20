@@ -204,6 +204,29 @@ func TestStoreHeadAndDeleteOperations(t *testing.T) {
 	require.ErrorIs(t, s.Purge(id), channelartifacts.ErrNotFound)
 }
 
+func TestStoreAddVersionNeverReusesADeletedVersionNumber(t *testing.T) {
+	db := testDB(t)
+	s := channelartifacts.NewStore(db)
+	id := model.NewId()
+	user := model.NewId()
+	require.NoError(t, s.Create(id, model.NewId(), "T", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(2)), 5))
+	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(3)), 5))
+	require.NoError(t, s.DeleteVersion(id, 3, user, 100))
+
+	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(4)), 5))
+	entry, err := s.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, 4, entry.Version, "the number of the deleted version is not given to new content")
+
+	_, err = db.Exec(`UPDATE Agents_ChannelArtifacts SET LastVersion = 0 WHERE ID = $1`, id)
+	require.NoError(t, err)
+	require.NoError(t, s.AddVersion(id, newVersion(t, db, sha(5)), 5))
+	entry, err = s.Get(id)
+	require.NoError(t, err)
+	assert.Equal(t, 5, entry.Version, "an artifact saved before the counter existed still gets the next number")
+}
+
 func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	db := testDB(t)
 	s := channelartifacts.NewStore(db)
