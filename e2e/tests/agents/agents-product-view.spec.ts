@@ -507,7 +507,8 @@ test.describe('Agents product view', () => {
         expect(metrics.overflow).toBe('hidden');
         expect(metrics.textAlign).toBe('start');
         expect(parseFloat(metrics.minWidth)).toBe(0);
-        expect(metrics.maxWidth).toBe('min(100%, 40rem)');
+        // getComputedStyle resolves rem to px (Mattermost root makes 40rem → 400px).
+        expect(metrics.maxWidth).toMatch(/^min\(100%, \d+(\.\d+)?(px|rem)\)$/);
         expect(metrics.labelOverflow).toBe('hidden');
         expect(metrics.labelTextOverflow).toBe('ellipsis');
         expect(metrics.surfaceScrollWidth).toBeGreaterThan(metrics.surfaceClientWidth);
