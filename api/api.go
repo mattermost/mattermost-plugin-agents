@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"syscall"
@@ -334,7 +335,18 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
 
-	router := gin.Default()
+	router := a.newRouter(c, serverCtx)
+	router.ServeHTTP(w, r)
+}
+
+func (a *API) newRouter(c *plugin.Context, serverCtx context.Context) *gin.Engine {
+	// Use gin.New() instead of gin.Default(): gin.Recovery dumps full request
+	// headers (including cookies) in debug mode, and gin.Logger writes raw
+	// query strings and client IPs to stdout (plugin_stdout at INFO) while
+	// a.ginlogger, metricsMiddleware, otelgin, and auditMiddleware cover
+	// plugin-side observability.
+	router := gin.New()
+	router.Use(a.recovery(serverCtx))
 	router.Use(httpTracingMiddleware())
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
@@ -551,7 +563,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Starts a search conversation with the selected bot in the user's DM
 	searchRouter.POST("/run", a.handleRunSearch)
 
-	router.ServeHTTP(w, r)
+	return router
 }
 
 // ServeMetrics serves the metrics endpoint
@@ -612,6 +624,37 @@ func (a *API) aiBotRequired(c *gin.Context) {
 		}
 	}
 	c.Set(ContextBotKey, bot)
+}
+
+func (a *API) recovery(serverCtx context.Context) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if (serverCtx != nil && serverCtx.Err() != nil) || c.Request.Context().Err() != nil {
+				a.pluginAPI.Log.Debug("client disconnected before response",
+					"method", c.Request.Method,
+					"path", c.FullPath(),
+				)
+				c.Abort()
+				return
+			}
+			a.pluginAPI.Log.Error("Panic recovered in HTTP handler",
+				"panic", fmt.Sprint(rec),
+				"method", c.Request.Method,
+				"path", c.FullPath(),
+				"stack", string(debug.Stack()),
+			)
+			if !c.Writer.Written() {
+				c.AbortWithStatus(http.StatusInternalServerError)
+			} else {
+				c.Abort()
+			}
+		}()
+		c.Next()
+	}
 }
 
 func (a *API) ginlogger(c *gin.Context) {
