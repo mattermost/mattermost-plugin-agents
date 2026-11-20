@@ -52,7 +52,7 @@ Product documentation lives in [`docs/`](docs/) and is published on [docs.matter
 
 ### For developers
 
-- [Mattermost MCP tool reference](docs/mcp_tools.md): All 121 built-in tools
+- [Mattermost MCP tool reference](docs/mcp_tools.md): All 124 built-in tools
 - [LLM Bridge for plugins](docs/llm_bridge.md) and [Bridge Go client](public/bridgeclient/README.md): Call agents and LLM services from another plugin
 - [Plugin MCP Go SDK](external/pluginmcp/README.md): Expose MCP tools from your Mattermost plugin
 
