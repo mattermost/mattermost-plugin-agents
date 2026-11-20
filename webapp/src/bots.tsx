@@ -13,7 +13,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {getAIBots, savePreferences} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler, SetLinkPolicyHandler} from './redux';
+import {BotsHandler, SetDeferredNotificationsHandler, SetLinkPolicyHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -110,6 +110,11 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     dispatch({
         type: 'SET_HTML_ARTIFACTS_ENABLED',
         htmlArtifactsEnabled: Boolean(response.htmlArtifactsEnabled),
+    });
+
+    dispatch({
+        type: SetDeferredNotificationsHandler,
+        deferredNotifications: Boolean(response.deferredNotifications),
     });
 
     return response.bots;

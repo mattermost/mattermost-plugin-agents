@@ -19,6 +19,7 @@ export const BotsHandler = manifest.id + '_bots';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
+export const SetDeferredNotificationsHandler = 'SET_DEFERRED_NOTIFICATIONS';
 export const SetLinkPolicyHandler = 'SET_LINK_POLICY';
 
 export async function setupRedux(registry: any, store: WebappStore) {
@@ -30,6 +31,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         aiThreads,
         linkPolicy,
         htmlArtifactsEnabled,
+        deferredNotifications,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
@@ -94,6 +96,16 @@ function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_HTML_ARTIFACTS_ENABLED':
         return action.htmlArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+// Null until the server has said whether it defers agent post notifications.
+function deferredNotifications(state: boolean | null = null, action: any) {
+    switch (action.type) {
+    case SetDeferredNotificationsHandler:
+        return action.deferredNotifications;
     default:
         return state;
     }

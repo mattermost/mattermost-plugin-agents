@@ -9,6 +9,7 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 
 import {doToolCall, doToolResult} from '@/client';
+import {getViewingTracker} from '@/viewing';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
 import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
@@ -138,9 +139,9 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         answers[id] = toolAnswersRef.current[id];
                     }
                 }
-                await doToolCall(props.postID, approvedToolIDs, answers);
+                await getViewingTracker().whileDeciding(props.postID, () => doToolCall(props.postID, approvedToolIDs, answers));
             } else {
-                await doToolResult(props.postID, approvedToolIDs);
+                await getViewingTracker().whileDeciding(props.postID, () => doToolResult(props.postID, approvedToolIDs));
             }
 
             // The channel path for Accept does not stream a follow-up (that

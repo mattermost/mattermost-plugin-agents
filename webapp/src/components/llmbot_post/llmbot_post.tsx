@@ -18,6 +18,7 @@ import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
+import {usePostViewing} from '@/hooks/use_post_viewing';
 import {PostMessagePreview} from '@/mm_webapp';
 import {LLMBot} from '@/bots';
 import manifest from '@/manifest';
@@ -680,6 +681,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     const isGenerationInProgress = generating || (isReasoningLoading && !interrupted);
+    const viewingRef = usePostViewing<HTMLDivElement>(props.post.id, isGenerationInProgress || progressPhase !== null);
 
     let precontentMessage = intl.formatMessage({defaultMessage: 'Working...'});
     switch (progressPhase) {
@@ -1023,6 +1025,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     return (
         <WaitToolContext.Provider value={waitToolState}>
             <div
+                ref={viewingRef}
                 data-testid='llm-bot-post'
                 data-bubble-hug={isAgentChat ? '' : undefined} // eslint-disable-line no-undefined
             >

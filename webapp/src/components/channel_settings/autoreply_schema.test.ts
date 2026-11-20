@@ -16,6 +16,7 @@ import {
     PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES,
 } from '@/utils/permissions';
 import manifest from '@/manifest';
+import {PLAIN_TEXT_LINK_POLICY} from '@/utils/link_allowlist';
 
 import {
     ChannelSettingsValues,
@@ -192,7 +193,7 @@ describe('makeLoadValues', () => {
 
     test('awaits a bots fetch when the runtime cache is null', async () => {
         mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
-        mockedGetAIBots.mockResolvedValue({bots: [other], searchEnabled: false, allowUnsafeLinks: false});
+        mockedGetAIBots.mockResolvedValue({bots: [other], searchEnabled: false, allowUnsafeLinks: false, linkPolicy: PLAIN_TEXT_LINK_POLICY, htmlArtifactsEnabled: false, deferredNotifications: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
@@ -214,7 +215,7 @@ describe('makeLoadValues', () => {
 
     test('clears the saved agent when the fetch returns a genuinely empty agent list', async () => {
         mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'} as ChannelAutoReplySettings);
-        mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+        mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false, linkPolicy: PLAIN_TEXT_LINK_POLICY, htmlArtifactsEnabled: false, deferredNotifications: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));

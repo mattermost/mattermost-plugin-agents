@@ -214,6 +214,63 @@ func (_c *MockClient_DM_Call) RunAndReturn(run func(senderID string, receiverID 
 	return _c
 }
 
+// DeliverPostNotifications provides a mock function for the type MockClient
+func (_mock *MockClient) DeliverPostNotifications(postID string, options *model.DeliverPostNotificationsOptions) error {
+	ret := _mock.Called(postID, options)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeliverPostNotifications")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(string, *model.DeliverPostNotificationsOptions) error); ok {
+		r0 = returnFunc(postID, options)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockClient_DeliverPostNotifications_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeliverPostNotifications'
+type MockClient_DeliverPostNotifications_Call struct {
+	*mock.Call
+}
+
+// DeliverPostNotifications is a helper method to define mock.On call
+//   - postID string
+//   - options *model.DeliverPostNotificationsOptions
+func (_e *MockClient_Expecter) DeliverPostNotifications(postID any, options any) *MockClient_DeliverPostNotifications_Call {
+	return &MockClient_DeliverPostNotifications_Call{Call: _e.mock.On("DeliverPostNotifications", postID, options)}
+}
+
+func (_c *MockClient_DeliverPostNotifications_Call) Run(run func(postID string, options *model.DeliverPostNotificationsOptions)) *MockClient_DeliverPostNotifications_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 *model.DeliverPostNotificationsOptions
+		if args[1] != nil {
+			arg1 = args[1].(*model.DeliverPostNotificationsOptions)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_DeliverPostNotifications_Call) Return(err error) *MockClient_DeliverPostNotifications_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockClient_DeliverPostNotifications_Call) RunAndReturn(run func(postID string, options *model.DeliverPostNotificationsOptions) error) *MockClient_DeliverPostNotifications_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetChannel provides a mock function for the type MockClient
 func (_mock *MockClient) GetChannel(channelID string) (*model.Channel, error) {
 	ret := _mock.Called(channelID)

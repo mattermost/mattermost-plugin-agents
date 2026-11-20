@@ -36,7 +36,7 @@ func (s *recordingStreamingService) StreamToNewPost(_ context.Context, _, _ stri
 	return nil
 }
 
-func (s *recordingStreamingService) StreamToNewDM(_ context.Context, _ string, _ *llm.TextStreamResult, _ string, _ *model.Post, _ string) error {
+func (s *recordingStreamingService) StreamToNewDM(_ context.Context, _ string, _ *llm.TextStreamResult, _ string, _ *model.Post, _ string, _ func()) error {
 	return nil
 }
 
