@@ -104,7 +104,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Provider-native web search | No | Yes | Yes | Yes |
 | Agent access controls (users, teams, channels) | No | Yes | Yes | Yes |
 | Token usage logging | No | Yes | Yes | Yes |
-| Built-in web search (Brave, Google, SearXNG) | No | No | Yes | Yes |
+| Built-in web search (Brave, SearXNG) | No | No | Yes | Yes |
 | Tool approval policies | No | No | Yes | Yes |
 | Remote and external MCP servers, HTTP MCP endpoint | No | No | Yes | Yes |
 | MCP service account authentication | No | No | Yes | Yes |
