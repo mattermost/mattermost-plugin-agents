@@ -8,6 +8,7 @@ import {
     DotsHorizontalIcon,
     ExportVariantIcon,
     PencilOutlineIcon,
+    CreationOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
 import MessageOutlineIcon from '@mattermost/compass-icons/components/message-outline';
@@ -33,10 +34,11 @@ type Props = {
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
     onExport: (agent: UserAgent) => void;
+    onSetUp: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onStartChat, onEdit, onDelete, onExport} = props;
+    const {agent, services, servicesLoaded, canManage, onStartChat, onEdit, onDelete, onExport, onSetUp} = props;
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
@@ -79,6 +81,10 @@ const AgentRow = (props: Props) => {
     const handleMenuItemExport = useCallback(() => {
         onExport(agent);
     }, [agent, onExport]);
+
+    const handleMenuItemSetUp = useCallback(() => {
+        onSetUp(agent);
+    }, [agent, onSetUp]);
 
     // The chat route is keyed by the bot user id; without one there is nothing
     // safe to navigate to, so the row is not actionable.
@@ -179,6 +185,13 @@ const AgentRow = (props: Props) => {
                             label={<FormattedMessage defaultMessage='Edit'/>}
                             onClick={handleMenuItemEdit}
                         />
+                        {agent.canSetUp && (
+                            <DropdownMenuItem
+                                icon={<CreationOutlineIcon/>}
+                                label={<FormattedMessage defaultMessage='Set up with agent'/>}
+                                onClick={handleMenuItemSetUp}
+                            />
+                        )}
                         <DropdownMenuItem
                             icon={<ExportVariantIcon/>}
                             label={<FormattedMessage defaultMessage='Export'/>}

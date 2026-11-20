@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
@@ -61,6 +62,7 @@ type Plugin struct {
 
 	pluginAPI            *pluginapi.Client
 	apiService           *api.API
+	agentSetup           *agentsetup.Service
 	bots                 *bots.MMBots
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
@@ -677,6 +679,19 @@ func (p *Plugin) OnActivate() error {
 	apiService.SetConversationService(convService)
 	apiService.SetChannelArtifacts(channelLibrary)
 
+	agentSetupService := agentsetup.New(agentsetup.Deps{
+		Configs: apiService.AgentConfigService(),
+		Threads: conversationsService,
+		Bots:    bots,
+		Store:   p.store,
+		Config:  &p.configuration,
+		Prompts: prompts,
+		I18n:    i18nBundle,
+		Audit:   &pluginAPI.Audit,
+	})
+	conversationsService.RegisterOperation(llm.OperationAgentSetup, agentSetupService)
+	apiService.SetAgentSetup(agentSetupService)
+
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
 	p.applyTelemetryConfig()
@@ -684,6 +699,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Keep only what we need
 	p.apiService = apiService
+	p.agentSetup = agentSetupService
 	p.bots = bots
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService

@@ -49,6 +49,7 @@ type Config struct {
 	ChannelArtifactVersionsToKeep   int                              `json:"channelArtifactVersionsToKeep"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
+	EnableAgentAutoSetup            bool                             `json:"enableAgentAutoSetup"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
@@ -242,6 +243,13 @@ func (c *Container) EnableChannelMentionToolCalling() bool {
 // auto-reply modes may be configured and may fire.
 func (c *Container) EnableAmbientAutoReply() bool {
 	return c.Config().EnableAmbientAutoReply
+}
+
+// EnableAgentAutoSetup reports whether agent managers may start the
+// experimental setup conversation, in which a regular agent changes its own
+// name, instructions, and tools with them.
+func (c *Container) EnableAgentAutoSetup() bool {
+	return c.Config().EnableAgentAutoSetup
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {

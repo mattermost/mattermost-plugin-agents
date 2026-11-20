@@ -97,6 +97,9 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	if !c.allowCreatePost {
 		return errors.New("not implemented")
 	}
+	if post.Id == "" {
+		post.Id = model.NewId()
+	}
 	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil
 }

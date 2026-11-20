@@ -535,3 +535,43 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)
 	assert.GreaterOrEqual(t, fetched.UpdateAt, originalCreateAt)
 }
+
+func TestMarkAgentSetupCompleted(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	agent := testAgent("creator-1", "setup-agent", "Setup Agent")
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	deleted := testAgent("creator-1", "deleted-agent", "Deleted Agent")
+	require.NoError(t, s.CreateAgent(deleted, SystemAgentVersionMeta()))
+	require.NoError(t, s.DeleteAgent(deleted.ID))
+
+	marked, err := s.MarkAgentSetupCompleted(agent.ID, 1000)
+	require.NoError(t, err)
+	assert.True(t, marked)
+
+	marked, err = s.MarkAgentSetupCompleted(agent.ID, 2000)
+	require.NoError(t, err)
+	assert.False(t, marked, "a second completion must not move the timestamp")
+
+	marked, err = s.MarkAgentSetupCompleted(deleted.ID, 1000)
+	require.NoError(t, err)
+	assert.False(t, marked, "a deleted agent is never marked")
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), fetched.SetupCompletedAt)
+
+	// Saving the agent keeps the completion and records no version for it.
+	fetched.DisplayName = "Renamed"
+	require.NoError(t, s.UpdateAgent(fetched, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceSelfSetup}))
+	saved, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), saved.SetupCompletedAt)
+
+	page, err := s.ListAgentVersions(agent.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, page.Versions, 2, "create plus the self-setup save; marking setup complete adds none")
+	assert.Equal(t, AgentVersionSourceSelfSetup, page.Versions[0].Source)
+	assert.Equal(t, []string{"displayName"}, page.Versions[0].ChangedFields)
+}

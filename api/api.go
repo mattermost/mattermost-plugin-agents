@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentconfig"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -228,6 +229,8 @@ type API struct {
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
 	channelLibrary        channelartifacts.Manager
+	agentConfig           *agentconfig.Service
+	agentSetup            AgentSetup
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -320,6 +323,7 @@ func New(
 		autoReplyStore:        autoReplyStore,
 		accessChecker:         accessChecker,
 	}
+	a.agentConfig = newAgentConfigService(a)
 	a.auditEvents = buildAuditEventRegistry(a)
 	return a
 }
@@ -457,6 +461,7 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	agentRouter.POST("/:agentid/setup", a.handleStartAgentSetup)
 	agentRouter.GET("/:agentid/versions", a.handleListAgentVersions)
 	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
 	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)

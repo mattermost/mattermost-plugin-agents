@@ -43,6 +43,9 @@ type turnRequest struct {
 	conv    *store.Conversation
 	trigger *model.Post
 	post    *model.Post
+	// operation is the operation of the conversation a new thread's first
+	// turn will create; turns of an existing conversation use conv's.
+	operation string
 }
 
 // turnPolicy is the resolved behavior of one turn. Every entry point that
@@ -110,6 +113,9 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 	}
 
 	p := &turnPolicy{c: c, turnRequest: req, isDM: isDM}
+	if req.conv != nil {
+		p.operation = req.conv.Operation
+	}
 	initiator, initiatingUser := req.trigger, req.user
 	if req.trigger == nil {
 		var err error
@@ -341,6 +347,12 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if err := builder.AddSkillTools(llmContext, skillsCfg); err != nil {
 		llmContext.ReleaseScopedSession()
 		return nil, fmt.Errorf("failed to load skills: %w", err)
+	}
+	if tools, ok := p.c.registeredOperation(p.operation); ok && tools != nil {
+		if llmContext.Tools == nil {
+			llmContext.Tools = llm.NewToolStore()
+		}
+		llmContext.Tools.AddTools(tools.OperationTools(ctx, p.bot, llmContext))
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():

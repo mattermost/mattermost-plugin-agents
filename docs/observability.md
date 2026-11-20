@@ -125,6 +125,7 @@ Agents sends a server audit record for every state-changing operation except pin
 - Configuration saves.
 - Reindex, cancel, catch up, and rebuild actions, and the MCP tool cache clear.
 - Agent create, update, delete, avatar, version restore, and version deletion.
+- Starting agent auto-setup (`startAgentSetup`), and each change an agent makes to itself in a setup thread (`agentSelfSetup`, with the tool name and the changed field names).
 - Skill (custom prompt) create, update, and delete.
 - Channel auto-reply changes.
 - Conversation renames and the wait controls (check now, cancel).

@@ -277,6 +277,9 @@ type BotConfig struct {
 	CreateAt     int64    `json:"createAt,omitempty"`
 	UpdateAt     int64    `json:"updateAt,omitempty"`
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
+	// SetupCompletedAt is when the agent finished its auto-setup
+	// conversation; 0 means it never did. Agent saves never change it.
+	SetupCompletedAt int64 `json:"setupCompletedAt,omitempty"`
 }
 
 // UnmarshalJSON defaults fields whose zero value is not their behavior from

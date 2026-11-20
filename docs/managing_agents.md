@@ -134,9 +134,29 @@ Changing **Agent username** renames the existing bot. It keeps its user ID, dire
 
 The default agent setting selects an agent by bot user ID, so it keeps working after a rename. A rename fails with "This username is already taken" if any user or bot, including a deactivated one, holds the name. You can't rename agents defined only in a configuration file.
 
+## Set up an agent by chatting with it
+
+**Set up with agent** (experimental) lets an agent configure itself with you. A System Admin turns it on with **Enable agent auto-setup** in **Agents > Settings > General** (`enableAgentAutoSetup`, off by default).
+
+In the agent's row menu on the **Agents** page, select **Set up with agent**. It's shown to people who can manage the agent, for running agents created on the **Agents** page. It opens a new thread in your direct message with the agent, starting with "Help me set up AGENT_NAME." The agent reads its current settings, asks what it's for, who it helps, its tasks, its tone, and its rules, and drafts instructions for you to confirm. Reply in the thread to answer.
+
+In that thread, and only there, the agent has these tools:
+
+| Tool | What it does | Approval |
+|---|---|---|
+| `get_my_config` | Reads its display name, username, instructions, and tool settings. | Runs without approval. |
+| `update_my_instructions` | Replaces its custom instructions. | Asks you. |
+| `set_my_display_name` | Changes its display name (up to 64 characters). The username never changes. | Asks you. |
+| `disable_my_tools` | Turns off all of its tools, or specific native or MCP tools. It can't turn tools on. | Asks you. |
+| `complete_setup` | Marks setup as complete. | Asks you. |
+
+The tools work even when the agent's tools are turned off, and they can't change anything else: not access, agent admins, the service, the model, the username, or MCP grants beyond removing tools. An agent that gets every MCP tool can turn off all its tools but not single MCP tools. While **Use service accounts for authentication** is on, removing MCP tools still needs a System Admin. Each call checks again that you can manage the agent, so removing your access stops the setup.
+
+Every change is saved as a version labeled **Self-setup**, made by you. Restore an earlier version to undo it. See [Version history](#version-history). New instructions apply to new conversations, not to the setup thread itself. Turning **Enable agent auto-setup** off removes the menu item and the setup tools from existing setup threads.
+
 ## Version history
 
-Every save creates a numbered version. The agent always runs its latest version. There are no drafts. Creating, editing, and restoring each add a version. Some automatic changes, such as migrations, add a version labeled **System**. Agents from before version history get an **Initial version**.
+Every save creates a numbered version. The agent always runs its latest version. There are no drafts. Creating, editing, and restoring each add a version, and so does each change an agent makes in a [setup thread](#set-up-an-agent-by-chatting-with-it), labeled **Self-setup**. Some automatic changes, such as migrations, add a version labeled **System**. Agents from before version history get an **Initial version**.
 
 Open the history from the version line under the agent's name, or the **Version history** button. Select a version to see who saved it, when, and its settings, with a **Changed** marker on settings that differ from the previous version. Only people who can manage the agent can see history, because versions include instructions.
 

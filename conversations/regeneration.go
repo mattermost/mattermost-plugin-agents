@@ -88,6 +88,15 @@ func selectRegeneratePath(conv *store.Conversation, post *model.Post) (regenerat
 	return 0, fmt.Errorf("regenerate is not supported for %q conversations", conv.Operation)
 }
 
+// selectRegeneratePath is selectRegeneratePath with registered operations
+// (see RegisterOperation) regenerating as ordinary conversations.
+func (c *Conversations) selectRegeneratePath(conv *store.Conversation, post *model.Post) (regeneratePath, error) {
+	if _, ok := c.registeredOperation(conv.Operation); ok {
+		return regenerateConversation, nil
+	}
+	return selectRegeneratePath(conv, post)
+}
+
 // HandleRegenerate handles post regeneration requests
 func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel) error {
 	// Resume into the originating run's trace so the regenerated work shows
@@ -140,7 +149,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return err
 	}
 
-	path, err := selectRegeneratePath(conv, post)
+	path, err := c.selectRegeneratePath(conv, post)
 	if err != nil {
 		return err
 	}

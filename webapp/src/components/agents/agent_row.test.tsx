@@ -130,6 +130,7 @@ describe('AgentRow inactive badge', () => {
                 onEdit={noop}
                 onDelete={noop}
                 onExport={noop}
+                onSetUp={noop}
             />,
         );
 
@@ -162,6 +163,7 @@ describe('AgentRow actions menu', () => {
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onExport={onExport}
+                onSetUp={noop}
             />,
         );
 
@@ -171,6 +173,42 @@ describe('AgentRow actions menu', () => {
         expect(onEdit).toHaveBeenCalledTimes(expectEdit);
         expect(onDelete).toHaveBeenCalledTimes(expectDelete);
         expect(onExport).toHaveBeenCalledTimes(expectExport);
+        expect(onStartChat).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'offers setup when the server allows it', canSetUp: true, expectOffered: true},
+        {name: 'hides setup otherwise', canSetUp: false, expectOffered: false},
+    ])('Set up with agent $name', ({canSetUp, expectOffered}) => {
+        const onSetUp = jest.fn();
+        const onEdit = jest.fn();
+        const onStartChat = jest.fn();
+        const agent = {...makeAgent(), canSetUp};
+        render(
+            <AgentRow
+                agent={agent}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={true}
+                onStartChat={onStartChat}
+                onEdit={onEdit}
+                onDelete={noop}
+                onExport={noop}
+                onSetUp={onSetUp}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Agent actions'}));
+        const item = screen.queryByRole('button', {name: 'Set up with agent'});
+        if (!expectOffered) {
+            expect(item).toBeNull();
+            return;
+        }
+        expect(item).not.toBeNull();
+        fireEvent.click(item as HTMLElement);
+        expect(onSetUp).toHaveBeenCalledTimes(1);
+        expect(onSetUp).toHaveBeenCalledWith(agent);
+        expect(onEdit).not.toHaveBeenCalled();
         expect(onStartChat).not.toHaveBeenCalled();
     });
 
@@ -187,6 +225,7 @@ describe('AgentRow actions menu', () => {
                 onEdit={onEdit}
                 onDelete={noop}
                 onExport={noop}
+                onSetUp={noop}
             />,
         );
 
@@ -207,6 +246,7 @@ describe('AgentRow actions menu', () => {
                 onEdit={noop}
                 onDelete={noop}
                 onExport={noop}
+                onSetUp={noop}
             />,
         );
 
@@ -228,6 +268,7 @@ describe('AgentRow primary action', () => {
             onEdit={noop}
             onDelete={noop}
             onExport={noop}
+            onSetUp={noop}
             {...props}
         />,
     );
