@@ -15,7 +15,7 @@ import {VisuallyHidden} from '@/components/visually_hidden';
 import {useIsLicensedFor} from '@/license';
 import {useDictationAvailable} from '@/dictation/availability';
 import {DictationErrorReason, DictationTransport} from '@/dictation/types';
-import {WebRTCTranscriber, isDictationSupported} from '@/dictation/webrtc_transcriber';
+import {WebRTCTranscriber, browserTranscriberDeps, isDictationSupported} from '@/dictation/webrtc_transcriber';
 
 import {EditorDraft, SelectedText, useDictation} from './use_dictation';
 
@@ -26,11 +26,11 @@ export type DictationButtonProps = {
     updateText: (message: string) => void;
 
     // Tests replace the WebRTC transport and shorten the session cap.
-    createTransport?: () => DictationTransport;
+    createTransport?: (channelId: string) => DictationTransport;
     maxSessionMs?: number;
 };
 
-const createWebRTCTranscriber = () => new WebRTCTranscriber();
+const createWebRTCTranscriber = (channelId: string) => new WebRTCTranscriber(browserTranscriberDeps(), {channelId});
 
 const ButtonAnchor = styled.span`
     position: relative;

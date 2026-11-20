@@ -135,7 +135,7 @@ Agents sends a server audit record for every state-changing operation except pin
 - Inter-plugin MCP server registration and unregistration, and admin changes to plugin-registered MCP servers (`updateMCPPluginServer`).
 - In-channel tool call and tool result approvals.
 - MCP session grants, when an external client gets a session as a user (`mcpSessionGrant`).
-- Dictation session starts (`createDictationSession`), with the transcription service ID, and sessions ended by their user (`endDictationSession`), with the session and service IDs. The session's transcript and settings are never recorded.
+- Dictation session starts (`createDictationSession`), with the transcription service ID, the session ID and the channel the user dictates into, and sessions ended by their user (`endDictationSession`), with the session and service IDs. The session's transcript, settings and channel-context names are never recorded.
 
 Each record has the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials as HTTP status codes), the `trace_id` for jumping to traces, and the IDs of the affected objects. Records never contain prompts, conversation or channel content, tool arguments or results, configuration values, or free-form error text. A configuration save records only which top-level sections changed. Failure detail stays in the server log, so correlate by time, actor, or `trace_id`.
 

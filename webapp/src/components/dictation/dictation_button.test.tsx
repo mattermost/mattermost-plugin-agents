@@ -37,6 +37,7 @@ const {useDictationAvailable} = jest.requireMock('@/dictation/availability') as 
 const {isDictationSupported} = jest.requireMock('@/dictation/webrtc_transcriber') as {isDictationSupported: jest.Mock};
 
 class FakeTransport implements DictationTransport {
+    channelId = '';
     transcript: (u: TranscriptUpdate) => void = () => { /* set by hook */ };
     error: (e: DictationError) => void = () => { /* set by hook */ };
     idle: () => void = () => { /* set by hook */ };
@@ -128,8 +129,9 @@ function renderButton(initial: EditorDraft, {caret, onEditorKeyDown, maxSessionM
                         updateText(message);
                         setDraft((d) => ({...d, message}));
                     }}
-                    createTransport={() => {
+                    createTransport={(channelId) => {
                         const t = new FakeTransport();
+                        t.channelId = channelId;
                         transports.push(t);
                         return t;
                     }}
@@ -178,6 +180,12 @@ describe('DictationButton', () => {
         renderButton({message: '', channelId: 'c1'});
         expect((button() as HTMLButtonElement).disabled).toBe(true);
         expect(screen.getByTestId('with-tooltip').getAttribute('data-title')).toBe('Dictation isn\'t supported in this browser');
+    });
+
+    test('starts the session for the channel being dictated into', () => {
+        const {transports} = renderButton({message: '', channelId: 'c1', rootId: 'r1'});
+        fireEvent.click(button());
+        expect(transports.map((t) => t.channelId)).toEqual(['c1']);
     });
 
     test('moves through its states with matching labels', async () => {

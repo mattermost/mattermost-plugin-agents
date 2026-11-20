@@ -24,6 +24,9 @@ export type DictationConfig = {
     // OpenAI model name, or Azure deployment name.
     model: string;
     language?: string;
+
+    // Unset means on.
+    useChannelContext?: boolean;
 };
 
 export const DEFAULT_DICTATION_MODEL = 'gpt-live-transcribe';
@@ -172,6 +175,13 @@ const DictationPanel = ({value, services, errors, saveError, onChange}: Props) =
                     onChange={(e) => update({language: e.target.value.trim()})}
                     disabled={!value.enabled}
                     helptext={intl.formatMessage({defaultMessage: 'Optional ISO-639-1 code of the language users speak, such as en or de. Leave empty to detect it automatically.'})}
+                />
+                <BooleanItem
+                    label={intl.formatMessage({defaultMessage: 'Use channel context to improve accuracy'})}
+                    value={value.useChannelContext ?? true}
+                    onChange={(useChannelContext) => update({useChannelContext})}
+                    disabled={!value.enabled}
+                    helpText={intl.formatMessage({defaultMessage: 'Sends the name of the channel being dictated into and the names of its recent posters and members to the transcription service, so names are transcribed correctly. Only channels the user can read are used.'})}
                 />
             </ItemList>
         </AdminPanel>

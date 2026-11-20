@@ -321,7 +321,16 @@ func (f *FakeRealtime) CallCount() int {
 // SessionUpdated builds a session.updated event as OpenAI sends it for a
 // transcription session.
 func SessionUpdated(model string, languages []string, prompt *string, turnDetection any) map[string]any {
+	return SessionUpdatedWithKeywords(model, languages, prompt, nil, turnDetection)
+}
+
+// SessionUpdatedWithKeywords is SessionUpdated with keywords; nil leaves
+// them out, as OpenAI does for a session without any.
+func SessionUpdatedWithKeywords(model string, languages []string, prompt *string, keywords []string, turnDetection any) map[string]any {
 	transcription := map[string]any{"model": model, "language": nil, "prompt": prompt}
+	if keywords != nil {
+		transcription["keywords"] = keywords
+	}
 	if languages != nil {
 		transcription["languages"] = languages
 	}

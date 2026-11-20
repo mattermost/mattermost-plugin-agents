@@ -40,13 +40,17 @@ export type LevelMeter = {
 
 export type TranscriberDeps = {
     getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-    createSession: (offerSDP: string, signal: AbortSignal) => Promise<DictationSession>;
+    createSession: (offerSDP: string, channelId: string, signal: AbortSignal) => Promise<DictationSession>;
     endSession: (sessionId: string) => Promise<void>;
     createPeerConnection: () => RTCPeerConnection;
     createLevelMeter: () => LevelMeter;
     now: () => number;
     setInterval: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
     clearInterval: (id: ReturnType<typeof setInterval>) => void;
+};
+
+export type TranscriberOptions = {
+    channelId?: string;
 };
 
 export function createAnalyserLevelMeter(): LevelMeter {
@@ -165,8 +169,12 @@ export class WebRTCTranscriber implements DictationTransport {
     // Ended on release so the slot frees before the provider sees the peer close.
     private sessionId: string | null = null;
 
-    constructor(deps: TranscriberDeps = browserTranscriberDeps()) {
+    // The channel being dictated into, sent with the offer.
+    private readonly channelId: string;
+
+    constructor(deps: TranscriberDeps = browserTranscriberDeps(), {channelId = ''}: TranscriberOptions = {}) {
         this.deps = deps;
+        this.channelId = channelId;
     }
 
     onConnecting(handler: () => void) {
@@ -274,7 +282,7 @@ export class WebRTCTranscriber implements DictationTransport {
 
         let session: DictationSession;
         try {
-            session = await this.deps.createSession(offer.sdp ?? '', this.connectAbort.signal);
+            session = await this.deps.createSession(offer.sdp ?? '', this.channelId, this.connectAbort.signal);
         } catch (err) {
             this.throwIfStopped();
             throw new DictationError(errorReasonForStatus((err as {status_code?: number})?.status_code));

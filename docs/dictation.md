@@ -7,7 +7,7 @@ Dictation is experimental and needs an Enterprise license or above. It uses its 
 ## How it works
 
 1. A user selects the microphone button and allows microphone access.
-2. The browser sends its WebRTC connection offer to the plugin. The plugin checks the license, the settings, and the user's access, then creates the transcription session at OpenAI with the service's API key and the session settings from **Dictation**. The browser never receives an API key or a token.
+2. The browser sends its WebRTC connection offer to the plugin. The plugin checks the license, the settings, and the user's access, then creates the transcription session at OpenAI with the service's API key and the session settings from **Dictation**. With **Use channel context to improve accuracy** on, the session also gets the channel's name and people's names as hints. See [Channel context](#channel-context). The browser never receives an API key or a token.
 3. Before answering the browser, the plugin opens its own control connection to the session. The browser then connects to OpenAI over WebRTC and streams the microphone audio.
 4. OpenAI sends the transcript back to the browser, which types it into the message box at the cursor.
 
@@ -32,6 +32,7 @@ The user sees that dictation stopped. When the user stops dictating, the browser
 | Transcription service | `dictation.serviceID` | None | The ID of an OpenAI service. Saving with dictation on fails when the service is missing, isn't an OpenAI service, has no API key, or has an **API URL** that isn't an absolute `http` or `https` URL with only a host and path (no credentials, query or fragment). |
 | Transcription model | `dictation.model` | `gpt-live-transcribe` | `gpt-live-transcribe` shows text while the user speaks. OpenAI has deprecated its earlier transcription models (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe` and `whisper-1`), so don't use them for new setups. |
 | Language | `dictation.language` | Empty (detected) | An ISO-639-1 code such as `en` or `de` for the language users speak. |
+| Use channel context to improve accuracy | `dictation.useChannelContext` | On | Sends the channel's name and the names of its recent posters and members to OpenAI as transcription hints. See [Channel context](#channel-context). |
 
 Example configuration, set through `PUT /plugins/mattermost-ai/admin/config` (see [Back up and automate](backup_and_automation.md)):
 
@@ -40,11 +41,28 @@ Example configuration, set through `PUT /plugins/mattermost-ai/admin/config` (se
   "enabled": true,
   "serviceID": "SERVICE_ID",
   "model": "gpt-live-transcribe",
-  "language": "en"
+  "language": "en",
+  "useChannelContext": true
 }
 ```
 
 If the transcription service is later deleted, changed to another type, or the license drops below Enterprise, the button disappears and new sessions are refused. Mattermost never falls back to another service.
+
+## Channel context
+
+Transcription models get names wrong when they have no context. With **Use channel context to improve accuracy** on, the browser sends the ID of the channel the user dictates into, and the plugin adds a prompt and keywords to the session with:
+
+- the channel's display name, for public and private channels; direct and group messages send no channel name;
+- up to 50 people's names: first the authors of the channel's newest 200 posts, most recent first, then up to 100 of its members. Bots, webhooks, system messages and deactivated users are skipped;
+- each person's full name when **System Console > Site Configuration > Users and Teams > Show Full Name** (`PrivacySettings.ShowFullName`) is on, otherwise their nickname or username.
+
+The prompt is capped at 1,000 characters, below OpenAI's limit of 1,024; names that don't fit are left out, starting from the end of the list. Angle brackets, quotes, line breaks and control characters are removed, and each name is cut to 64 characters.
+
+- The plugin builds the hints only for a channel the user can read. A user who can't read the channel is refused the session.
+- If the channel, its posts or its members can't be read, the session starts without any context.
+- Only `gpt-live-transcribe` and `gpt-transcribe` take a prompt and keywords. With other models no context is sent.
+- The user's browser can see the session's prompt and keywords. They only contain names the user can already see in the channel.
+- A session whose prompt or keywords change away from the ones the plugin sent is ended, like any other change to its settings.
 
 ## Who can dictate
 
@@ -66,9 +84,10 @@ The plugin talks to OpenAI to create and end sessions, and each user's browser o
 ## Privacy
 
 - Audio goes from the user's device directly to OpenAI and is processed under your organization's agreement with OpenAI, under the API key of the transcription service. Audio doesn't pass through the Mattermost Server.
+- With channel context on, the channel's display name and the names of its recent posters and members go to OpenAI with each session. See [Channel context](#channel-context). When OpenAI refuses a session, the server log records OpenAI's error message, which can quote the session's settings, including those names.
 - The plugin's control connection receives the session's events, including the transcript, so it can enforce the session settings. The plugin doesn't log, store or audit that content.
 - Mattermost and the plugin don't store audio. Dictated text goes into the message box like typed text, so until the user sends or deletes it, it can be saved as a draft, on the server too when server-synced drafts are on (`ServiceSettings.AllowSyncedDrafts`, the default).
-- Starting a dictation session is recorded in the server audit log (`createDictationSession`) with the transcription service ID. See [Audit logging](observability.md#audit-logging).
+- Starting a dictation session is recorded in the server audit log (`createDictationSession`) with the transcription service ID, the session ID and the channel ID. Names and prompts aren't recorded. See [Audit logging](observability.md#audit-logging).
 
 ## Cost and limits
 
@@ -97,7 +116,7 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
 | "The speech service could not be reached" | The server log has the reason when OpenAI refused to create the session or the control connection couldn't be opened. Otherwise the browser can't reach OpenAI over WebRTC. See [Network requirements](#network-requirements). |
 | "Dictation can't start right now" | The user already has 2 active sessions, for example in other windows, or started 10 sessions in the last 60 seconds. Stopping dictation in another window frees an active session at once. The start limit clears once fewer than 10 starts fall in the last 60 seconds. A session the plugin couldn't hang up keeps its slot for up to 11 minutes. See [Cost and limits](#cost-and-limits). |
-| "You don't have access to dictation" | The license is below Enterprise, or the user can't dictate. See [Who can dictate](#who-can-dictate). |
+| "You don't have access to dictation" | The license is below Enterprise, the user can't dictate, or, with channel context on, the user can't read the channel. See [Who can dictate](#who-can-dictate). |
 | "Dictation is not available right now" | Dictation was turned off, or its transcription service is missing or misconfigured. |
 | "Your browser's connection request was too large" | The browser's WebRTC offer was over 64 KiB. Reloading the page usually fixes it. |
 | "Your browser didn't start audio processing" | The browser kept its audio engine suspended, so the plugin couldn't hear when the user speaks. Reloading the page usually fixes it. |

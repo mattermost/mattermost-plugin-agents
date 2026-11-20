@@ -321,7 +321,8 @@ test.describe('Dictation', () => {
         const center = centerComposer(page);
         const sessionRequest = page.waitForRequest((request) => request.url().endsWith('/dictation/session') && request.method() === 'POST');
         await dictationButton(center).click();
-        expect(JSON.parse((await sessionRequest).postData() ?? '{}')).toEqual({ sdp: STUB_OFFER_SDP });
+        const townSquare = await getTownSquareChannel(mattermost, username, password);
+        expect(JSON.parse((await sessionRequest).postData() ?? '{}')).toEqual({ sdp: STUB_OFFER_SDP, channelId: townSquare.id });
         await expect(dictationButton(center)).toHaveAttribute('data-status', 'listening', { timeout: 30000 });
 
         // The plugin made the provider call with the service key and the
@@ -335,6 +336,10 @@ test.describe('Dictation', () => {
         expect(call.session.audio.input.transcription.model).toBe('gpt-live-transcribe');
         expect(call.session.audio.input.turn_detection).toBeNull();
         expect(state.openSidebands).toContain(call.callId);
+
+        // Channel context is on by default: the channel name goes to the provider as a hint.
+        expect(call.session.audio.input.transcription.prompt).toContain('"Town Square"');
+        expect(call.session.audio.input.transcription.keywords[0]).toBe('Town Square');
 
         // The browser never contacted the provider and never held its key.
         expect(providerRequests).toEqual([]);

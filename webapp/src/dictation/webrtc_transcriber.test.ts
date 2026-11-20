@@ -126,7 +126,7 @@ function setup(overrides: Partial<TranscriberDeps> = {}) {
 const commits = (pc: FakePeerConnection) => pc.channel.sent.filter((e) => e.type === 'input_audio_buffer.commit').length;
 
 describe('WebRTCTranscriber', () => {
-    test('requests the mic first, then sends the offer through the plugin and applies its answer', async () => {
+    test('requests the mic first, then sends the offer and channel through the plugin and applies its answer', async () => {
         const {deps, pc} = setup();
         const order: string[] = [];
         (deps.getUserMedia as jest.Mock).mockImplementation(async () => {
@@ -138,11 +138,11 @@ describe('WebRTCTranscriber', () => {
             return session();
         });
 
-        await new WebRTCTranscriber(deps).start();
+        await new WebRTCTranscriber(deps, {channelId: 'channel1'}).start();
 
         expect(order).toEqual(['mic', 'session']);
         expect(deps.getUserMedia).toHaveBeenCalledWith({audio: {echoCancellation: true, noiseSuppression: true}});
-        expect(deps.createSession).toHaveBeenCalledWith('OFFER_SDP', expect.any(AbortSignal));
+        expect(deps.createSession).toHaveBeenCalledWith('OFFER_SDP', 'channel1', expect.any(AbortSignal));
         expect(pc.remoteDescription).toEqual({type: 'answer', sdp: 'ANSWER_SDP'});
     });
 
@@ -724,7 +724,7 @@ describe('WebRTCTranscriber', () => {
 
     test('stop during connecting aborts the session request and releases the mic and connection', async () => {
         let signal: AbortSignal | null = null;
-        const {deps, track, pc} = setup({createSession: jest.fn((_sdp: string, abortSignal: AbortSignal) => {
+        const {deps, track, pc} = setup({createSession: jest.fn((_sdp: string, _channelId: string, abortSignal: AbortSignal) => {
             signal = abortSignal;
             return new Promise<DictationSession>((_resolve, reject) => {
                 abortSignal.addEventListener('abort', () => reject(new Error('aborted')));
