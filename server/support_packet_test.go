@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
@@ -87,8 +86,7 @@ func TestBuildSupportPacket(t *testing.T) {
 		assert.Equal(t, 2, packet.TotalLLMServices)
 		assert.True(t, packet.TelemetryEnabled)
 
-		body, marshalErr := yaml.Marshal(packet)
-		require.NoError(t, marshalErr)
+		body := packet.encodeYAML()
 		assert.NotContains(t, string(body), "total_agents")
 	})
 
@@ -163,4 +161,80 @@ func TestBuildSupportPacket(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestSupportPacketEncodeYAML(t *testing.T) {
+	seven := 7
+	tests := []struct {
+		name   string
+		packet SupportPacket
+		want   string
+	}{
+		{
+			name: "full packet with agents and service types",
+			packet: SupportPacket{
+				Version:                         "1.2.3",
+				TotalAgents:                     &seven,
+				TotalLLMServices:                2,
+				LLMServiceTypes:                 []string{"openai", "anthropic"},
+				MCPEnabled:                      true,
+				TotalMCPServers:                 3,
+				EnabledMCPServers:               2,
+				EnableCallSummary:               true,
+				EnableTokenUsageLogging:         true,
+				EnableChannelMentionToolCalling: true,
+				EnableAmbientAutoReply:          false,
+				AllowNativeWebSearchInChannels:  true,
+				WebSearchEnabled:                true,
+				EmbeddingSearchEnabled:          true,
+				TelemetryEnabled:                true,
+			},
+			want: `version: 1.2.3
+total_agents: 7
+total_llm_services: 2
+llm_service_types:
+    - openai
+    - anthropic
+mcp_enabled: true
+total_mcp_servers: 3
+enabled_mcp_servers: 2
+enable_call_summary: true
+enable_token_usage_logging: true
+enable_channel_mention_tool_calling: true
+enable_ambient_auto_reply: false
+allow_native_web_search_in_channels: true
+web_search_enabled: true
+embedding_search_enabled: true
+telemetry_enabled: true
+`,
+		},
+		{
+			name: "nil TotalAgents omitted, empty service types, and special scalars quoted",
+			packet: SupportPacket{
+				Version:         "1.0.0: beta",
+				LLMServiceTypes: []string{},
+			},
+			want: `version: "1.0.0: beta"
+total_llm_services: 0
+llm_service_types: []
+mcp_enabled: false
+total_mcp_servers: 0
+enabled_mcp_servers: 0
+enable_call_summary: false
+enable_token_usage_logging: false
+enable_channel_mention_tool_calling: false
+enable_ambient_auto_reply: false
+allow_native_web_search_in_channels: false
+web_search_enabled: false
+embedding_search_enabled: false
+telemetry_enabled: false
+`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, string(tc.packet.encodeYAML()))
+		})
+	}
 }

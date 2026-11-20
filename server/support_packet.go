@@ -6,8 +6,8 @@ package main
 import (
 	"fmt"
 	"path/filepath"
-
-	"gopkg.in/yaml.v3"
+	"strconv"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -54,15 +54,61 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 		p.pluginAPI.Log.Warn("Support packet generated with errors", "error", err)
 	}
 
-	body, marshalErr := yaml.Marshal(packet)
-	if marshalErr != nil {
-		return nil, fmt.Errorf("failed to marshal diagnostics: %w", marshalErr)
-	}
-
 	return []*model.FileData{{
 		Filename: filepath.Join(manifest.Id, "diagnostics.yaml"),
-		Body:     body,
+		Body:     packet.encodeYAML(),
 	}}, err
+}
+
+func (s *SupportPacket) encodeYAML() []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "version: %s\n", yamlScalar(s.Version))
+	if s.TotalAgents != nil {
+		fmt.Fprintf(&b, "total_agents: %d\n", *s.TotalAgents)
+	}
+	fmt.Fprintf(&b, "total_llm_services: %d\n", s.TotalLLMServices)
+	if len(s.LLMServiceTypes) == 0 {
+		b.WriteString("llm_service_types: []\n")
+	} else {
+		b.WriteString("llm_service_types:\n")
+		for _, svcType := range s.LLMServiceTypes {
+			fmt.Fprintf(&b, "    - %s\n", yamlScalar(svcType))
+		}
+	}
+	fmt.Fprintf(&b, "mcp_enabled: %t\n", s.MCPEnabled)
+	fmt.Fprintf(&b, "total_mcp_servers: %d\n", s.TotalMCPServers)
+	fmt.Fprintf(&b, "enabled_mcp_servers: %d\n", s.EnabledMCPServers)
+	fmt.Fprintf(&b, "enable_call_summary: %t\n", s.EnableCallSummary)
+	fmt.Fprintf(&b, "enable_token_usage_logging: %t\n", s.EnableTokenUsageLogging)
+	fmt.Fprintf(&b, "enable_channel_mention_tool_calling: %t\n", s.EnableChannelMentionToolCalling)
+	fmt.Fprintf(&b, "enable_ambient_auto_reply: %t\n", s.EnableAmbientAutoReply)
+	fmt.Fprintf(&b, "allow_native_web_search_in_channels: %t\n", s.AllowNativeWebSearchInChannels)
+	fmt.Fprintf(&b, "web_search_enabled: %t\n", s.WebSearchEnabled)
+	fmt.Fprintf(&b, "embedding_search_enabled: %t\n", s.EmbeddingSearchEnabled)
+	fmt.Fprintf(&b, "telemetry_enabled: %t\n", s.TelemetryEnabled)
+	return []byte(b.String())
+}
+
+func yamlScalar(s string) string {
+	if s == "" {
+		return `""`
+	}
+	// Quote anything outside a conservative plain-scalar alphabet so YAML
+	// parsers never misread booleans, numbers, comments, or special characters.
+	switch strings.ToLower(s) {
+	case "true", "false", "null", "yes", "no", "on", "off", "~":
+		return strconv.Quote(s)
+	}
+	for i := range len(s) {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_') {
+			return strconv.Quote(s)
+		}
+	}
+	if s[0] == '-' || s[0] == '.' {
+		return strconv.Quote(s)
+	}
+	return s
 }
 
 // buildSupportPacket assembles the diagnostics struct from config and the store.

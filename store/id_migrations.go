@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -20,7 +19,23 @@ const abacIDMigrationKey = "abac_id_migration_done"
 
 // isLegacyUUID matches the legacy service-ID format predating model.NewId().
 func isLegacyUUID(s string) bool {
-	return len(s) == 36 && uuid.Validate(s) == nil
+	if len(s) != 36 {
+		return false
+	}
+	for i := range 36 {
+		c := s[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ABACIDMigrationReport summarizes what MigrateABACIDs did so the caller
