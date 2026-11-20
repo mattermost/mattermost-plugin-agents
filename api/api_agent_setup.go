@@ -60,7 +60,7 @@ func (a *API) handleStartAgentSetup(c *gin.Context) {
 		return
 	}
 
-	thread, err := a.agentSetup.Start(c.Request.Context(), user, agentID)
+	thread, err := a.agentSetup.Start(context.WithoutCancel(c.Request.Context()), user, agentID)
 	switch {
 	case errors.Is(err, agentsetup.ErrDisabled):
 		abortAgentRequest(c, http.StatusForbidden, err)

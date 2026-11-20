@@ -86,9 +86,16 @@ type Binder struct {
 	interactiveUserPresent bool
 	callbacks              BinderCallbacks
 
-	mu           sync.Mutex
-	boardCreated bool
-	runCreated   bool
+	mu          sync.Mutex
+	boardCreate onceState
+	runCreate   onceState
+}
+
+// onceState tracks one once-only create. inFlight reserves it while the
+// create runs without holding the binder's lock.
+type onceState struct {
+	inFlight bool
+	done     bool
 }
 
 // NewBinder returns a binder for project.
@@ -147,7 +154,7 @@ func (b *Binder) bindBoards(tool llm.Tool) (llm.Tool, bool) {
 		if schemaHasProperty(tool.Schema, "team_id") {
 			tool = tool.WithBoundParams(map[string]any{"team_id": b.project.TeamID})
 		}
-		return b.onceOnly(tool, &b.boardCreated, func(c *store.Project) bool { return c.BoardChannelID == "" },
+		return b.onceOnly(tool, &b.boardCreate, func(c *store.Project) bool { return c.BoardChannelID == "" },
 			func(ctx context.Context, result string) error {
 				id := resultID(result, "board_id", "channel_id", "id")
 				if id == "" {
@@ -176,7 +183,7 @@ func (b *Binder) bindPlaybooks(tool llm.Tool) (llm.Tool, bool) {
 			return llm.Tool{}, false
 		}
 		tool = tool.WithBoundParams(map[string]any{"channel_id": b.project.ChannelID})
-		return b.onceOnly(tool, &b.runCreated, func(c *store.Project) bool { return c.PlaybookRunID == "" },
+		return b.onceOnly(tool, &b.runCreate, func(c *store.Project) bool { return c.PlaybookRunID == "" },
 			func(ctx context.Context, result string) error {
 				id := resultID(result, "run_id", "id")
 				if id == "" {
@@ -204,14 +211,24 @@ func (b *Binder) bindCursor(tool llm.Tool) (llm.Tool, bool) {
 // onceOnly lets a create tool succeed at most once per project: once per
 // binder, and only while the project, re-read at call time, still lacks the
 // link. record runs after the create succeeded.
-func (b *Binder) onceOnly(tool llm.Tool, done *bool, missing func(*store.Project) bool, record func(ctx context.Context, result string) error) llm.Tool {
+func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.Project) bool, record func(ctx context.Context, result string) error) llm.Tool {
 	inner := tool.Resolver
 	tool.Resolver = func(ctx context.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
 		b.mu.Lock()
-		defer b.mu.Unlock()
-		if *done {
+		if state.done || state.inFlight {
+			b.mu.Unlock()
 			return "", ErrToolOutsideProject
 		}
+		state.inFlight = true
+		b.mu.Unlock()
+		created := false
+		defer func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			state.inFlight = false
+			state.done = state.done || created
+		}()
+
 		if b.callbacks.Current == nil {
 			return "", ErrToolOutsideProject
 		}
@@ -229,7 +246,7 @@ func (b *Binder) onceOnly(tool llm.Tool, done *bool, missing func(*store.Project
 		if err != nil {
 			return result, err
 		}
-		*done = true
+		created = true
 		if err := record(ctx, result); err != nil {
 			return result, fmt.Errorf("created, but failed to link it to the project: %w", err)
 		}

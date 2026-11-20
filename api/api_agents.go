@@ -816,6 +816,10 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if cfg.IsProjectAgent() {
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("this agent belongs to a project; end the project instead"))
+		return
+	}
 
 	if err := a.agentStore.DeleteAgent(agentID); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))

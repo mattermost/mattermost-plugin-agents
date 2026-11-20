@@ -730,6 +730,9 @@ func (p *Plugin) OnActivate() error {
 		conversationsService.RegisterOperation(operation, projectsService)
 	}
 	convService.SetSystemPromptSuffix(func(conv *store.Conversation) string {
+		if conv == nil {
+			return ""
+		}
 		return conversationsService.ProjectSystemPromptSuffix(context.Background(), conv.BotID)
 	})
 	toolProvider.AddToolSource(projectsService.ToolsForRequest)

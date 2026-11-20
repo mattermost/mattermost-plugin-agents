@@ -104,7 +104,7 @@ func (m *memStore) SetProjectSetupRoot(channelID, root string) error {
 	return m.update(channelID, notEnded, func(p *store.Project) { p.SetupRootPostID = root })
 }
 func (m *memStore) TransitionProject(channelID, from, to string) error {
-	return m.update(channelID, func(p *store.Project) bool { return p.State == from }, func(p *store.Project) { p.State = to })
+	return m.update(channelID, func(p *store.Project) bool { return p.State == from }, func(p *store.Project) { p.State, p.UpdateAt = to, model.GetMillis() })
 }
 func (m *memStore) EndProject(channelID, endedBy string, withoutWrapUp bool) error {
 	return m.update(channelID, notEnded, func(p *store.Project) {
@@ -418,6 +418,7 @@ func TestEndProject(t *testing.T) {
 		actor      string
 		state      string
 		skipWrapUp bool
+		updatedAgo time.Duration
 		wantErr    error
 		wantWrapUp bool
 	}{
@@ -425,7 +426,8 @@ func TestEndProject(t *testing.T) {
 		{name: "lead ends without wrap-up", actor: "lead", state: store.ProjectStateActive, skipWrapUp: true},
 		{name: "non-lead without channel roles is refused", actor: "other", state: store.ProjectStateActive, wantErr: ErrForbidden},
 		{name: "guest is refused", actor: "guest", state: store.ProjectStateActive, wantErr: ErrForbidden},
-		{name: "ending project can't be ended again", actor: "lead", state: store.ProjectStateEnding, wantErr: ErrNotActive},
+		{name: "a project still ending can't be ended again", actor: "lead", state: store.ProjectStateEnding, updatedAgo: time.Minute, wantErr: ErrNotActive},
+		{name: "a project stuck ending finishes its cleanup", actor: "lead", state: store.ProjectStateEnding, updatedAgo: time.Hour},
 		{name: "ended project can't be ended again", actor: "lead", state: store.ProjectStateEnded, wantErr: ErrNotActive},
 	}
 	for _, tc := range tests {
@@ -433,6 +435,7 @@ func TestEndProject(t *testing.T) {
 			p := activeProject()
 			p.State = tc.state
 			p.BoardChannelID = "B"
+			p.UpdateAt = time.Now().Add(-tc.updatedAgo).UnixMilli()
 			f := newFixture(t, true, p)
 			f.platform.members["P"] = append(f.platform.members["P"], "lead")
 

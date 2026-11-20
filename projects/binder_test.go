@@ -6,7 +6,9 @@ package projects
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -164,6 +166,74 @@ func TestBinderCreateOnce(t *testing.T) {
 			_, err = callTool(t, fresh[0], map[string]any{"title": "again"})
 			require.ErrorIs(t, err, ErrToolOutsideProject, "a stale binder re-checks the project before creating")
 			assert.Nil(t, got)
+		})
+	}
+}
+
+func TestOnceOnlyCreateDoesNotHoldTheLockAcrossTheCall(t *testing.T) {
+	tests := []struct {
+		name      string
+		firstErr  error
+		wantRetry bool
+	}{
+		{name: "a finished create stays done"},
+		{name: "a failed create can be retried", firstErr: errors.New("plugin down"), wantRetry: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			current := &store.Project{ChannelID: "P", TeamID: "T", State: store.ProjectStateActive}
+			callbacks := BinderCallbacks{
+				Current:      func(string) (*store.Project, error) { return current, nil },
+				BoardCreated: func(context.Context, *store.Project, string) error { return nil },
+			}
+			started, release := make(chan struct{}), make(chan struct{})
+			calls := 0
+			tool := llm.Tool{
+				Name:         "create_board",
+				ServerOrigin: BoardsOrigin,
+				Schema:       map[string]any{"type": "object", "properties": map[string]any{"team_id": map[string]any{"type": "string"}}},
+				Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+					calls++
+					if calls == 1 {
+						close(started)
+						<-release
+						return `{"board":{"channel_id":"NEWB"}}`, tc.firstErr
+					}
+					return `{"board":{"channel_id":"NEWB"}}`, nil
+				},
+			}
+			bound := NewBinder(current, false, callbacks).Bind([]llm.Tool{tool})
+			require.Len(t, bound, 1)
+
+			call := func(done chan<- error) {
+				_, err := bound[0].Resolver(context.Background(), &llm.Context{}, func(any) error { return nil })
+				done <- err
+			}
+			firstDone := make(chan error, 1)
+			go call(firstDone)
+			<-started
+
+			concurrent := make(chan error, 1)
+			go call(concurrent)
+			select {
+			case err := <-concurrent:
+				assert.ErrorIs(t, err, ErrToolOutsideProject, "a create already in flight refuses a second one")
+			case <-time.After(5 * time.Second):
+				assert.Fail(t, "a second call blocked behind the in-flight create")
+			}
+			close(release)
+			if tc.firstErr == nil {
+				assert.NoError(t, <-firstDone)
+			} else {
+				assert.ErrorIs(t, <-firstDone, tc.firstErr)
+			}
+
+			_, err := callTool(t, bound[0], map[string]any{})
+			if tc.wantRetry {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, ErrToolOutsideProject)
+			}
 		})
 	}
 }

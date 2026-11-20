@@ -16,14 +16,14 @@ Project agents run with service account authentication in scoped channel mode, s
 
 ## What a project agent can do
 
-When someone creates a project, Agents creates the channel (or uses the channel they just created), creates a hidden agent for it, adds the agent to the channel as a channel admin and turns on ambient replies there. The agent then opens a setup thread to write a charter, create the board and checklist once, and set the status note.
+When someone creates a project, Agents creates the channel (or uses the channel they just created), creates a hidden agent for it, adds the agent to the channel as a channel admin and turns on ambient replies there. The agent then opens a setup thread to write a charter, create the board and checklist once, and set the status note. In that thread the lead, anyone who can manage the channel's roles, and System Admins can also have the agent update its name and instructions; nobody else can change them, and the agent never changes them on a turn nobody is present for.
 
 The agent is limited to its project:
 
 - It reads and writes only the project channel and its board channel. If its bot account is found in any other channel, every turn is refused until it is removed.
 - Board tools are bound to the project's board, and checklist tools to the project's run. It can create one board and one checklist, and can't delete cards, list other boards, or change views and fields.
 - Starting a Cursor run or adding a follow-up always asks the person who requested it, and is never offered when nobody is present to approve it.
-- Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list.
+- Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list. They can't be deleted from the agent settings; end the project instead.
 
 ## Check-ins
 
@@ -31,4 +31,4 @@ The project lead can set a check-in schedule as a five-field cron expression (mi
 
 ## Ending a project
 
-The lead, or anyone who can manage the channel's roles, can end the project. The agent posts a wrap-up and saves it to the channel's artifacts, unless the person ending it skips the wrap-up. Agents then finishes the checklist run, archives the board channel and the project channel, and removes the project agent. Archiving a project channel directly ends its project without a wrap-up.
+The lead, or anyone who can manage the channel's roles, can end the project. The agent posts a wrap-up and saves it to the channel's artifacts, unless the person ending it skips the wrap-up. Agents then finishes the checklist run, archives the board channel and the project channel, and removes the project agent. Archiving a project channel directly ends its project without a wrap-up. If ending a project stops partway, ending it again after 10 minutes finishes the cleanup without writing another wrap-up.

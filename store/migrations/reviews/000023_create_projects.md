@@ -5,7 +5,7 @@
 ## Schema Changes
 - [x] New table(s): `Agents_Projects`, `Agents_ProjectThreads`, `Agents_ProjectGrants`
 - [x] New column(s) on `Agents_UserAgents`: `ProjectChannelID VARCHAR(26) NOT NULL DEFAULT ''`
-- [x] New index(es): `idx_agents_projects_next_checkin`, `idx_agents_projectthreads_channel` (on the new, empty tables)
+- [ ] New index(es): — (the tables' secondary indexes are built concurrently in 000025 and 000026)
 - [ ] Modified column(s): —
 - [ ] Dropped object(s): —
 
@@ -14,13 +14,13 @@
 | Check | Status | Notes |
 |-------|--------|-------|
 | No ALTER COLUMN TYPE | ✅ | Only ADD COLUMN. |
-| CREATE INDEX uses CONCURRENTLY | N/A | Indexes are created on tables created in the same migration, which are empty; no existing table is indexed here (see 000024). |
+| CREATE INDEX uses CONCURRENTLY | N/A | No CREATE INDEX; secondary indexes are 000024, 000025 and 000026. |
 | DROP INDEX uses CONCURRENTLY | N/A | No DROP INDEX. |
 | No FOREIGN KEY via ALTER TABLE | ✅ | No FKs. |
 | No full-table DELETE/UPDATE | ✅ | No backfill; the column default supplies the value for existing rows. |
 | morph:nontransactional where needed | N/A | No CONCURRENTLY. |
 | Down migration exists | ✅ | Drops the tables and the column. |
-| Transactional/nontransactional split correct | ✅ | All-transactional; the concurrent index on `Agents_UserAgents` is 000024. |
+| Transactional/nontransactional split correct | ✅ | All-transactional; the concurrent indexes are 000024, 000025 and 000026. |
 
 ## Postgres-Specific Notes
 - `ADD COLUMN ... NOT NULL DEFAULT ''` is metadata-only on PostgreSQL 11+ (constant default → no table rewrite). ✅

@@ -1216,6 +1216,23 @@ func TestDeleteAgentDeactivatesBot(t *testing.T) {
 	assert.NotZero(t, agent.DeleteAt)
 }
 
+func TestDeleteAgentRefusesProjectAgents(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+		DisplayName: "Launch agent", Name: "project-launch", ServiceID: "svc-1",
+		ProjectChannelID: "projectchannel000000000000",
+	}
+
+	recorder := doRequest(e.api, http.MethodDelete, "/agents/agent-1", nil, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+	assert.Contains(t, recorder.Body.String(), "end the project instead")
+	assert.Zero(t, e.agentStore.agents["agent-1"].DeleteAt, "the project's agent must stay")
+}
+
 func TestDeleteAgentClearsSettingsThatReferencedIt(t *testing.T) {
 	const doomedID = "doomedbotuserid12345678901"
 	const keeperID = "keeperbotuserid12345678901"

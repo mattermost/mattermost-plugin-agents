@@ -277,9 +277,9 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 		return nil, errors.New("the project agent is not running")
 	}
 	thread, err := s.deps.Threads.StartAgentThread(ctx, conversations.AgentThreadRequest{
-		Bot:          bot,
-		User:         actor,
-		Channel:      channel,
+		Bot:         bot,
+		User:        actor,
+		Channel:     channel,
 		Operation:   llm.OperationAgentSetup,
 		Message:     "Let's set up this project. Tell me what it is for and what done looks like.",
 		Instruction: "Start the project setup with the people in this channel.",
@@ -565,17 +565,30 @@ func (s *Service) OnChannelArchived(ctx context.Context, channelID, actorID stri
 	return err
 }
 
+// endingResumeAfter is how long a project may stay ending before another end
+// takes over its cleanup.
+const endingResumeAfter = 10 * time.Minute
+
 func (s *Service) end(ctx context.Context, project *store.Project, actorID string, skipWrapUp, archiveProjectChannel bool) (*store.Project, error) {
-	if err := s.deps.Store.TransitionProject(project.ChannelID, store.ProjectStateActive, store.ProjectStateEnding); err != nil {
-		if errors.Is(err, store.ErrProjectStateChanged) {
+	var withoutWrapUp bool
+	if project.State == store.ProjectStateEnding {
+		// An end that stopped partway resumes once it has had time to finish
+		// on its own; its wrap-up is not written again.
+		if time.Since(time.UnixMilli(project.UpdateAt)) < endingResumeAfter {
 			return nil, ErrNotActive
 		}
-		return nil, err
+		withoutWrapUp = project.WrapUpArtifactID == ""
+	} else {
+		if err := s.deps.Store.TransitionProject(project.ChannelID, store.ProjectStateActive, store.ProjectStateEnding); err != nil {
+			if errors.Is(err, store.ErrProjectStateChanged) {
+				return nil, ErrNotActive
+			}
+			return nil, err
+		}
+		project.State = store.ProjectStateEnding
+		s.publish(project)
+		withoutWrapUp = skipWrapUp || !s.writeWrapUp(ctx, project)
 	}
-	project.State = store.ProjectStateEnding
-	s.publish(project)
-
-	withoutWrapUp := skipWrapUp || !s.writeWrapUp(ctx, project)
 
 	if project.PlaybookRunID != "" && s.deps.Playbooks != nil {
 		if err := s.deps.Playbooks.FinishRun(ctx, project.PlaybookRunID, actorID); err != nil {
@@ -584,6 +597,9 @@ func (s *Service) end(ctx context.Context, project *store.Project, actorID strin
 	}
 
 	if err := s.deps.Store.EndProject(project.ChannelID, actorID, withoutWrapUp); err != nil {
+		if errors.Is(err, store.ErrProjectStateChanged) {
+			return nil, ErrNotActive
+		}
 		return nil, err
 	}
 

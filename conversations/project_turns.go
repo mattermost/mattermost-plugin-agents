@@ -60,11 +60,11 @@ func (c *Conversations) checkProjectTurn(ctx context.Context, req turnRequest, i
 // for agents that do not lead a project.
 func (c *Conversations) ProjectSystemPromptSuffix(ctx context.Context, botID string) string {
 	gate := c.projects()
-	if gate == nil {
+	if gate == nil || c.bots == nil || botID == "" {
 		return ""
 	}
 	bot := c.bots.GetBotByID(botID)
-	if !bot.IsProjectAgent() {
+	if bot == nil || !bot.IsProjectAgent() {
 		return ""
 	}
 	return gate.SystemPromptSuffix(ctx, bot)

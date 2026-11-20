@@ -30,8 +30,6 @@ CREATE TABLE IF NOT EXISTS Agents_Projects (
     EndedWithoutWrapUp BOOLEAN NOT NULL DEFAULT false
 );
 
-CREATE INDEX IF NOT EXISTS idx_agents_projects_next_checkin ON Agents_Projects(NextCheckinAt) WHERE NextCheckinAt > 0;
-
 CREATE TABLE IF NOT EXISTS Agents_ProjectThreads (
     RootPostID VARCHAR(26) PRIMARY KEY,
     ChannelID VARCHAR(26) NOT NULL,
@@ -41,8 +39,6 @@ CREATE TABLE IF NOT EXISTS Agents_ProjectThreads (
     StartedBy VARCHAR(26) NOT NULL,
     CreateAt BIGINT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_agents_projectthreads_channel ON Agents_ProjectThreads(ChannelID, CreateAt);
 
 CREATE TABLE IF NOT EXISTS Agents_ProjectGrants (
     ProjectChannelID VARCHAR(26) NOT NULL,
