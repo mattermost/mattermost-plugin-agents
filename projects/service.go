@@ -183,6 +183,8 @@ type Service struct {
 	tickerMu   sync.Mutex
 	tickerStop chan struct{}
 	tickerDone chan struct{}
+
+	cursorCreates *OnceStates
 }
 
 var (
@@ -198,7 +200,7 @@ func New(deps Deps) *Service {
 		deps.Config == nil || deps.AutoReply == nil {
 		panic("projects: New requires Store, Platform, Bots, Threads, Config, and AutoReply")
 	}
-	return &Service{deps: deps}
+	return &Service{deps: deps, cursorCreates: NewOnceStates()}
 }
 
 func (s *Service) enabled() bool {
@@ -567,7 +569,7 @@ func (s *Service) isMember(channelID, userID string) bool {
 
 // EndProject ends an active project: wrap-up, checklist, archive, agent.
 func (s *Service) EndProject(ctx context.Context, actorID, channelID string, skipWrapUp bool) (*store.Project, error) {
-	project, err := s.deps.Store.GetProject(channelID)
+	project, err := s.GetProject(ctx, actorID, channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -733,8 +735,8 @@ func (s *Service) retireAgent(project *store.Project) {
 }
 
 // TransferLead makes another non-guest member of the channel the lead.
-func (s *Service) TransferLead(_ context.Context, actorID, channelID, leadUserID string) (*store.Project, error) {
-	project, err := s.deps.Store.GetProject(channelID)
+func (s *Service) TransferLead(ctx context.Context, actorID, channelID, leadUserID string) (*store.Project, error) {
+	project, err := s.GetProject(ctx, actorID, channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -778,8 +780,8 @@ func (s *Service) resumeCheckins(project *store.Project) error {
 
 // UpdateSchedule changes the check-in schedule. An empty cron turns
 // check-ins off.
-func (s *Service) UpdateSchedule(_ context.Context, actorID, channelID, cron, timezone string) (*store.Project, error) {
-	project, err := s.deps.Store.GetProject(channelID)
+func (s *Service) UpdateSchedule(ctx context.Context, actorID, channelID, cron, timezone string) (*store.Project, error) {
+	project, err := s.GetProject(ctx, actorID, channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -1043,7 +1045,8 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 		CursorAgentCreated: func(_ context.Context, project *store.Project, rootPostID, agentID string) error {
 			return s.deps.Store.SetProjectThreadExternalID(project.ChannelID, rootPostID, agentID)
 		},
-		CursorAgents: s.cursorAgentIDs,
+		CursorAgents:  s.cursorAgentIDs,
+		CursorCreates: s.cursorCreates,
 		RunCreated: func(_ context.Context, project *store.Project, runID string) error {
 			if err := s.linkOnce(project.ChannelID, runID, s.deps.Store.SetProjectRun, func(p *store.Project) string { return p.PlaybookRunID }); err != nil {
 				return err

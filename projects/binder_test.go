@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -386,6 +387,77 @@ func TestCursorCreateRecordsTheAgentOnItsRunThread(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCursorCreateStartsOneAgentPerRunThread(t *testing.T) {
+	runTurn := &llm.Context{ToolCatalog: llm.ToolCatalogContext{ScopedTurn: &llm.ScopedTurn{ThreadRootID: "run"}}}
+	newCreate := func(t *testing.T, f *fixture, resolve func() (string, error)) llm.Tool {
+		t.Helper()
+		tool := llm.Tool{
+			Name: "cursor_cloud_agents__com_mattermost_plugin-cursor__create_agent", ServerOrigin: CursorOrigin,
+			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return resolve() },
+		}
+		bound := NewBinder(activeProject(), true, f.svc.binderCallbacks(f.bot)).Bind([]llm.Tool{tool})
+		require.Len(t, bound, 1)
+		return bound[0]
+	}
+	call := func(tool llm.Tool) (string, error) {
+		return tool.Resolver(context.Background(), runTurn, func(any) error { return nil })
+	}
+	newRunThreadFixture := func(t *testing.T) *fixture {
+		f := newFixture(t, true, activeProject())
+		f.store.threads = []*store.ProjectThread{{RootPostID: "run", ChannelID: "P", Kind: store.ProjectThreadKindCursor}}
+		return f
+	}
+
+	t.Run("a retry after a failed record records the started agent", func(t *testing.T) {
+		f := newRunThreadFixture(t)
+		creates := 0
+		resolve := func() (string, error) {
+			creates++
+			return `{"agent_id":"bc-first"}`, nil
+		}
+		f.store.externalIDErr = errors.New("db down")
+		_, err := call(newCreate(t, f, resolve))
+		require.Error(t, err)
+
+		f.store.externalIDErr = nil
+		result, err := call(newCreate(t, f, resolve))
+		require.NoError(t, err)
+		assert.Contains(t, result, "bc-first")
+		assert.Equal(t, 1, creates, "the approved retry in a later turn does not start a second agent")
+		thread, err := f.store.GetProjectThread("P", "run")
+		require.NoError(t, err)
+		assert.Equal(t, "bc-first", thread.ExternalID)
+
+		_, err = call(newCreate(t, f, resolve))
+		require.Error(t, err)
+		assert.Equal(t, 1, creates)
+	})
+
+	t.Run("a call while another runs is refused", func(t *testing.T) {
+		f := newRunThreadFixture(t)
+		started, release := make(chan struct{}), make(chan struct{})
+		var creates atomic.Int32
+		resolve := func() (string, error) {
+			creates.Add(1)
+			close(started)
+			<-release
+			return `{"agent_id":"bc-first"}`, nil
+		}
+		first := make(chan error, 1)
+		go func() {
+			_, err := call(newCreate(t, f, resolve))
+			first <- err
+		}()
+		<-started
+
+		_, err := call(newCreate(t, f, resolve))
+		require.ErrorIs(t, err, ErrCreateInProgress)
+		close(release)
+		require.NoError(t, <-first)
+		assert.Equal(t, int32(1), creates.Load())
+	})
 }
 
 func TestCursorAgentToolsTakeOnlyTheProjectsAgents(t *testing.T) {

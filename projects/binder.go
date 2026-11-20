@@ -100,6 +100,9 @@ type BinderCallbacks struct {
 	// CursorAgents returns the Cursor agents the project's run threads
 	// started.
 	CursorAgents func(channelID string) ([]string, error)
+	// CursorCreates guards create_agent per run thread across the binders
+	// of every turn. Without it the guard covers only this binder.
+	CursorCreates *OnceStates
 }
 
 // Binder wraps plugin MCP tools so every call is bound to one project. Tools
@@ -109,9 +112,10 @@ type Binder struct {
 	interactiveUserPresent bool
 	callbacks              BinderCallbacks
 
-	mu          sync.Mutex
-	boardCreate onceState
-	runCreate   onceState
+	mu            sync.Mutex
+	boardCreate   onceState
+	runCreate     onceState
+	cursorCreates *OnceStates
 }
 
 // onceState tracks one once-only create. inFlight reserves it while the
@@ -123,9 +127,54 @@ type onceState struct {
 	pending  string
 }
 
+// OnceStates holds the once-only state of creates keyed by what they create
+// for, such as a run thread.
+type OnceStates struct {
+	mu     sync.Mutex
+	states map[string]*onceState
+}
+
+// NewOnceStates returns an empty OnceStates.
+func NewOnceStates() *OnceStates {
+	return &OnceStates{states: map[string]*onceState{}}
+}
+
+// claim reserves key's create. It returns the pending result of an earlier
+// create whose record failed, and false while another create of key runs.
+func (o *OnceStates) claim(key string) (string, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	state := o.states[key]
+	if state == nil {
+		state = &onceState{}
+		o.states[key] = state
+	}
+	if state.inFlight {
+		return "", false
+	}
+	state.inFlight = true
+	return state.pending, true
+}
+
+// release ends key's create, keeping created as pending unless it was
+// recorded.
+func (o *OnceStates) release(key, created string, recorded bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if recorded || created == "" {
+		delete(o.states, key)
+		return
+	}
+	o.states[key] = &onceState{pending: created}
+}
+
 // NewBinder returns a binder for project.
 func NewBinder(project *store.Project, interactiveUserPresent bool, callbacks BinderCallbacks) *Binder {
-	return &Binder{project: project, interactiveUserPresent: interactiveUserPresent, callbacks: callbacks}
+	cursorCreates := callbacks.CursorCreates
+	if cursorCreates == nil {
+		cursorCreates = NewOnceStates()
+	}
+	return &Binder{project: project, interactiveUserPresent: interactiveUserPresent, callbacks: callbacks, cursorCreates: cursorCreates}
 }
 
 // Bind returns the tools bound to the project, dropping every tool without a
@@ -275,8 +324,14 @@ func (b *Binder) bindCursor(tool llm.Tool, name string) (llm.Tool, bool) {
 	return tool, true
 }
 
+// ErrCreateInProgress is returned while another call of the same create
+// runs.
+var ErrCreateInProgress = errors.New("this is already being created; wait for that call to finish")
+
 // cursorCreate lets create_agent run only in a run thread that has no
-// Cursor agent yet, and records the agent it starts on that thread.
+// Cursor agent yet, one call at a time, and records the agent it starts on
+// that thread. An agent started but not recorded is recorded by the next
+// call instead of starting another.
 func (b *Binder) cursorCreate(tool llm.Tool) llm.Tool {
 	inner := tool.Resolver
 	tool.Resolver = func(ctx context.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
@@ -297,6 +352,25 @@ func (b *Binder) cursorCreate(tool llm.Tool) llm.Tool {
 		if thread.Kind != store.ProjectThreadKindCursor {
 			return "", ErrNotInRunThread
 		}
+
+		key := b.project.ChannelID + "/" + rootID
+		pending, ok := b.cursorCreates.claim(key)
+		if !ok {
+			return "", ErrCreateInProgress
+		}
+		agentID, recorded := pending, false
+		defer func() { b.cursorCreates.release(key, agentID, recorded) }()
+
+		if pending != "" {
+			if recordErr := b.callbacks.CursorAgentCreated(ctx, b.project, rootID, pending); recordErr != nil {
+				if errors.Is(recordErr, store.ErrProjectLinkSet) {
+					agentID = ""
+				}
+				return "", fmt.Errorf("the Cursor agent %s was started, but recording it on the run thread failed: %w", pending, recordErr)
+			}
+			recorded = true
+			return fmt.Sprintf(`{"agent_id":%q}`, pending), nil
+		}
 		if thread.ExternalID != "" {
 			return "", errors.New("this run thread already has a Cursor agent; use add_followup to continue it")
 		}
@@ -304,13 +378,14 @@ func (b *Binder) cursorCreate(tool llm.Tool) llm.Tool {
 		if err != nil {
 			return result, err
 		}
-		agentID := cursorAgentID(result)
+		agentID = cursorAgentID(result)
 		if agentID == "" {
 			return result, errors.New("the Cursor agent was started, but its ID was not in the result")
 		}
 		if err := b.callbacks.CursorAgentCreated(ctx, b.project, rootID, agentID); err != nil {
 			return result, fmt.Errorf("the Cursor agent was started, but recording it on the run thread failed: %w", err)
 		}
+		recorded = true
 		return result, nil
 	}
 	return tool

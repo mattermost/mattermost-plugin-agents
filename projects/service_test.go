@@ -37,6 +37,9 @@ type memStore struct {
 	deleted  []string
 	agents   []llm.BotConfig
 	threads  []*store.ProjectThread
+	reads    int
+	// externalIDErr fails recording a run thread's external ID.
+	externalIDErr error
 }
 
 func newMemStore(projects ...*store.Project) *memStore {
@@ -91,6 +94,7 @@ func (m *memStore) DeleteProvisioningProject(channelID string) error {
 func (m *memStore) GetProject(channelID string) (*store.Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.reads++
 	p, ok := m.projects[channelID]
 	if !ok {
 		return nil, store.ErrProjectNotFound
@@ -196,6 +200,9 @@ func (m *memStore) GetProjectThread(channelID, rootPostID string) (*store.Projec
 func (m *memStore) SetProjectThreadExternalID(channelID, rootPostID, externalID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.externalIDErr != nil {
+		return m.externalIDErr
+	}
 	for _, t := range m.threads {
 		if t.ChannelID == channelID && t.RootPostID == rootPostID {
 			if t.ExternalID != "" && t.ExternalID != externalID {
@@ -862,6 +869,48 @@ func TestCreateProjectAgentRunsScopedWithSetupTools(t *testing.T) {
 	assert.Equal(t, llm.OperationAgentSetup, setup.Operation)
 	assert.Equal(t, llm.OperationAgentSetup, setup.RootProps[conversations.ProjectThreadOperationProp])
 	assert.Equal(t, agent.ID, setup.RootProps[agentsetup.RootPostAgentIDProp])
+}
+
+func TestProjectWritesLookTheSameToNonReaders(t *testing.T) {
+	routes := map[string]func(f *fixture, channelID string) error{
+		"end": func(f *fixture, channelID string) error {
+			_, err := f.svc.EndProject(context.Background(), "stranger", channelID, true)
+			return err
+		},
+		"transfer lead": func(f *fixture, channelID string) error {
+			_, err := f.svc.TransferLead(context.Background(), "stranger", channelID, "other")
+			return err
+		},
+		"schedule": func(f *fixture, channelID string) error {
+			_, err := f.svc.UpdateSchedule(context.Background(), "stranger", channelID, "0 9 * * 1", "UTC")
+			return err
+		},
+	}
+	tests := []struct {
+		name    string
+		state   string
+		channel string
+	}{
+		{name: "missing project", channel: "Q"},
+		{name: "active project", state: store.ProjectStateActive, channel: "P"},
+		{name: "ended project", state: store.ProjectStateEnded, channel: "P"},
+	}
+	for route, call := range routes {
+		for _, tt := range tests {
+			t.Run(route+"/"+tt.name, func(t *testing.T) {
+				p := activeProject()
+				if tt.state != "" {
+					p.State = tt.state
+				}
+				f := newFixture(t, true, p)
+				f.platform.members["Q"] = []string{"lead"}
+				f.store.reads = 0
+
+				require.ErrorIs(t, call(f, tt.channel), ErrForbidden)
+				assert.Zero(t, f.store.reads, "the project is not looked up for someone who can't read the channel")
+			})
+		}
+	}
 }
 
 func TestTransferLeadResumesPausedCheckins(t *testing.T) {
