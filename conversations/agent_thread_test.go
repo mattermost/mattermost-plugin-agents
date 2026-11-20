@@ -6,6 +6,8 @@ package conversations_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -195,6 +197,44 @@ func TestOperationToolsOnlyInTheirOperation(t *testing.T) {
 	assert.NotContains(t, requestToolNames(t, env, 0), "op_tool")
 }
 
+// catalogSkillProvider offers one skill and its loader tool.
+type catalogSkillProvider struct{}
+
+func (catalogSkillProvider) Tools(llm.BotConfig, *llm.Context) ([]llm.Tool, []llm.SkillInfo, error) {
+	return []llm.Tool{{Name: "load_skill", Description: "load a skill", Schema: llm.NewJSONSchemaFromStruct[struct{}]()}},
+		[]llm.SkillInfo{{ID: "s1", Name: "SENTINEL-SHARED-SKILL", Description: "a shared skill"}}, nil
+}
+
+func TestStartAgentThreadSkillsFollowTheOperation(t *testing.T) {
+	tests := []struct {
+		name       string
+		operation  string
+		wantSkills bool
+	}{
+		{name: "an operation thread has no skills from its first turn", operation: testThreadOperation},
+		{name: "an ordinary conversation thread keeps skills", operation: llm.OperationConversation, wantSkills: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, bot := setupSearchTestEnv(t, nil, nil, dmMakeTextStream("Hi."))
+			env.builder.SetSkillProvider(catalogSkillProvider{})
+			env.conversations.RegisterOperation(testThreadOperation, nil)
+
+			thread, err := env.conversations.StartAgentThread(context.Background(), conversations.AgentThreadRequest{
+				Bot: bot, User: env.user, Operation: tt.operation, Message: "Help me set this up", PostAsUser: true,
+			})
+			require.NoError(t, err)
+			waitForStreamFinished(t, env)
+
+			names := requestToolNames(t, env, 0)
+			conv := searchConversation(t, env, thread.RootPost.Id)
+			assert.Equal(t, tt.wantSkills, slices.Contains(names, "load_skill"))
+			assert.Equal(t, tt.wantSkills, strings.Contains(conv.SystemPrompt, "SENTINEL-SHARED-SKILL"),
+				"the stored system prompt catalogs skills only when the turn offers them")
+		})
+	}
+}
+
 func TestStartAgentThreadRefusals(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -213,6 +253,14 @@ func TestStartAgentThreadRefusals(t *testing.T) {
 				return conversations.AgentThreadRequest{Bot: restricted, User: env.user, Operation: testThreadOperation, Message: "hi", PostAsUser: true}
 			},
 			wantErr: bots.ErrUsageRestriction,
+		},
+		{
+			name: "posting as the user in another user's DM with the agent",
+			request: func(env *dmTestEnv, bot *bots.Bot) conversations.AgentThreadRequest {
+				channel := &model.Channel{Id: "other-dm", Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds(env.botID, "someoneelse000000000000000")}
+				return conversations.AgentThreadRequest{Bot: bot, User: env.user, Channel: channel, Operation: testThreadOperation, Message: "hi", PostAsUser: true}
+			},
+			wantErr: conversations.ErrAgentThreadPostAsUserOutsideDM,
 		},
 		{
 			name: "posting as the user outside their DM with the agent",
@@ -234,4 +282,16 @@ func TestStartAgentThreadRefusals(t *testing.T) {
 			assert.Empty(t, env.mmClient.createdPosts, "nothing is posted")
 		})
 	}
+}
+
+func TestStartAgentThreadPostAsUserInTheirExplicitDM(t *testing.T) {
+	env, bot := setupSearchTestEnv(t, nil, nil, dmMakeTextStream("Hi."))
+
+	thread, err := env.conversations.StartAgentThread(context.Background(), conversations.AgentThreadRequest{
+		Bot: bot, User: env.user, Channel: env.channel, Operation: testThreadOperation, Message: "hi", PostAsUser: true,
+	})
+	require.NoError(t, err)
+	waitForStreamFinished(t, env)
+	assert.Equal(t, env.userID, thread.RootPost.UserId)
+	assert.Equal(t, env.channelID, thread.RootPost.ChannelId)
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -132,7 +131,7 @@ func (c *Conversations) StartAgentThread(ctx context.Context, req AgentThreadReq
 		}
 		channel = dm
 	}
-	if req.PostAsUser && !mmapi.IsDMWith(botUserID, channel) {
+	if req.PostAsUser && !isDMBetween(channel, botUserID, req.User.Id) {
 		return nil, ErrAgentThreadPostAsUserOutsideDM
 	}
 
@@ -169,6 +168,12 @@ func (c *Conversations) StartAgentThread(ctx context.Context, req AgentThreadReq
 	}()
 
 	return &AgentThread{RootPost: root, BotUserID: botUserID}, nil
+}
+
+// isDMBetween reports whether channel is exactly the DM between the two users.
+func isDMBetween(channel *model.Channel, userID1, userID2 string) bool {
+	return channel != nil && channel.Type == model.ChannelTypeDirect &&
+		channel.Name == model.GetDMNameFromIds(userID1, userID2)
 }
 
 func (c *Conversations) runAgentThread(ctx context.Context, policy *turnPolicy, root *model.Post, req AgentThreadRequest) (err error) {

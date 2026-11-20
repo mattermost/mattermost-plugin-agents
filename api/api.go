@@ -122,6 +122,9 @@ type AgentStore interface {
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
 	CountActiveAgents() (int, error)
 	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
+	// UpdateAgentIfUnchanged writes only while the agent's UpdateAt is still
+	// expectedUpdateAt, and returns store.ErrAgentChanged otherwise.
+	UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
 
 	// ListAgentVersions returns up to limit versions older than before (no

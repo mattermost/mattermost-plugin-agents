@@ -343,7 +343,22 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 // and one whose pre-update state differs from its latest version gets that
 // state recorded as a "system" version first. It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
-func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) error {
+	return s.updateAgent(cfg, meta, nil)
+}
+
+// ErrAgentChanged is returned by UpdateAgentIfUnchanged when the agent was
+// saved since the caller read it.
+var ErrAgentChanged = errors.New("the agent was changed since it was read")
+
+// UpdateAgentIfUnchanged is UpdateAgent for a read-modify-write that must not
+// overwrite a concurrent save: it writes only while the agent's UpdateAt is
+// still expectedUpdateAt, and returns ErrAgentChanged otherwise.
+func (s *Store) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta AgentVersionMeta) error {
+	return s.updateAgent(cfg, meta, &expectedUpdateAt)
+}
+
+func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt *int64) (err error) {
 	if err = validateAgentVersionMeta(meta); err != nil {
 		return err
 	}
@@ -364,6 +379,9 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 	}
 	if current == nil {
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+	if expectedUpdateAt != nil && current.UpdateAt != *expectedUpdateAt {
+		return ErrAgentChanged
 	}
 
 	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)

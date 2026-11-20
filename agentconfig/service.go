@@ -36,6 +36,9 @@ type AgentStore interface {
 	// GetAgent returns nil, nil when the agent does not exist.
 	GetAgent(id string) (*llm.BotConfig, error)
 	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
+	// UpdateAgentIfUnchanged writes only while the agent's UpdateAt is still
+	// expectedUpdateAt, and returns store.ErrAgentChanged otherwise.
+	UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta store.AgentVersionMeta) error
 }
 
 // Settings reads the stored plugin configuration.
@@ -170,10 +173,28 @@ type UpdateResult struct {
 	ChangedFields []string
 }
 
+// selfSetupWriteAttempts bounds how often a self_setup write re-reads the
+// agent after losing a race with another save.
+const selfSetupWriteAttempts = 3
+
 // Update validates and persists req as a new version of the agent, then
 // refreshes it on every node. The request's audit record, when ctx carries
 // one, gets the changed field names (never their values).
-func (s *Service) Update(ctx context.Context, req UpdateRequest) (result *UpdateResult, err error) {
+//
+// A self_setup write is applied to the agent as it is stored at the moment
+// of the write: if another save lands between reading and writing, the write
+// is refused with KindConflict, or, when the Service loaded the agent itself
+// (Stored is nil), re-read and re-applied.
+func (s *Service) Update(ctx context.Context, req UpdateRequest) (*UpdateResult, error) {
+	for attempt := 1; ; attempt++ {
+		result, err := s.update(ctx, req)
+		if !errors.Is(err, store.ErrAgentChanged) || req.Stored != nil || attempt == selfSetupWriteAttempts {
+			return result, err
+		}
+	}
+}
+
+func (s *Service) update(ctx context.Context, req UpdateRequest) (result *UpdateResult, err error) {
 	stored := req.Stored
 	if stored == nil {
 		if stored, err = s.deps.Store.GetAgent(req.AgentID); err != nil {
@@ -278,7 +299,16 @@ func (s *Service) Update(ctx context.Context, req UpdateRequest) (result *Update
 		}
 	}
 
-	if updateErr := s.deps.Store.UpdateAgent(cfg, req.Meta); updateErr != nil {
+	var updateErr error
+	if req.Meta.Source == store.AgentVersionSourceSelfSetup {
+		updateErr = s.deps.Store.UpdateAgentIfUnchanged(cfg, prev.UpdateAt, req.Meta)
+	} else {
+		updateErr = s.deps.Store.UpdateAgent(cfg, req.Meta)
+	}
+	if errors.Is(updateErr, store.ErrAgentChanged) {
+		return nil, newError(KindConflict, fmt.Errorf("the agent was changed by someone else while this change was being saved; read it again and retry: %w", updateErr))
+	}
+	if updateErr != nil {
 		revertRename()
 		return nil, newError(KindInternal, fmt.Errorf("failed to update agent: %w", updateErr))
 	}
@@ -294,6 +324,11 @@ func (s *Service) Update(ctx context.Context, req UpdateRequest) (result *Update
 		if deleteErr := s.deps.Access.DeleteAgentPolicy(ctx, req.ActorID, cfg.ID); deleteErr != nil && !errors.Is(deleteErr, accesscontrol.ErrPolicyNotFound) {
 			if rollbackErr := s.deps.Store.UpdateAgent(&prev, store.SystemAgentVersionMeta()); rollbackErr != nil {
 				s.deps.Logger.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", deleteErr.Error())
+				// The new configuration stays stored, so registries must load it.
+				// After a rename, the deferred refresh above already does.
+				if !usernameChanged {
+					s.deps.Notifier.AgentChanged(cfg.ID)
+				}
 			} else {
 				revertRename()
 			}

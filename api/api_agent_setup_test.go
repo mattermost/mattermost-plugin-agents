@@ -540,3 +540,29 @@ func TestGetMyConfigAndCompleteSetup(t *testing.T) {
 	_, err = callSetupTool(t, setupTool(t, tools, agentsetup.ToolGetMyConfig), requesterDMContext(testUserID), map[string]any{})
 	require.ErrorContains(t, err, "not allowed", "reads are re-authorized too")
 }
+
+func TestSetupToolWriteKeepsAConcurrentManagerSave(t *testing.T) {
+	env := setupAgentSetupEnv(t, true)
+	defer env.Cleanup(t)
+	tools := env.setup.OperationTools(context.Background(), env.bot, requesterDMContext(testUserID))
+
+	raced := false
+	env.agentStore.beforeConditionalUpdate = func() {
+		if raced {
+			return
+		}
+		raced = true
+		stored := env.agentStore.agents[setupAgentID]
+		stored.EnabledNativeTools = nil
+		stored.UpdateAt++
+	}
+
+	_, err := callSetupTool(t, setupTool(t, tools, agentsetup.ToolUpdateMyInstructions), requesterDMContext(testUserID),
+		map[string]any{"instructions": setupNewPromptText})
+	require.NoError(t, err)
+
+	stored := env.agentStore.agents[setupAgentID]
+	assert.True(t, raced)
+	assert.Equal(t, setupNewPromptText, stored.CustomInstructions)
+	assert.Empty(t, stored.EnabledNativeTools, "the manager's concurrent change must not be overwritten")
+}
