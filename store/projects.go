@@ -170,6 +170,15 @@ func (s *Store) ListLiveProjects() ([]*Project, error) {
 	return projects, nil
 }
 
+// ListTeamProjects returns the team's projects, live and ended, newest first.
+func (s *Store) ListTeamProjects(teamID string) ([]*Project, error) {
+	projects := []*Project{}
+	if err := s.db.Select(&projects, `SELECT `+projectColumns+` FROM Agents_Projects WHERE TeamID = $1 ORDER BY CreateAt DESC`, teamID); err != nil {
+		return nil, fmt.Errorf("failed to list team projects: %w", err)
+	}
+	return projects, nil
+}
+
 // SetProjectAgent records the project's agent and moves it from provisioning
 // to setup.
 func (s *Store) SetProjectAgent(channelID, agentID, botUserID, setupRootPostID string) error {

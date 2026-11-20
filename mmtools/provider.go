@@ -4,6 +4,9 @@
 package mmtools
 
 import (
+	"slices"
+	"sync"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -23,7 +26,13 @@ type MMToolProvider struct {
 	htmlArtifacts    func() bool
 	scheduleWake     ScheduleWake
 	channelArtifacts *ChannelArtifactTools
+
+	sourcesMu   sync.RWMutex
+	toolSources []ToolSource
 }
+
+// ToolSource adds built-in tools from another package for one request.
+type ToolSource func(bot *bots.Bot, llmContext *llm.Context) []llm.Tool
 
 // NewMMToolProvider creates a new tool provider. htmlArtifacts reports
 // whether HTML artifacts are enabled (read on every GetTools call so config
@@ -46,6 +55,17 @@ func (p *MMToolProvider) SetScheduleWake(schedule ScheduleWake) {
 // channel artifact library. They are cataloged only while the library is on.
 func (p *MMToolProvider) SetChannelArtifactTools(tools *ChannelArtifactTools) {
 	p.channelArtifacts = tools
+}
+
+// AddToolSource registers a source whose tools are added to every GetTools
+// result. Register sources before the plugin starts serving requests.
+func (p *MMToolProvider) AddToolSource(source func(bot *bots.Bot, llmContext *llm.Context) []llm.Tool) {
+	if source == nil {
+		return
+	}
+	p.sourcesMu.Lock()
+	defer p.sourcesMu.Unlock()
+	p.toolSources = append(p.toolSources, source)
 }
 
 // GetTools returns all available tools. Tool execution is restricted at runtime via
@@ -87,6 +107,13 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 	}
 
 	builtInTools = append(builtInTools, p.channelArtifacts.Tools(llmContext)...)
+
+	p.sourcesMu.RLock()
+	sources := slices.Clone(p.toolSources)
+	p.sourcesMu.RUnlock()
+	for _, source := range sources {
+		builtInTools = append(builtInTools, source(bot, llmContext)...)
+	}
 
 	return builtInTools
 }
