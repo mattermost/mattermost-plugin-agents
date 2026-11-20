@@ -83,7 +83,8 @@ type AgentThreadRequest struct {
 // AgentThread is a started agent thread. Its first turn keeps running in the
 // background after StartAgentThread returns.
 type AgentThread struct {
-	RootPost *model.Post
+	RootPost  *model.Post
+	BotUserID string
 }
 
 // ErrAgentThreadPostAsUserOutsideDM is returned when PostAsUser is requested
@@ -167,7 +168,7 @@ func (c *Conversations) StartAgentThread(ctx context.Context, req AgentThreadReq
 		}
 	}()
 
-	return &AgentThread{RootPost: root}, nil
+	return &AgentThread{RootPost: root, BotUserID: botUserID}, nil
 }
 
 func (c *Conversations) runAgentThread(ctx context.Context, policy *turnPolicy, root *model.Post, req AgentThreadRequest) (err error) {

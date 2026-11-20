@@ -4,6 +4,10 @@
     "translation": "To respond to an agent you must @mention them."
   },
   {
+    "id": "agents.agent_setup_root_message",
+    "translation": "Help me set up %s."
+  },
+  {
     "id": "agents.multiplayer_channels_requires_professional",
     "translation": "Agents can reply in channels and group messages on Mattermost Professional and above. You can still chat with me in a direct message."
   },

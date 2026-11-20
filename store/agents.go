@@ -21,7 +21,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	MaxToolTurns, UseServiceAccountAuth, Skills,
-	CreateAt, UpdateAt, DeleteAt`
+	CreateAt, UpdateAt, DeleteAt, SetupCompletedAt`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
 // nil and [] both encode as "[]", as does a marshal error.
@@ -97,6 +97,7 @@ type agentRow struct {
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
+	SetupCompletedAt        int64  `db:"setupcompletedat"`
 }
 
 // toBotConfig converts an agentRow (DB scan result) to an *llm.BotConfig.
@@ -125,6 +126,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		CreateAt:                r.CreateAt,
 		UpdateAt:                r.UpdateAt,
 		DeleteAt:                r.DeleteAt,
+		SetupCompletedAt:        r.SetupCompletedAt,
 	}
 
 	if err := unmarshalJSONSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
@@ -253,6 +255,26 @@ func (s *Store) GetAgent(id string) (*llm.BotConfig, error) {
 	}
 
 	return row.toBotConfig()
+}
+
+// MarkAgentSetupCompleted records that agentID finished its auto-setup
+// conversation at completedAt, unless it already had. It reports whether this
+// call recorded it, and records no version: completion is lifecycle metadata,
+// not configuration.
+func (s *Store) MarkAgentSetupCompleted(agentID string, completedAt int64) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE Agents_UserAgents SET SetupCompletedAt = $1
+		WHERE ID = $2 AND DeleteAt = 0 AND SetupCompletedAt = 0`,
+		completedAt, agentID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent %q set up: %w", agentID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent %q set up: %w", agentID, err)
+	}
+	return rows > 0, nil
 }
 
 // ListAgents returns all active (non-deleted) agents, ordered by creation time descending.

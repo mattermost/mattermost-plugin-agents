@@ -154,8 +154,9 @@ type UpdateRequest struct {
 	// Stored, when set, is the agent the caller already loaded as AgentID;
 	// it is re-authorized, not re-read.
 	Stored *llm.BotConfig
-	// Apply changes the proposed configuration, a copy of the stored one.
-	Apply func(proposed *llm.BotConfig)
+	// Apply changes the proposed configuration, a copy of the stored one. An
+	// error refuses the update as KindInvalid.
+	Apply func(proposed *llm.BotConfig) error
 	// Username, when set and different, renames the agent's bot account.
 	Username *string
 	Meta     store.AgentVersionMeta
@@ -190,7 +191,9 @@ func (s *Service) Update(ctx context.Context, req UpdateRequest) (result *Update
 	// Shallow copy is safe: Apply replaces slice headers rather than mutating elements.
 	proposed := *stored
 	if req.Apply != nil {
-		req.Apply(&proposed)
+		if applyErr := req.Apply(&proposed); applyErr != nil {
+			return nil, newError(KindInvalid, applyErr)
+		}
 	}
 	displayNameChanged := stored.DisplayName != proposed.DisplayName
 	usernameChanged := req.Username != nil && *req.Username != stored.Name

@@ -27,7 +27,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-
 // errNoAgentConfigReferences aborts the config update when no setting references the agent.
 var errNoAgentConfigReferences = errors.New("no setting references the agent")
 
@@ -603,6 +602,9 @@ type agentListItem struct {
 	*llm.BotConfig
 	InactiveReason config.AgentInactiveReason `json:"inactiveReason,omitempty"`
 	CanManage      bool                       `json:"canManage"`
+	// CanSetUp reports whether the caller may open an auto-setup
+	// conversation with the agent (POST /agents/:agentid/setup).
+	CanSetUp bool `json:"canSetUp"`
 }
 
 // handleListAgents handles GET /agents: agents the caller may access.
@@ -643,6 +645,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 				BotConfig:      redactUnmanageableAgent(cfg, canManage),
 				InactiveReason: inactive[cfg.ID],
 				CanManage:      canManage,
+				CanSetUp:       a.agentSetup != nil && inactive[cfg.ID] == config.AgentActive && a.agentSetup.Available(c.Request.Context(), userID, cfg),
 			})
 		}
 	}
@@ -733,8 +736,11 @@ func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req
 		ActorID: userID,
 		AgentID: cfg.ID,
 		Stored:  cfg,
-		Apply:   req.applyTo,
-		Meta:    meta,
+		Apply: func(proposed *llm.BotConfig) error {
+			req.applyTo(proposed)
+			return nil
+		},
+		Meta: meta,
 	}
 	if req.usernameProvided {
 		update.Username = &req.Username

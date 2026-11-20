@@ -247,6 +247,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUpdateAgent, method: http.MethodPut, path: "/agents/agentid"},
 		{event: AuditEventDeleteAgent, method: http.MethodDelete, path: "/agents/agentid"},
 		{event: AuditEventUpdateAgentAvatar, method: http.MethodPost, path: "/agents/agentid/avatar"},
+		{event: AuditEventStartAgentSetup, method: http.MethodPost, path: "/agents/agentid/setup"},
 		{event: AuditEventRestoreAgentVersion, method: http.MethodPost, path: "/agents/agentid/versions/1/restore"},
 		{event: AuditEventDeleteAgentVersions, method: http.MethodDelete, path: "/agents/agentid/versions"},
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
