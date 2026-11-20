@@ -23,7 +23,7 @@ An agent runs tools in one of two modes. The mode is a setting on the agent, not
 
 Admins set a policy for each tool on the **Tools** tab of the MCP settings. The agent's tool grants decide what the agent may use. They never change the policy.
 
-| Policy (System Console label) | Stored value | Behavior |
+| Policy (Agents settings label) | Stored value | Behavior |
 |---|---|---|
 | **Ask Every Time** | `ask` | The initiator must accept every call, in direct messages and channels. |
 | **Auto Run (DM)** | `auto_run_in_dm` | Runs without a prompt in a direct message with the agent. In channels it asks. |

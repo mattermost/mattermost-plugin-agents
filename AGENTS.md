@@ -4,7 +4,7 @@
 
 ## Project
 
-Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.26 backend + React/TypeScript webapp (Node 24.11).
+Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.27 backend + React/TypeScript webapp (Node 24.11).
 
 ## Commands
 
