@@ -90,9 +90,9 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 
 	// Enable PATs at container start. SetConfig after boot can return success
 	// before the setting is live, which flakes CreateUserAccessToken.
-	cfg := &model.Config{}
-	cfg.SetDefaults()
-	cfg.ServiceSettings.EnableUserAccessTokens = model.NewPointer(true)
+	// Only the settings to change: a defaulted config would also patch values
+	// the container's server version may not accept.
+	cfg := &model.Config{ServiceSettings: model.ServiceSettings{EnableUserAccessTokens: model.NewPointer(true)}}
 
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
 	var container *mmcontainer.Container

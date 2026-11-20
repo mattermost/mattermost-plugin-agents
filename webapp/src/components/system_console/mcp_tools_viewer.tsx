@@ -24,6 +24,7 @@ import {
     MCPToolsResponse,
 } from './mcp_types';
 import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type MCPToolsViewerProps = {
     mcpConfig: MCPConfig;
@@ -43,9 +44,23 @@ type MCPToolsViewerProps = {
     onRefreshTools: () => Promise<void>;
 };
 
+// The stable ID identifies a server when it has one; name and URL only serve
+// servers stored before IDs were minted.
+const indexOfServer = (servers: MCPServerConfig[], {id, name, url}: {id?: string; name: string; url: string}) => {
+    if (id) {
+        const byID = servers.findIndex((sc) => sc.id === id);
+        if (byID >= 0) {
+            return byID;
+        }
+    }
+    const byName = servers.findIndex((sc) => sc.name === name);
+    return byName >= 0 ? byName : servers.findIndex((sc) => sc.baseURL === url);
+};
+
 // Main component for MCP Tools viewer
 const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRefreshTools}: MCPToolsViewerProps) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
 
@@ -172,9 +187,8 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
             };
         }
 
-        return (mcpConfig.servers ?? []).find((sc) =>
-            sc.name === server.name || sc.baseURL === server.url,
-        ) || null;
+        const servers = mcpConfig.servers ?? [];
+        return servers[indexOfServer(servers, server)] ?? null;
     };
 
     const handleServerConfigChange = (
@@ -225,12 +239,9 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
             return;
         }
 
-        const updatedServers = (mcpConfig.servers ?? []).map((sc) => {
-            if (sc.name === updatedServerConfig.name || sc.baseURL === updatedServerConfig.baseURL) {
-                return updatedServerConfig;
-            }
-            return sc;
-        });
+        const servers = mcpConfig.servers ?? [];
+        const target = indexOfServer(servers, {id: updatedServerConfig.id, name: updatedServerConfig.name, url: updatedServerConfig.baseURL});
+        const updatedServers = servers.map((sc, i) => (i === target ? updatedServerConfig : sc));
         onConfigChange({...mcpConfig, servers: updatedServers});
     };
 
@@ -266,7 +277,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
                         emphasis='secondary'
                         onClick={handleClearCache}
                         loading={clearing}
-                        disabled={loading}
+                        disabled={loading || readOnly}
                     >
                         <FormattedMessage defaultMessage='Clear Cache'/>
                     </Button>
@@ -321,10 +332,12 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
 
                 {toolsData && toolsData.servers.length > 0 && (
                     <ServersList>
-                        {toolsData.servers.map((server) => {
+                        {toolsData.servers.map((server, index) => {
                             return (
                                 <MCPServerToolRow
-                                    key={server.url}
+
+                                    // Servers in a duplicate-endpoint conflict share a URL.
+                                    key={`${index}:${server.name}:${server.url}`}
                                     server={server}
                                     serverConfig={findServerConfig(server)}
                                     onServerConfigChange={(updatedConfig) =>
