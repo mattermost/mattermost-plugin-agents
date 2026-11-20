@@ -1,6 +1,6 @@
 # Mattermost MCP tool reference
 
-The 125 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 78 are read-only and 47 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 124 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
+The 126 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 76 are read-only and 50 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 125 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
 
 ## How the tools behave
 
