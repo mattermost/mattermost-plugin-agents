@@ -31,7 +31,7 @@ type mapPolicyChecker map[string]map[string]struct {
 	enabled bool
 }
 
-func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string) (string, bool) {
+func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string, _ bool) (string, bool) {
 	byServer, ok := m[serverOrigin]
 	if !ok {
 		return mcp.ToolPolicyAsk, false
@@ -271,6 +271,46 @@ func TestBotChannelAutoEverywhereKeepToolAutoExecuteBuiltIn(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, botChannelAutoEverywhereKeepTool(mapPolicyChecker{}, tc.tool))
+		})
+	}
+}
+
+func TestBotChannelAutoEverywhereFilterDropsReadOnlyPluginDefault(t *testing.T) {
+	const pluginID = "com.example.demo"
+	const pluginOrigin = "plugin://" + pluginID
+
+	cfg := mcp.Config{
+		PluginServers: []mcp.PluginServerConfig{{
+			PluginID: pluginID,
+			Name:     "Demo Plugin",
+			Enabled:  true,
+			ToolConfigs: []mcp.ToolConfig{
+				{Name: "com_example_demo__everywhere_read", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: true},
+			},
+		}},
+	}
+	checker := mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg }, func() bool { return true })
+
+	cases := []struct {
+		name string
+		tool llm.Tool
+		want bool
+	}{
+		{
+			name: "unconfigured read-only plugin tool defaults to DM-only and is dropped",
+			tool: llm.Tool{Name: "demo_plugin__com_example_demo__list_items", ServerOrigin: pluginOrigin, ReadOnlyHint: true},
+			want: false,
+		},
+		{
+			name: "explicitly auto_run_everywhere plugin tool is kept",
+			tool: llm.Tool{Name: "demo_plugin__com_example_demo__everywhere_read", ServerOrigin: pluginOrigin, ReadOnlyHint: true},
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, botChannelAutoEverywhereKeepTool(checker, tc.tool))
 		})
 	}
 }

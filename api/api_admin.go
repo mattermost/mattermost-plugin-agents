@@ -277,8 +277,9 @@ type MCPToolInfo struct {
 	// policy (mcp.EffectiveDefaultToolPolicy).
 	DefaultPolicy string `json:"defaultPolicy"`
 	// SuggestedPolicy is the policy the System Console pre-selects when an
-	// admin reviews the tool (mcp.SuggestedToolPolicy). It has no effect
-	// until the admin saves it.
+	// admin reviews the tool (mcp.SuggestedToolPolicy). For remote servers it
+	// has no effect until the admin saves it; for plugin servers read-only
+	// tools also use it as their DefaultPolicy when policies are licensed.
 	SuggestedPolicy string `json:"suggestedPolicy"`
 }
 
@@ -488,7 +489,7 @@ func (a *API) toMCPToolInfos(serverOrigin string, toolInfos []mcp.ToolInfo) []MC
 			Description:     toolInfo.Description,
 			InputSchema:     toolInfo.InputSchema,
 			ReadOnlyHint:    toolInfo.ReadOnlyHint,
-			DefaultPolicy:   mcp.EffectiveDefaultToolPolicy(serverOrigin, toolInfo.Name, policiesLicensed),
+			DefaultPolicy:   mcp.EffectiveDefaultToolPolicy(serverOrigin, toolInfo.Name, toolInfo.ReadOnlyHint, policiesLicensed),
 			SuggestedPolicy: mcp.SuggestedToolPolicy(serverOrigin, toolInfo.Name, toolInfo.ReadOnlyHint, policiesLicensed),
 		})
 	}

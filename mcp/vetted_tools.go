@@ -24,8 +24,8 @@ func IsRemoteServerOrigin(origin string) bool {
 //
 // Only Mattermost-curated READ-only tools are seeded, enabled with policy
 // auto_run_in_dm. Non-READ tools are intentionally not persisted here; tools
-// without config fall back to DefaultToolPolicy (ask, or auto_run_in_dm when
-// the server marks the tool read-only), enabled=true, until an admin
+// without config fall back to DefaultToolPolicy (ask, or auto_run_in_dm for
+// plugin-registered tools marked read-only), enabled=true, until an admin
 // explicitly configures them. Servers that annotate their read tools with
 // readOnlyHint, such as GitHub's, need no seed.
 func SeedVettedToolConfigs(baseURL string) []ToolConfig {
