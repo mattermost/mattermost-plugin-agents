@@ -137,6 +137,14 @@ export function channelArtifactsEmptyState(rhs: Locator): Locator {
     return rhs.getByTestId('channel-artifacts-empty');
 }
 
+/** The plugin's per-channel library cache as the webapp holds it, for failure messages. */
+async function libraryCacheSummary(page: Page): Promise<string> {
+    return page.evaluate(() => {
+        const library = (window as any).store?.getState?.()?.['plugins-mattermost-ai']?.channelArtifactLibrary ?? {};
+        return JSON.stringify(Object.fromEntries(Object.entries<any>(library).map(([id, v]) => [id, {status: v.status, canAdd: v.canAdd, canEdit: v.canEdit, entries: v.entries?.length}])));
+    }).catch((err) => `unavailable (${err})`);
+}
+
 /**
  * Opens the Save to channel artifacts modal from the card in `scope`, optionally
  * sets a title or picks an existing entry to update, confirms, and returns the
@@ -153,7 +161,11 @@ export async function saveArtifactToChannel(
     await save.click();
 
     const modal = page.getByTestId('channel-artifact-save-modal');
-    await expect(modal).toBeVisible();
+    try {
+        await expect(modal).toBeVisible();
+    } catch (err) {
+        throw new Error(`the save dialog did not open; library cache: ${await libraryCacheSummary(page)}`, {cause: err});
+    }
     if (options?.title !== undefined) {
         await modal.getByTestId('channel-artifact-title-input').fill(options.title);
     }

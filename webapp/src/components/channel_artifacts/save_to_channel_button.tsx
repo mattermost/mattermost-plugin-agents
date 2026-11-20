@@ -18,7 +18,7 @@ import {
     ChannelArtifactEntry,
     createChannelArtifact,
 } from '@/client';
-import {getChannelArtifactsEnabled} from '@/selectors';
+import {getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
 import {AnimatedModalShell} from '../animated_modal_shell';
 
@@ -78,21 +78,14 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         return (base || 'Artifact').slice(0, 64);
     };
 
-    const openModal = (e: React.MouseEvent) => {
-        if (!e.nativeEvent.isTrusted || saving) {
-            return;
-        }
-        if (library.status === 'error') {
-            library.reload();
-            return;
-        }
+    const showModal = (entries: ChannelArtifactEntry[]) => {
         const nextTitle = defaultTitle();
         setError('');
         setAckUpdate(false);
         setPinBookmark(false);
         setPendingPin(null);
 
-        const target = pickReplaceTarget(existing, fileId);
+        const target = pickReplaceTarget(entries, fileId);
         if (target) {
             setReplaceId(target.id);
             setTitle(target.title || nextTitle);
@@ -101,6 +94,24 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
             setTitle(nextTitle);
         }
         setOpen(true);
+    };
+
+    const openModal = (e: React.MouseEvent) => {
+        if (!e.nativeEvent.isTrusted || saving) {
+            return;
+        }
+        if (library.status === 'error') {
+            // The click that retries a failed load is the click that opens the
+            // dialog; asking for a second one would look like a dead button.
+            library.reload().then(() => {
+                const loaded = getChannelLibrary(store.getState() as never, channelId);
+                if (loaded?.status === 'ready' && (loaded.canAdd || loaded.canEdit)) {
+                    showModal(loaded.entries);
+                }
+            });
+            return;
+        }
+        showModal(existing);
     };
 
     const saveErrorMessage = (err: any): string => {

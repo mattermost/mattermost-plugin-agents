@@ -133,15 +133,14 @@ describe('SaveToChannelButton', () => {
         expect(listChannelArtifacts).not.toHaveBeenCalled();
     });
 
-    test('still offers the control after the list fails, and a click retries the load', async () => {
+    test('still offers the control after the list fails, and the click that retries the load opens the dialog', async () => {
         jest.mocked(listChannelArtifacts).mockRejectedValueOnce(new Error('down')).mockResolvedValue(permissions());
         renderButton();
 
         const button = await screen.findByTestId('html-artifact-save-to-channel');
         trustedClick(button);
-        await waitFor(() => expect(listChannelArtifacts).toHaveBeenCalledTimes(2));
-        trustedClick(await screen.findByTestId('html-artifact-save-to-channel'));
         expect(await screen.findByTestId('channel-artifact-save-modal')).toBeTruthy();
+        expect(listChannelArtifacts).toHaveBeenCalledTimes(2);
     });
 
     test('lists the library once however many cards are on screen', async () => {
