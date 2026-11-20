@@ -66,4 +66,71 @@ func TestLLMRubricEval(t *testing.T) {
 			assert.NotEmpty(t, result.Reasoning)
 		})
 	}
+
+	t.Run("rubrics graded together keep their own verdicts", func(t *testing.T) {
+		rubrics := make([]string, len(tests))
+		for i, tc := range tests {
+			rubrics[i] = tc.rubric
+		}
+		output := "La comida es muy rico"
+		results, err := eval.LLMRubrics(rubrics, output)
+		require.NoError(t, err)
+		require.Len(t, results, len(rubrics))
+		t.Log("Rubric results:", results)
+		assert.True(t, results[0].Pass, "the spanish rubric passes")
+		for i := 1; i < len(rubrics); i++ {
+			assert.False(t, results[i].Pass, "rubric %q does not apply to %q", rubrics[i], output)
+		}
+	})
+}
+
+func TestVerdictsInOrder(t *testing.T) {
+	tests := []struct {
+		name     string
+		verdicts []rubricVerdict
+		count    int
+		want     []bool
+		wantErr  bool
+	}{
+		{
+			name:     "verdicts out of order are matched by rubric number",
+			verdicts: []rubricVerdict{{Rubric: 2, Pass: false}, {Rubric: 1, Pass: true}},
+			count:    2,
+			want:     []bool{true, false},
+		},
+		{
+			name:     "a missing verdict is an error",
+			verdicts: []rubricVerdict{{Rubric: 1, Pass: true}},
+			count:    2,
+			wantErr:  true,
+		},
+		{
+			name:     "a duplicate verdict is an error",
+			verdicts: []rubricVerdict{{Rubric: 1, Pass: true}, {Rubric: 1, Pass: false}},
+			count:    2,
+			wantErr:  true,
+		},
+		{
+			name:     "a verdict for an unknown rubric is an error",
+			verdicts: []rubricVerdict{{Rubric: 1, Pass: true}, {Rubric: 3, Pass: true}},
+			count:    2,
+			wantErr:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results, err := verdictsInOrder(tc.verdicts, tc.count)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			got := make([]bool, len(results))
+			for i, r := range results {
+				got[i] = r.Pass
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
