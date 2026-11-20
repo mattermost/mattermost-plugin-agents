@@ -1,6 +1,6 @@
 # Control agents in channels
 
-Three settings under **System Console > Plugins > Agents > AI Functions** decide how agents behave in channels and group messages: tool calling, ambient auto-replies, and native web search. They need a Professional license, and auto-reply needs Enterprise Advanced. Group messages count as channels, so mentions there need Professional too.
+Three settings under **Agents > Settings > General** decide how agents behave in channels and group messages: tool calling, ambient auto-replies, and native web search. They need a Professional license, and auto-reply needs Enterprise Advanced. Group messages count as channels, so mentions there need Professional too.
 
 ## Settings
 

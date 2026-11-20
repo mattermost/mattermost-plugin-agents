@@ -15,6 +15,7 @@ import {
     doLoopInAgent,
     doRunSearch,
     doThreadAnalysis,
+    fetchModels,
     deleteAgentVersions,
     getAgentVersion,
     getAgentVersions,
@@ -551,6 +552,22 @@ describe('getUserMCPTools', () => {
         const url = new URL(mockFetch.mock.calls[0][0]);
         expect(`${url.origin}${url.pathname}`).toBe(`${siteURL}/plugins/${manifest.id}/mcp/tools`);
         expect(Object.fromEntries(url.searchParams)).toEqual(params);
+    });
+});
+
+describe('fetchModels', () => {
+    test('names the saved service and passes the credential through unchanged', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve([])} as unknown as Response);
+
+        await fetchModels('openaicompatible', '********************************', 'https://llm.example.com', '', {serviceID: 'svc-1'});
+
+        const [url, init] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/admin/models/fetch`);
+        expect(JSON.parse(String(init?.body))).toEqual(expect.objectContaining({
+            serviceID: 'svc-1',
+            apiKey: '********************************',
+            apiURL: 'https://llm.example.com',
+        }));
     });
 });
 

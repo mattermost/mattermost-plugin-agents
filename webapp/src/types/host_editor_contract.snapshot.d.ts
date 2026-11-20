@@ -16,7 +16,7 @@
  *   - webapp/platform/types/src/access_control.ts
  *   - webapp/platform/types/src/properties_user.ts
  *
- * Generated from mattermost commit cfab036615ea572067701083eb64c170a77099e9
+ * Generated from mattermost commit 902f228879b5382db15786465f1e669ce7e8885c
  *
  * Regenerate against a mattermost webapp checkout (and re-verify) with:
  *   MM_WEBAPP_PATH=/path/to/mattermost/webapp npm run update-editor-contract-snapshot
@@ -36,7 +36,7 @@ export type HostTableEditorProps = {
             id: string;
             group_id: string;
             name: string;
-            type: "text" | "select" | "multiselect" | "date" | "user" | "multiuser" | "rank";
+            type: "number" | "text" | "select" | "multiselect" | "date" | "user" | "multiuser" | "rank" | "graph" | "checkbox";
             attrs?: undefined | ({
                 [key: string]: unknown;
                 subType?: undefined | string;
@@ -46,6 +46,9 @@ export type HostTableEditorProps = {
             object_type: string;
             linked_field_id?: undefined | string;
             protected?: undefined | false | true;
+            permission_field?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+            permission_values?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+            permission_options?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
             create_at: number;
             update_at: number;
             delete_at: number;
@@ -62,9 +65,15 @@ export type HostTableEditorProps = {
                         name: string;
                         color?: undefined | string;
                         rank?: undefined | number;
+                        parents?: undefined | Array<string>;
+                        read_only?: undefined | false | true;
+                        create_at?: undefined | number;
                     }>);
+                options_omitted?: undefined | false | true;
+                options_count?: undefined | number;
                 ldap?: undefined | string;
                 saml?: undefined | string;
+                openid?: undefined | string;
                 managed?: undefined | string;
                 protected?: undefined | false | true;
                 source_plugin_id?: undefined | string;
@@ -110,12 +119,12 @@ export type HostTableEditorProps = {
                                     [key: string]: string;
                                 };
                                 notify_props: {
-                                    desktop: "default" | "all" | "mention" | "none";
+                                    desktop: "none" | "default" | "all" | "mention";
                                     desktop_sound: "default" | "true" | "false";
                                     calls_desktop_sound: "true" | "false";
                                     email: "true" | "false";
                                     mark_unread: "all" | "mention";
-                                    push: "default" | "all" | "mention" | "none";
+                                    push: "none" | "default" | "all" | "mention";
                                     push_status: "ooo" | "offline" | "away" | "dnd" | "online";
                                     comments: "never" | "root" | "any";
                                     first_name: "true" | "false";
@@ -124,9 +133,9 @@ export type HostTableEditorProps = {
                                     highlight_keys: string;
                                     desktop_notification_sound?: undefined | "default" | "Bing" | "Crackle" | "Down" | "Hello" | "Ripple" | "Upstairs";
                                     calls_notification_sound?: undefined | "Dynamic" | "Calm" | "Urgent" | "Cheerful";
-                                    desktop_threads?: undefined | "default" | "all" | "mention" | "none";
-                                    email_threads?: undefined | "default" | "all" | "mention" | "none";
-                                    push_threads?: undefined | "default" | "all" | "mention" | "none";
+                                    desktop_threads?: undefined | "none" | "default" | "all" | "mention";
+                                    email_threads?: undefined | "none" | "default" | "all" | "mention";
+                                    push_threads?: undefined | "none" | "default" | "all" | "mention";
                                     auto_responder_active?: undefined | "true" | "false";
                                     auto_responder_message?: undefined | string;
                                     calls_mobile_sound?: undefined | "" | "true" | "false";
@@ -171,6 +180,9 @@ export type HostTableEditorProps = {
     testButtonTooltip?: undefined | string;
     testButtonLabel?: React.ReactNode;
     onMaskedStateChange?: undefined | ((hasMasked: boolean) => void);
+    hiddenPickerAttributeNames?: undefined | Array<string>;
+    helpText?: undefined | string;
+    emptyStateText?: undefined | string;
 };
 
 export type HostCELEditorProps = {
@@ -192,6 +204,8 @@ export type HostCELEditorProps = {
             attribute: string;
         }>;
     onTestClick?: undefined | (() => void);
+    testButtonDisabled?: undefined | false | true;
+    testButtonTooltip?: undefined | string;
     testButtonLabel?: React.ReactNode;
     hasMaskedRows?: undefined | false | true;
     actions?: undefined | ({
@@ -221,12 +235,12 @@ export type HostCELEditorProps = {
                                     [key: string]: string;
                                 };
                                 notify_props: {
-                                    desktop: "default" | "all" | "mention" | "none";
+                                    desktop: "none" | "default" | "all" | "mention";
                                     desktop_sound: "default" | "true" | "false";
                                     calls_desktop_sound: "true" | "false";
                                     email: "true" | "false";
                                     mark_unread: "all" | "mention";
-                                    push: "default" | "all" | "mention" | "none";
+                                    push: "none" | "default" | "all" | "mention";
                                     push_status: "ooo" | "offline" | "away" | "dnd" | "online";
                                     comments: "never" | "root" | "any";
                                     first_name: "true" | "false";
@@ -235,9 +249,9 @@ export type HostCELEditorProps = {
                                     highlight_keys: string;
                                     desktop_notification_sound?: undefined | "default" | "Bing" | "Crackle" | "Down" | "Hello" | "Ripple" | "Upstairs";
                                     calls_notification_sound?: undefined | "Dynamic" | "Calm" | "Urgent" | "Cheerful";
-                                    desktop_threads?: undefined | "default" | "all" | "mention" | "none";
-                                    email_threads?: undefined | "default" | "all" | "mention" | "none";
-                                    push_threads?: undefined | "default" | "all" | "mention" | "none";
+                                    desktop_threads?: undefined | "none" | "default" | "all" | "mention";
+                                    email_threads?: undefined | "none" | "default" | "all" | "mention";
+                                    push_threads?: undefined | "none" | "default" | "all" | "mention";
                                     auto_responder_active?: undefined | "true" | "false";
                                     auto_responder_message?: undefined | string;
                                     calls_mobile_sound?: undefined | "" | "true" | "false";
@@ -299,12 +313,12 @@ export type HostCELEditorActions = {
                                 [key: string]: string;
                             };
                             notify_props: {
-                                desktop: "default" | "all" | "mention" | "none";
+                                desktop: "none" | "default" | "all" | "mention";
                                 desktop_sound: "default" | "true" | "false";
                                 calls_desktop_sound: "true" | "false";
                                 email: "true" | "false";
                                 mark_unread: "all" | "mention";
-                                push: "default" | "all" | "mention" | "none";
+                                push: "none" | "default" | "all" | "mention";
                                 push_status: "ooo" | "offline" | "away" | "dnd" | "online";
                                 comments: "never" | "root" | "any";
                                 first_name: "true" | "false";
@@ -313,9 +327,9 @@ export type HostCELEditorActions = {
                                 highlight_keys: string;
                                 desktop_notification_sound?: undefined | "default" | "Bing" | "Crackle" | "Down" | "Hello" | "Ripple" | "Upstairs";
                                 calls_notification_sound?: undefined | "Dynamic" | "Calm" | "Urgent" | "Cheerful";
-                                desktop_threads?: undefined | "default" | "all" | "mention" | "none";
-                                email_threads?: undefined | "default" | "all" | "mention" | "none";
-                                push_threads?: undefined | "default" | "all" | "mention" | "none";
+                                desktop_threads?: undefined | "none" | "default" | "all" | "mention";
+                                email_threads?: undefined | "none" | "default" | "all" | "mention";
+                                push_threads?: undefined | "none" | "default" | "all" | "mention";
                                 auto_responder_active?: undefined | "true" | "false";
                                 auto_responder_message?: undefined | string;
                                 calls_mobile_sound?: undefined | "" | "true" | "false";
@@ -369,12 +383,12 @@ export type HostAccessControlTestResult = {
                 [key: string]: string;
             };
             notify_props: {
-                desktop: "default" | "all" | "mention" | "none";
+                desktop: "none" | "default" | "all" | "mention";
                 desktop_sound: "default" | "true" | "false";
                 calls_desktop_sound: "true" | "false";
                 email: "true" | "false";
                 mark_unread: "all" | "mention";
-                push: "default" | "all" | "mention" | "none";
+                push: "none" | "default" | "all" | "mention";
                 push_status: "ooo" | "offline" | "away" | "dnd" | "online";
                 comments: "never" | "root" | "any";
                 first_name: "true" | "false";
@@ -383,9 +397,9 @@ export type HostAccessControlTestResult = {
                 highlight_keys: string;
                 desktop_notification_sound?: undefined | "default" | "Bing" | "Crackle" | "Down" | "Hello" | "Ripple" | "Upstairs";
                 calls_notification_sound?: undefined | "Dynamic" | "Calm" | "Urgent" | "Cheerful";
-                desktop_threads?: undefined | "default" | "all" | "mention" | "none";
-                email_threads?: undefined | "default" | "all" | "mention" | "none";
-                push_threads?: undefined | "default" | "all" | "mention" | "none";
+                desktop_threads?: undefined | "none" | "default" | "all" | "mention";
+                email_threads?: undefined | "none" | "default" | "all" | "mention";
+                push_threads?: undefined | "none" | "default" | "all" | "mention";
                 auto_responder_active?: undefined | "true" | "false";
                 auto_responder_message?: undefined | string;
                 calls_mobile_sound?: undefined | "" | "true" | "false";
@@ -426,7 +440,7 @@ export type HostUserPropertyField = ({
     id: string;
     group_id: string;
     name: string;
-    type: "text" | "select" | "multiselect" | "date" | "user" | "multiuser" | "rank";
+    type: "number" | "text" | "select" | "multiselect" | "date" | "user" | "multiuser" | "rank" | "graph" | "checkbox";
     attrs?: undefined | ({
         [key: string]: unknown;
         subType?: undefined | string;
@@ -436,6 +450,9 @@ export type HostUserPropertyField = ({
     object_type: string;
     linked_field_id?: undefined | string;
     protected?: undefined | false | true;
+    permission_field?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+    permission_values?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
+    permission_options?: undefined | "" | "none" | "sysadmin" | "admin" | "member" | "creator";
     create_at: number;
     update_at: number;
     delete_at: number;
@@ -452,9 +469,15 @@ export type HostUserPropertyField = ({
                 name: string;
                 color?: undefined | string;
                 rank?: undefined | number;
+                parents?: undefined | Array<string>;
+                read_only?: undefined | false | true;
+                create_at?: undefined | number;
             }>);
+        options_omitted?: undefined | false | true;
+        options_count?: undefined | number;
         ldap?: undefined | string;
         saml?: undefined | string;
+        openid?: undefined | string;
         managed?: undefined | string;
         protected?: undefined | false | true;
         source_plugin_id?: undefined | string;

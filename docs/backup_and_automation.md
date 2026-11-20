@@ -47,6 +47,21 @@ curl -s -X PUT -H "Authorization: Bearer $MM_TOKEN" -H "Content-Type: applicatio
 
 `PUT` replaces the configuration, so read it first, change what you need, and send it all back. The response is the saved configuration with any server-assigned IDs. Saves go through the same license and validation checks as the System Console. Invalid MCP configuration, duplicate IDs, bad link domains (when **Render AI-generated links** is on), and gated changes are rejected.
 
+### Credentials in the API
+
+`GET` never returns a stored credential. Every configured credential comes back as `********************************` (32 asterisks): service `apiKey`, `awsSecretAccessKey` and `vertexAuthCredentials` (including those of a legacy agent's inline service), MCP `clientSecret` and every custom header value and service account header value, the Google and Brave web search API keys, `openTelemetryHeaders`, and the embedding provider `apiKey` parameter. A credential that isn't configured comes back empty. Identifiers such as `awsAccessKeyID`, `orgId`, URLs and header names are returned as they are. The response to `PUT` is masked the same way.
+
+On `PUT`, each credential field is read like this:
+
+- The exact mask means keep the stored credential. It's restored whatever else changed in the same save, including the service type, an API URL or an MCP server's URL, so a mistyped URL can be fixed without re-entering the key. Services are matched by `id`, MCP servers by `id` (or by name and URL for servers saved before IDs existed), and header values by header name.
+- Any other value replaces the stored credential, including a value made only of asterisks that isn't the full mask.
+- An empty value clears the credential.
+- A mask with no stored credential to restore, such as on a new service or server, or in a System Console page left open across an upgrade or another admin's change, is rejected with `400` and the names of the fields. The mask is never stored. Reload the System Console, or read the configuration again, and re-enter those credentials.
+
+That makes the read-modify-write flow above safe to run without handling secrets: leave the credentials you don't want to change exactly as `GET` returned them. A script can't read a credential back through this API.
+
+`POST /plugins/mattermost-ai/admin/models/fetch` accepts a `serviceID` so the System Console can list models for a saved service without holding its key: a masked `apiKey` or `vertexAuthCredentials` is replaced by the saved service's credential, and an empty value is sent empty. A mask with nothing to resolve it against is rejected with `400`.
+
 A trimmed example of the shape:
 
 ```json
@@ -56,7 +71,7 @@ A trimmed example of the shape:
       "id": "k3g8sdb1ntbibnyt8u5jmqhc7w",
       "name": "OpenAI Service",
       "type": "openai",
-      "apiKey": "sk-...",
+      "apiKey": "********************************",
       "defaultModel": "gpt-4o",
       "fallbackServiceID": "z9d4meq7jtrx5nch1u8kwsoa3e"
     }

@@ -6,7 +6,7 @@ Monitor Agents with a token usage log, Prometheus metrics, OpenTelemetry traces,
 
 Use it for cost tracking, chargeback, and capacity planning. It needs a Professional license.
 
-1. Go to **System Console > Plugins > Agents > Debug**.
+1. Go to **Agents > Settings > Debug**.
 2. Set **Enable Token Usage Logging** to **True**.
 
 Mattermost writes one JSON object per LLM request to `logs/agents/token_usage.log`, relative to the Mattermost Server's working directory (for example `/opt/mattermost/logs/agents/`). A custom log file location doesn't move it. The file rotates at 100 MB and rotated files are compressed. Providers that don't report cached tokens, reasoning tokens, or cost leave those fields at `0`.
@@ -56,7 +56,7 @@ Traces show request latency, LLM call performance, tool execution, and failures.
 
 ### Turn it on
 
-In **System Console > Plugins > Agents > Debug**, set **Trace Output**:
+In **Agents > Settings > Debug**, set **Trace Output**:
 
 | Value | Config value | Behavior |
 |---|---|---|
