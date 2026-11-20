@@ -272,6 +272,7 @@ apply:
 # makes Go-version-skew fixes obvious.
 GOLANGCI_LINT_VERSION    ?= v2.15.0
 GOTESTSUM_VERSION        ?= v1.13.0
+GOIMPORTS_VERSION        ?= v0.52.0
 MOCKERY_VERSION          ?= v3.9.0
 
 # `go install pkg@version` ignores our go.mod, so pin the toolchain explicitly;
@@ -284,6 +285,7 @@ install-go-tools:
 	@echo Installing go tools
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	$(GO) install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+	$(GO) install golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION)
 	$(GO) build -o $(GOBIN)/agents-govet ./build/govet
 
 ## Runs eslint and golangci-lint
@@ -320,7 +322,7 @@ endif
 ## and intentionally not auto-extracted.)
 .PHONY: check-style-fix
 check-style-fix: manifest-check apply webapp/node_modules install-go-tools i18n-extract
-	goimports -w .
+	$(GOBIN)/goimports -w .
 	./scripts/fix_license_headers.sh 2023
 	cd webapp && npm run fix
 	cd webapp && npm run check-types
