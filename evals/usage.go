@@ -114,11 +114,11 @@ type meteredLLM struct {
 
 func (m *meteredLLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	flex := m.serviceTier == "flex"
-	result, err := m.LanguageModel.ChatCompletion(ctx, request, append(opts, llm.WithServiceTier(m.serviceTier))...)
-	if err != nil && flex && flexUnavailable(err) {
+	stream, err := startStream(ctx, m.LanguageModel, request, append(opts, llm.WithServiceTier(m.serviceTier))...)
+	if flex && flexUnavailable(err, stream) {
 		// Flex capacity is not guaranteed; the standard tier always serves.
 		flex = false
-		result, err = m.LanguageModel.ChatCompletion(ctx, request, opts...)
+		stream, err = startStream(ctx, m.LanguageModel, request, opts...)
 	}
 	if err != nil {
 		return nil, err
@@ -128,15 +128,9 @@ func (m *meteredLLM) ChatCompletion(ctx context.Context, request llm.CompletionR
 	go func() {
 		defer close(out)
 		for {
-			var event llm.TextStreamEvent
-			select {
-			case <-ctx.Done():
+			event, ok := stream.next(ctx)
+			if !ok {
 				return
-			case e, ok := <-result.Stream:
-				if !ok {
-					return
-				}
-				event = e
 			}
 			if event.Type == llm.EventTypeUsage {
 				if usage, ok := event.Value.(llm.TokenUsage); ok {
@@ -153,6 +147,39 @@ func (m *meteredLLM) ChatCompletion(ctx context.Context, request llm.CompletionR
 	return &llm.TextStreamResult{Stream: out}, nil
 }
 
+// peekedStream is a response stream whose first event was read ahead, since a
+// request the provider rejects arrives as an error event, not as an error.
+type peekedStream struct {
+	first    *llm.TextStreamEvent
+	upstream <-chan llm.TextStreamEvent
+}
+
+func startStream(ctx context.Context, model llm.LanguageModel, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*peekedStream, error) {
+	result, err := model.ChatCompletion(ctx, request, opts...)
+	if err != nil {
+		return nil, err
+	}
+	stream := &peekedStream{upstream: result.Stream}
+	if first, ok := stream.next(ctx); ok {
+		stream.first = &first
+	}
+	return stream, nil
+}
+
+func (s *peekedStream) next(ctx context.Context) (llm.TextStreamEvent, bool) {
+	if s.first != nil {
+		first := *s.first
+		s.first = nil
+		return first, true
+	}
+	select {
+	case <-ctx.Done():
+		return llm.TextStreamEvent{}, false
+	case event, ok := <-s.upstream:
+		return event, ok
+	}
+}
+
 func (m *meteredLLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	result, err := m.ChatCompletion(ctx, request, opts...)
 	if err != nil {
@@ -161,8 +188,15 @@ func (m *meteredLLM) ChatCompletionNoStream(ctx context.Context, request llm.Com
 	return result.ReadAll()
 }
 
-// flexUnavailable reports OpenAI's "no flex capacity" rejection.
-func flexUnavailable(err error) bool {
+// flexUnavailable reports OpenAI's "no flex capacity" rejection, returned as
+// an error or as the stream's first event.
+func flexUnavailable(err error, stream *peekedStream) bool {
+	if err == nil && stream != nil && stream.first != nil && stream.first.Type == llm.EventTypeError {
+		err, _ = stream.first.Value.(error)
+	}
+	if err == nil {
+		return false
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "resource_unavailable") || strings.Contains(msg, "Resource Unavailable")
 }
