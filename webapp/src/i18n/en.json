@@ -570,6 +570,7 @@
   "YbKpD7kD": "Interactive",
   "Yc2OKRa+": "Keep current username",
   "YodhFp/G": "These people can edit and delete every agent, including agents other people created, as the manage_others_agent permission allows. This does not give them access to the Agents settings.",
+  "Z/9K675o": "Tools marked Not reviewed already run with their default policy: Auto Run (DM) for tools the plugin marks read-only, and Ask Every Time for others. Mark the tools as reviewed, or choose a policy, to save your choices immediately.",
   "Z2YuYbbS": "When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.",
   "Z5c5mxa6": "provider changed: stored={stored}, current={current}",
   "Z7idTkps": "Access policies aren't available for this MCP server because it has a legacy ID.",

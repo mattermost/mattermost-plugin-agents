@@ -375,15 +375,17 @@ func TestHandleGetMCPToolsKeepsPartialPluginFailuresPerServer(t *testing.T) {
 
 // Admin discovery reports each tool's readOnlyHint, the policy the System
 // Console suggests for it, and the default it runs with until an admin saves
-// a policy, which stays ask whatever the server reports.
+// a policy: remote tools stay ask whatever the server reports, while plugin
+// tools with readOnlyHint default to auto_run_in_dm when policies are licensed.
 func TestHandleGetMCPToolsReportsSuggestedPolicy(t *testing.T) {
 	tests := []struct {
-		name                  string
-		level                 enterprise.Level
-		wantReadToolSuggested string
+		name                     string
+		level                    enterprise.Level
+		wantReadToolSuggested    string
+		wantPluginReadToolPolicy string
 	}{
-		{"licensed policies suggest auto-run for read-only tools", enterprise.LevelEnterprise, mcp.ToolPolicyAutoRunInDM},
-		{"unlicensed policies suggest ask", enterprise.LevelUnlicensed, mcp.ToolPolicyAsk},
+		{"licensed policies suggest auto-run and default plugin read-only tools to auto-run", enterprise.LevelEnterprise, mcp.ToolPolicyAutoRunInDM, mcp.ToolPolicyAutoRunInDM},
+		{"unlicensed policies suggest and default to ask", enterprise.LevelUnlicensed, mcp.ToolPolicyAsk, mcp.ToolPolicyAsk},
 	}
 
 	for _, tt := range tests {
@@ -413,20 +415,43 @@ func TestHandleGetMCPToolsReportsSuggestedPolicy(t *testing.T) {
 				Enabled: true,
 				Servers: []mcp.ServerConfig{{Name: "Annotated", BaseURL: httpServer.URL, Enabled: true}},
 			}
-			api.mcpClientManager.(*mockMCPClientManager).httpClient = &http.Client{}
-
-			row := serverRowByName(t, getAdminMCPTools(t, api), "Annotated")
-			require.Nil(t, row.Error)
-			got := map[string]MCPToolInfo{}
-			for _, tool := range row.Tools {
-				tool.InputSchema = nil
-				got[tool.Name] = tool
+			mgr := api.mcpClientManager.(*mockMCPClientManager)
+			mgr.httpClient = &http.Client{}
+			mgr.pluginServers = []mcp.PluginServerConfig{
+				{PluginID: "com.example.annotated", Name: "Annotated Plugin", Path: "/mcp", Enabled: true},
+			}
+			mgr.discoverPluginToolsFunc = func(mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
+				return []mcp.ToolInfo{
+					{Name: "com_example_annotated__read_tool", ReadOnlyHint: true},
+					{Name: "com_example_annotated__write_tool", ReadOnlyHint: false},
+				}, nil
 			}
 
+			resp := getAdminMCPTools(t, api)
+
+			remoteRow := serverRowByName(t, resp, "Annotated")
+			require.Nil(t, remoteRow.Error)
+			gotRemote := map[string]MCPToolInfo{}
+			for _, tool := range remoteRow.Tools {
+				tool.InputSchema = nil
+				gotRemote[tool.Name] = tool
+			}
 			require.Equal(t, map[string]MCPToolInfo{
 				"read_tool":  {Name: "read_tool", ReadOnlyHint: true, DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: tt.wantReadToolSuggested},
 				"write_tool": {Name: "write_tool", DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: mcp.ToolPolicyAsk},
-			}, got)
+			}, gotRemote)
+
+			pluginRow := serverRowByName(t, resp, "Annotated Plugin")
+			require.Nil(t, pluginRow.Error)
+			gotPlugin := map[string]MCPToolInfo{}
+			for _, tool := range pluginRow.Tools {
+				tool.InputSchema = nil
+				gotPlugin[tool.Name] = tool
+			}
+			require.Equal(t, map[string]MCPToolInfo{
+				"com_example_annotated__read_tool":  {Name: "com_example_annotated__read_tool", ReadOnlyHint: true, DefaultPolicy: tt.wantPluginReadToolPolicy, SuggestedPolicy: tt.wantPluginReadToolPolicy},
+				"com_example_annotated__write_tool": {Name: "com_example_annotated__write_tool", DefaultPolicy: mcp.ToolPolicyAsk, SuggestedPolicy: mcp.ToolPolicyAsk},
+			}, gotPlugin)
 		})
 	}
 }

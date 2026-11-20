@@ -13,15 +13,15 @@ import (
 
 // ToolPolicyChecker looks up the per-tool policy for a given MCP server/tool.
 type ToolPolicyChecker interface {
-	GetToolPolicy(serverBaseURL string, toolName string) (policy string, enabled bool)
+	GetToolPolicy(serverBaseURL string, toolName string, readOnlyHint bool) (policy string, enabled bool)
 }
 
 // ToolPolicyFunc is a function adapter that implements ToolPolicyChecker.
-type ToolPolicyFunc func(serverBaseURL string, toolName string) (string, bool)
+type ToolPolicyFunc func(serverBaseURL string, toolName string, readOnlyHint bool) (string, bool)
 
 // GetToolPolicy implements ToolPolicyChecker.
-func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
-	return f(serverBaseURL, toolName)
+func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string, readOnlyHint bool) (string, bool) {
+	return f(serverBaseURL, toolName, readOnlyHint)
 }
 
 // NewConfigToolPolicyChecker resolves effective policies against the current
@@ -30,8 +30,8 @@ func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (st
 // names may themselves contain the separator (pluginmcp prefixes every plugin
 // tool with "{pluginID}__").
 func NewConfigToolPolicyChecker(getConfig func() Config, policiesLicensed func() bool) ToolPolicyChecker {
-	return ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		return LookupEffectiveToolPolicy(getConfig(), serverBaseURL, toolName, policiesLicensed())
+	return ToolPolicyFunc(func(serverBaseURL string, toolName string, readOnlyHint bool) (string, bool) {
+		return LookupEffectiveToolPolicy(getConfig(), serverBaseURL, toolName, readOnlyHint, policiesLicensed())
 	})
 }
 
@@ -50,16 +50,25 @@ func ToolPolicyLookupName(sc *ServerConfig, toolName string) string {
 	return llm.BareMCPToolName(toolName)
 }
 
+func isPluginServerOrigin(serverBaseURL string) bool {
+	pluginID, ok := strings.CutPrefix(serverBaseURL, pluginServerOriginKey(""))
+	return ok && pluginID != ""
+}
+
 // DefaultToolPolicy returns the policy for a tool that has no stored policy:
-// the server's vetted seed policy when it has one, otherwise ask. Tool
-// annotations reported by the server never change it; they only feed
-// SuggestedToolPolicy, which an admin accepts or changes when reviewing the
-// server's tools.
-func DefaultToolPolicy(serverBaseURL, toolName string) string {
+// the server's vetted seed policy when it has one, auto_run_in_dm for
+// plugin-registered tools annotated readOnlyHint, and ask otherwise. Remote
+// HTTP servers and the embedded server ignore readOnlyHint at runtime; for
+// remote servers it only feeds SuggestedToolPolicy, which an admin accepts or
+// changes when reviewing the server's tools.
+func DefaultToolPolicy(serverBaseURL, toolName string, readOnlyHint bool) string {
 	for _, seed := range SeedVettedToolConfigs(serverBaseURL) {
 		if seed.Name == toolName {
 			return seed.Policy
 		}
+	}
+	if readOnlyHint && isPluginServerOrigin(serverBaseURL) {
+		return ToolPolicyAutoRunInDM
 	}
 	return ToolPolicyAsk
 }
@@ -68,24 +77,24 @@ func DefaultToolPolicy(serverBaseURL, toolName string) string {
 // to a tool with no stored policy: DefaultToolPolicy when tool-approval
 // policies are licensed, otherwise the product default (see
 // LookupEffectiveToolPolicy).
-func EffectiveDefaultToolPolicy(serverBaseURL, toolName string, policiesLicensed bool) string {
+func EffectiveDefaultToolPolicy(serverBaseURL, toolName string, readOnlyHint, policiesLicensed bool) string {
 	if policiesLicensed {
-		return DefaultToolPolicy(serverBaseURL, toolName)
+		return DefaultToolPolicy(serverBaseURL, toolName, readOnlyHint)
 	}
 	return unlicensedDefaultToolPolicy(serverBaseURL, toolName)
 }
 
 // SuggestedToolPolicy is the policy the System Console pre-selects when an
 // admin reviews a server's tools: the effective default, raised to
-// auto_run_in_dm for a tool the server annotates as read-only. The annotation
-// is reported by the server and is only a suggestion: it takes effect only
-// once an admin saves it. The embedded server keeps its curated defaults,
-// which deliberately leave some read-only tools (get_file_link, webhook
-// listings) at ask, and nothing is raised when tool-approval policies are not
-// licensed.
+// auto_run_in_dm for a tool the server annotates as read-only. For remote
+// servers the annotation is only a suggestion and takes effect once an admin
+// saves it; for plugin-registered servers it also drives EffectiveDefaultToolPolicy.
+// The embedded server keeps its curated defaults, which deliberately leave some
+// read-only tools (get_file_link, webhook listings) at ask, and nothing is
+// raised when tool-approval policies are not licensed.
 func SuggestedToolPolicy(serverBaseURL, toolName string, readOnlyHint, policiesLicensed bool) string {
 	if !policiesLicensed || !readOnlyHint || serverBaseURL == EmbeddedClientKey {
-		return EffectiveDefaultToolPolicy(serverBaseURL, toolName, policiesLicensed)
+		return EffectiveDefaultToolPolicy(serverBaseURL, toolName, readOnlyHint, policiesLicensed)
 	}
 	for _, seed := range SeedVettedToolConfigs(serverBaseURL) {
 		if seed.Name == toolName {
@@ -98,7 +107,7 @@ func SuggestedToolPolicy(serverBaseURL, toolName string, readOnlyHint, policiesL
 // LookupToolPolicy resolves a tool's policy for embedded, remote, and plugin
 // origins. Unknown or disabled origins never auto-execute. Tools without a
 // stored policy get DefaultToolPolicy.
-func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool) {
+func LookupToolPolicy(cfg Config, serverBaseURL, toolName string, readOnlyHint bool) (string, bool) {
 	if serverBaseURL == EmbeddedClientKey {
 		// Backfill the vetted seed for embedded tools the admin hasn't stored a
 		// config for, so tools added after an install first saved its configs
@@ -111,18 +120,18 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 			ToolConfigs: toolConfigs,
 		}
 		lookupName := ToolPolicyLookupName(embeddedCfg, toolName)
-		return embeddedCfg.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(EmbeddedClientKey, lookupName))
+		return embeddedCfg.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(EmbeddedClientKey, lookupName, readOnlyHint))
 	}
 
 	for i := range cfg.Servers {
 		if cfg.Servers[i].BaseURL == serverBaseURL {
 			lookupName := ToolPolicyLookupName(&cfg.Servers[i], toolName)
-			return cfg.Servers[i].GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(serverBaseURL, lookupName))
+			return cfg.Servers[i].GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(serverBaseURL, lookupName, readOnlyHint))
 		}
 	}
 
 	pluginID, isPluginOrigin := strings.CutPrefix(serverBaseURL, pluginServerOriginKey(""))
-	if !isPluginOrigin {
+	if !isPluginOrigin || pluginID == "" {
 		return ToolPolicyAsk, false
 	}
 
@@ -141,7 +150,7 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 			ToolConfigs: ps.ToolConfigs,
 		}
 		lookupName := ToolPolicyLookupName(synthetic, toolName)
-		return synthetic.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(serverBaseURL, lookupName))
+		return synthetic.GetToolPolicyOrDefault(lookupName, DefaultToolPolicy(serverBaseURL, lookupName, readOnlyHint))
 	}
 
 	return ToolPolicyAsk, false
@@ -154,8 +163,8 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 // the stored config, so a disabled tool stays disabled at every level. The
 // default is the vetted seed policy for EmbeddedClientKey tools (ask if the
 // tool is not in the seed) and ask for every other origin.
-func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, policiesLicensed bool) (string, bool) {
-	policy, enabled := LookupToolPolicy(cfg, serverBaseURL, toolName)
+func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, readOnlyHint, policiesLicensed bool) (string, bool) {
+	policy, enabled := LookupToolPolicy(cfg, serverBaseURL, toolName, readOnlyHint)
 	if policiesLicensed {
 		return policy, enabled
 	}

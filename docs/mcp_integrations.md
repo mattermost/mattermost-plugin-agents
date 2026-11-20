@@ -89,7 +89,7 @@ A user who asks "Open an issue for the bug in this thread" now sees a **Connect*
 
 On the **Tools** tab, each server lists its tools. For each tool you set whether it's enabled and how it's approved. The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. What they do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
 
-A tool with no saved setting is enabled and set to **Ask Every Time**, except for curated defaults on Mattermost's own tools, Atlassian, and Figma. That includes tools a server adds later. When you review a server's tools, a tool the server marks read-only (`readOnlyHint`) is suggested as **Auto Run (DM)**, but the suggestion applies only once you save it. Remote servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list, select **Mark tools as reviewed**, and save to store the suggested policy for every unreviewed tool. Turning a tool on or off doesn't set its policy.
+A tool with no saved setting is enabled and set to **Ask Every Time**, except for curated defaults on Mattermost's own tools, Atlassian, and Figma, and read-only tools (`readOnlyHint`) on plugin-registered servers. That includes tools a server adds later. When you review a remote server's tools, a tool the server marks read-only (`readOnlyHint`) is suggested as **Auto Run (DM)**, and that suggestion applies only once you save it. On a plugin-registered server, tools the plugin marks read-only default to **Auto Run (DM)** right away (Enterprise and above), and all others default to **Ask Every Time**. Both remote and plugin servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list and select **Mark tools as reviewed** to store the shown policy for every unreviewed tool. For remote servers, select **Save** on the page; plugin server changes save immediately. Turning a tool on or off doesn't set its policy.
 
 When you add a server at a known host, Mattermost pre-fills policies for its read-only tools. Mattermost's own read-only tools default to **Auto Run (DM)**, except `get_file_link`, `list_incoming_webhooks`, `list_outgoing_webhooks`, `list_agents`, and `list_drafts`, which stay at **Ask Every Time**. The first three expose bypass links or webhook tokens. The same pre-fill covers read tools on Atlassian (`mcp.atlassian.com`) and Figma (`mcp.figma.com`). GitHub (`api.githubcopilot.com`) has no pre-fill. Its read tools are suggested as **Auto Run (DM)** during review, including code scanning, Dependabot, secret scanning, and security advisory reads, so check them before you accept. Tools that change something are never pre-filled.
 
@@ -154,8 +154,10 @@ This keeps large tool catalogs out of the model's context. Turn it off per agent
 
 Other plugins can register an MCP server with Agents through the LLM Bridge. Registering needs an Enterprise license. See [LLM Bridge](llm_bridge.md). Each registered server appears as a plugin row on the **Tools** tab, where you can:
 
-- Enable or disable the whole server, and set per-tool enablement and approval policy.
-- Set an access policy under **Built-in & plugin servers** on the **Configuration** tab.
+- Enable or disable the whole server, set per-tool enablement and approval policy, and review unreviewed tools. Changes save immediately.
+- Set an access policy and see unreviewed tool counts under **Built-in & plugin servers** on the **Configuration** tab.
+
+Tools a plugin annotates with `readOnlyHint` default to **Auto Run (DM)** when tool-approval policies are licensed (Enterprise and above). All other plugin tools default to **Ask Every Time**. Any explicit policy you save overrides the default, and tools without a saved policy appear as **Not reviewed** until you pick a policy or select **Mark tools as reviewed**.
 
 Your settings are keyed to the plugin ID and survive unregistering and restarts. The plugin controls the server's name and path, and whether it can be exposed on the HTTP endpoint for external clients. You can't change that flag. Tool calls to these servers carry the requesting user's identity, so the source plugin can enforce its own permissions.
 

@@ -29,7 +29,7 @@ Admins set a policy for each tool on the **Tools** tab of the MCP settings. The 
 | **Auto Run (DM)** | `auto_run_in_dm` | Runs without a prompt in a direct message with the agent. In channels it asks. |
 | **Auto Run (Everywhere)** | `auto_run_everywhere` | Runs without a prompt in direct messages and channels. |
 
-A tool with no stored setting is enabled and set to `ask`. Tools are off in channels unless an admin turns on **Enable Channel Mention Tool Calling**, which is experimental. See [Control agents in channels](channel_settings.md). Per call, the server decides like this:
+A tool with no stored setting is enabled and set to `ask`, except for curated read-only defaults (Mattermost, Atlassian, and Figma) and read-only tools (`readOnlyHint`) on plugin-registered servers at Enterprise and above, which default to `auto_run_in_dm`. Tools are off in channels unless an admin turns on **Enable Channel Mention Tool Calling**, which is experimental. See [Control agents in channels](channel_settings.md). Per call, the server decides like this:
 
 | Conversation | Policy `ask` | Policy `auto_run_in_dm` | Policy `auto_run_everywhere` |
 |---|---|---|---|

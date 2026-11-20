@@ -128,34 +128,99 @@ func TestAutoExecute_ConfigPolicyChecker(t *testing.T) {
 		origin         string
 		serverSlug     string
 		configuredName string
-		policy         string
+		readOnlyHint   bool
+		toolConfigs    []mcp.ToolConfig
 		unlicensed     bool
 		wantDM         bool
 		wantChannel    bool
 	}{
-		{name: "plugin tool auto_run_everywhere without policy license falls back to ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, unlicensed: true, wantDM: false, wantChannel: false},
-		{name: "plugin tool auto_run_everywhere", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
-		{name: "plugin tool auto_run_in_dm", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunInDM, wantDM: true, wantChannel: false},
-		{name: "plugin tool ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAsk, wantDM: false, wantChannel: false},
-		{name: "remote tool name containing separator", origin: remoteOrigin, serverSlug: "remote", configuredName: "issues__create", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
-		{name: "remote tool plain name", origin: remoteOrigin, serverSlug: "remote", configuredName: "get_issue", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+		{
+			name: "plugin tool auto_run_everywhere without policy license falls back to ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add",
+			toolConfigs: []mcp.ToolConfig{{Name: "com_example_demo__add", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: true}},
+			unlicensed:  true, wantDM: false, wantChannel: false,
+		},
+		{
+			name: "plugin tool auto_run_everywhere", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add",
+			toolConfigs: []mcp.ToolConfig{{Name: "com_example_demo__add", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: true}},
+			wantDM:      true, wantChannel: true,
+		},
+		{
+			name: "plugin tool auto_run_in_dm", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add",
+			toolConfigs: []mcp.ToolConfig{{Name: "com_example_demo__add", Policy: mcp.ToolPolicyAutoRunInDM, Enabled: true}},
+			wantDM:      true, wantChannel: false,
+		},
+		{
+			name: "plugin tool ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add",
+			toolConfigs: []mcp.ToolConfig{{Name: "com_example_demo__add", Policy: mcp.ToolPolicyAsk, Enabled: true}},
+			wantDM:      false, wantChannel: false,
+		},
+		{
+			name: "unconfigured read-only plugin tool auto-runs in DM only when licensed", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__list",
+			readOnlyHint: true, wantDM: true, wantChannel: false,
+		},
+		{
+			name: "unconfigured read-only plugin tool asks when unlicensed", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__list",
+			readOnlyHint: true, unlicensed: true, wantDM: false, wantChannel: false,
+		},
+		{
+			name: "unconfigured write plugin tool asks", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__delete",
+			readOnlyHint: false, wantDM: false, wantChannel: false,
+		},
+		{
+			name: "explicit ask overrides read-only plugin hint", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__list",
+			readOnlyHint: true,
+			toolConfigs:  []mcp.ToolConfig{{Name: "com_example_demo__list", Policy: mcp.ToolPolicyAsk, Enabled: true}},
+			wantDM:       false, wantChannel: false,
+		},
+		{
+			name: "empty policy with retrieval override keeps read-only plugin default", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__list",
+			readOnlyHint: true,
+			toolConfigs:  []mcp.ToolConfig{{Name: "com_example_demo__list", Policy: "", Enabled: true, RetrievalDescriptionOverride: "Lists items"}},
+			wantDM:       true, wantChannel: false,
+		},
+		{
+			name: "disabled read-only plugin tool with empty policy does not auto-run", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__list",
+			readOnlyHint: true,
+			toolConfigs:  []mcp.ToolConfig{{Name: "com_example_demo__list", Policy: "", Enabled: false}},
+			wantDM:       false, wantChannel: false,
+		},
+		{
+			name: "unconfigured read-only remote tool still asks", origin: remoteOrigin, serverSlug: "remote", configuredName: "list_issues",
+			readOnlyHint: true, wantDM: false, wantChannel: false,
+		},
+		{
+			name: "embedded unseeded read-only tool still asks", origin: mcp.EmbeddedClientKey, serverSlug: "mattermost", configuredName: "get_file_link",
+			readOnlyHint: true, wantDM: false, wantChannel: false,
+		},
+		{
+			name: "remote tool name containing separator", origin: remoteOrigin, serverSlug: "remote", configuredName: "issues__create",
+			toolConfigs: []mcp.ToolConfig{{Name: "issues__create", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: true}},
+			wantDM:      true, wantChannel: true,
+		},
+		{
+			name: "remote tool plain name", origin: remoteOrigin, serverSlug: "remote", configuredName: "get_issue",
+			toolConfigs: []mcp.ToolConfig{{Name: "get_issue", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: true}},
+			wantDM:      true, wantChannel: true,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			toolConfigs := []mcp.ToolConfig{{Name: tc.configuredName, Policy: tc.policy, Enabled: true}}
 			cfg := mcp.Config{}
-			if tc.origin == pluginOrigin {
-				cfg.PluginServers = []mcp.PluginServerConfig{{PluginID: "com.example.demo", Name: "Demo Plugin", Enabled: true, ToolConfigs: toolConfigs}}
-			} else {
-				cfg.Servers = []mcp.ServerConfig{{Name: "Remote", Enabled: true, BaseURL: remoteOrigin, ToolConfigs: toolConfigs}}
+			switch tc.origin {
+			case pluginOrigin:
+				cfg.PluginServers = []mcp.PluginServerConfig{{PluginID: "com.example.demo", Name: "Demo Plugin", Enabled: true, ToolConfigs: tc.toolConfigs}}
+			case mcp.EmbeddedClientKey:
+				cfg.EmbeddedServer = mcp.EmbeddedServerConfig{Enabled: true, ToolConfigs: tc.toolConfigs}
+			default:
+				cfg.Servers = []mcp.ServerConfig{{Name: "Remote", Enabled: true, BaseURL: remoteOrigin, ToolConfigs: tc.toolConfigs}}
 			}
 
 			checker := mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg }, func() bool { return !tc.unlicensed })
 			c := policyTestConversations(checker)
 			runtimeName := llm.NamespaceMCPToolName(tc.serverSlug, tc.configuredName)
 			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
-			llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeName, ServerOrigin: tc.origin}})
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeName, ServerOrigin: tc.origin, ReadOnlyHint: tc.readOnlyHint}})
 			call := llm.ToolCall{Name: runtimeName, ServerOrigin: tc.origin}
 
 			assert.Equal(t, tc.wantDM, testTurnPolicy(c, true).autoExecute(llmCtx)(call), "DM")
@@ -229,7 +294,7 @@ type countingPolicyChecker struct {
 	enabled      bool
 }
 
-func (c *countingPolicyChecker) GetToolPolicy(origin, toolName string) (string, bool) {
+func (c *countingPolicyChecker) GetToolPolicy(origin, toolName string, _ bool) (string, bool) {
 	c.calls++
 	c.lastOrigin = origin
 	c.lastToolName = toolName

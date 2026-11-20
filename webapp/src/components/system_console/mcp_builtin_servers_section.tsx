@@ -12,6 +12,7 @@ import {useABACSupport} from '../../utils/access_control';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
+import {countUnreviewedTools} from './mcp_tool_review';
 import {MCPServerInfo} from './mcp_types';
 
 // Read-only card for the embedded Mattermost MCP server and live plugin servers.
@@ -84,11 +85,29 @@ export const BuiltInPluginServersSection = ({
                 />
                 {pluginServers.map((server) => {
                     const pluginID = pluginIDFromServerOrigin(server.url);
+                    const unreviewed = server.enabled !== false && !server.error && !server.needsOAuth ?
+                        countUnreviewedTools(server.tools, server.toolConfigs) :
+                        0;
                     return (
                         <BuiltInServerCard
                             key={server.url}
                             title={server.name || pluginID || intl.formatMessage({defaultMessage: 'Plugin server'})}
-                            badge={<Tag label={<FormattedMessage defaultMessage='Plugin'/>}/>}
+                            badge={(
+                                <>
+                                    <Tag label={<FormattedMessage defaultMessage='Plugin'/>}/>
+                                    {unreviewed > 0 && (
+                                        <Tag
+                                            type='warning'
+                                            label={(
+                                                <FormattedMessage
+                                                    defaultMessage='{count, plural, one {# tool not reviewed} other {# tools not reviewed}}'
+                                                    values={{count: unreviewed}}
+                                                />
+                                            )}
+                                        />
+                                    )}
+                                </>
+                            )}
                             subtitle={pluginID ? intl.formatMessage(
                                 {defaultMessage: 'Plugin ID: {pluginID}'},
                                 {pluginID},

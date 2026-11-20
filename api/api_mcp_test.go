@@ -17,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -1716,5 +1718,92 @@ func TestUserMCPToolsRoutesFailWhenAccessUnavailable(t *testing.T) {
 				assert.Equal(t, tt.expectedNames, names)
 			})
 		}
+	}
+}
+
+func TestHandleGetUserMCPToolsPluginReadOnlyHintDefault(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const pluginID = "com.example.demo"
+	pluginOrigin := config.PluginServerOrigin(pluginID)
+	const remoteURL = "https://remote.example.com/mcp"
+
+	tests := []struct {
+		name               string
+		level              enterprise.Level
+		wantPluginRead     string
+		wantPluginWrite    string
+		wantPluginExplicit string
+		wantRemoteRead     string
+	}{
+		{
+			name:               "licensed defaults read-only plugin tool to auto_run_in_dm",
+			level:              enterprise.LevelEnterprise,
+			wantPluginRead:     mcp.ToolPolicyAutoRunInDM,
+			wantPluginWrite:    mcp.ToolPolicyAsk,
+			wantPluginExplicit: mcp.ToolPolicyAsk,
+			wantRemoteRead:     mcp.ToolPolicyAsk,
+		},
+		{
+			name:               "unlicensed caps read-only plugin tool to ask",
+			level:              enterprise.LevelUnlicensed,
+			wantPluginRead:     mcp.ToolPolicyAsk,
+			wantPluginWrite:    mcp.ToolPolicyAsk,
+			wantPluginExplicit: mcp.ToolPolicyAsk,
+			wantRemoteRead:     mcp.ToolPolicyAsk,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.api.licenseChecker = enterprisetest.CheckerAt(tt.level)
+			e.config.mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{
+					{Name: "Remote", Enabled: true, BaseURL: remoteURL},
+				},
+			}
+			pluginCfg := mcp.PluginServerConfig{
+				PluginID: pluginID,
+				Name:     "Demo Plugin",
+				Path:     "/mcp",
+				Enabled:  true,
+				ToolConfigs: []mcp.ToolConfig{
+					{Name: "com_example_demo__explicit_ask", Policy: mcp.ToolPolicyAsk, Enabled: true},
+				},
+			}
+			e.api.mcpClientManager = &mockMCPClientManager{
+				pluginServers: []mcp.PluginServerConfig{pluginCfg},
+				tools: []llm.Tool{
+					{Name: "demo_plugin__com_example_demo__read_item", ServerOrigin: pluginOrigin, ReadOnlyHint: true},
+					{Name: "demo_plugin__com_example_demo__write_item", ServerOrigin: pluginOrigin, ReadOnlyHint: false},
+					{Name: "demo_plugin__com_example_demo__explicit_ask", ServerOrigin: pluginOrigin, ReadOnlyHint: true},
+					{Name: "remote__list_items", ServerOrigin: remoteURL, ReadOnlyHint: true},
+				},
+			}
+
+			response := getUserMCPToolsResponse(t, e.api)
+
+			policiesByOrigin := make(map[string]map[string]string)
+			for _, srv := range response.Servers {
+				policiesByOrigin[srv.ServerOrigin] = make(map[string]string)
+				for _, tool := range srv.Tools {
+					policiesByOrigin[srv.ServerOrigin][tool.Name] = tool.Policy
+				}
+			}
+
+			require.Equal(t, map[string]string{
+				"com_example_demo__read_item":    tt.wantPluginRead,
+				"com_example_demo__write_item":   tt.wantPluginWrite,
+				"com_example_demo__explicit_ask": tt.wantPluginExplicit,
+			}, policiesByOrigin[pluginOrigin])
+			require.Equal(t, map[string]string{
+				"list_items": tt.wantRemoteRead,
+			}, policiesByOrigin[remoteURL])
+		})
 	}
 }

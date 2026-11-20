@@ -3,6 +3,12 @@
 
 import {MCPServerConfig, MCPToolConfig, MCPToolInfo} from './mcp_types';
 
+// countUnreviewedTools counts discovered tools that have no chosen policy.
+export const countUnreviewedTools = (tools: MCPToolInfo[], toolConfigs?: MCPToolConfig[]): number => {
+    const chosen = new Set((toolConfigs ?? []).filter((tc) => tc.policy).map((tc) => tc.name));
+    return tools.filter((tool) => !chosen.has(tool.name)).length;
+};
+
 // reviewToolConfigs gives every discovered tool an explicit policy: the one an
 // admin already chose, else the server-computed suggestion. Stored entries for
 // tools the server no longer lists are kept.
