@@ -239,8 +239,8 @@ func TestPostBackedLibraryChecksAReplacementBeforeItUploadsAnything(t *testing.T
 	f := newPostFixture(t)
 	writer, unattended, reader, outsider := f.actors()
 	existing, err := f.lib.Write(t.Context(), writer, channelartifacts.WriteRequest{
-		SaveRequest: channelartifacts.SaveRequest{ChannelID: f.channel, Title: "Charter", Format: channelartifacts.FormatMarkdown},
-		Body:        []byte("# Charter"),
+		ChannelID: f.channel, Title: "Charter", Format: channelartifacts.FormatMarkdown,
+		Body: []byte("# Charter"),
 	})
 	require.NoError(t, err)
 	uploads, created := f.uploads, f.created
@@ -260,8 +260,8 @@ func TestPostBackedLibraryChecksAReplacementBeforeItUploadsAnything(t *testing.T
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := f.lib.Write(t.Context(), tt.actor, channelartifacts.WriteRequest{SaveRequest: tt.req, Body: []byte("# New")})
-			require.ErrorIs(t, err, tt.want)
+			_, writeErr := f.lib.Write(t.Context(), tt.actor, channelartifacts.WriteRequest{SaveRequest: tt.req, Body: []byte("# New")})
+			require.ErrorIs(t, writeErr, tt.want)
 			assert.Equal(t, uploads, f.uploads, "nothing is uploaded for a refused replacement")
 			assert.Equal(t, created, f.created, "no message is posted for a refused replacement")
 			assert.Empty(t, f.deleted, "so there is nothing to clean up")
@@ -311,19 +311,31 @@ func TestPostBackedLibraryAppliesTheFilePolicyWhenTheActorHasASession(t *testing
 }
 
 func TestPostBackedLibraryThreadsTheMessageWithTheResponse(t *testing.T) {
-	f := newPostFixture(t)
-	_, unattended, _, _ := f.actors()
 	root := model.NewId()
-	response := &model.Post{Id: model.NewId(), RootId: root, ChannelId: f.channel}
-	f.posts[response.Id] = response
+	tests := []struct {
+		name     string
+		response *model.Post
+		wantRoot func(response *model.Post) string
+	}{
+		{"a reply joins its thread", &model.Post{RootId: root}, func(*model.Post) string { return root }},
+		{"a root post starts the thread", &model.Post{}, func(r *model.Post) string { return r.Id }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newPostFixture(t)
+			_, unattended, _, _ := f.actors()
+			tt.response.Id, tt.response.ChannelId = model.NewId(), f.channel
+			f.posts[tt.response.Id] = tt.response
 
-	entry, err := f.lib.Write(t.Context(), unattended, channelartifacts.WriteRequest{
-		ChannelID: f.channel, Title: "Threaded",
-		Body:           []byte("<html>t</html>"),
-		ThreadOfPostID: response.Id,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, root, f.posts[entry.SourcePostID].RootId)
+			entry, err := f.lib.Write(t.Context(), unattended, channelartifacts.WriteRequest{
+				ChannelID: f.channel, Title: "Threaded",
+				Body:           []byte("<html>t</html>"),
+				ThreadOfPostID: tt.response.Id,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRoot(tt.response), f.posts[entry.SourcePostID].RootId)
+		})
+	}
 }
 
 func TestPostBackedLibraryRegistersMarkdownFiles(t *testing.T) {
