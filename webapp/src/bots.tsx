@@ -13,7 +13,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {getAIBots, savePreferences} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler, SetLinkPolicyHandler} from './redux';
+import {BotsHandler, SearchEnabledHandler, SetLinkPolicyHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -75,27 +75,21 @@ export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LL
     resolvePreferredBot(bots, preferredId) ?? bots?.[0] ?? null
 );
 
-let lastRequestedBotsId = 0;
-let lastStoredBotsId = 0;
+let requestCounter = 0;
+let latestStoredRequest = 0;
 
 // Fetches the bot list and stores it (plus the related feature flags) in the
-// plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
-// and the initialize() warm-up. Returns the fetched bots, or null when the
-// response is falsy. A response older than one already stored is returned but
-// not stored.
-export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
-    const requestId = ++lastRequestedBotsId;
+// plugin's redux slice, which is the only place callers read bots from. A
+// response older than one already stored is dropped, so the store always holds
+// the newest successful result. Shared by useBotlist, the channel-settings
+// loadValues, and the initialize() warm-up.
+export async function fetchAndStoreBots(dispatch: Dispatch): Promise<void> {
+    const requestId = ++requestCounter;
     const response = await getAIBots();
-    if (!response) {
-        return null;
+    if (!response || requestId < latestStoredRequest) {
+        return;
     }
-
-    // A newer response is already stored; this one is older. A newer request that failed or is
-    // still in flight does not discard it.
-    if (requestId < lastStoredBotsId) {
-        return response.bots;
-    }
-    lastStoredBotsId = requestId;
+    latestStoredRequest = requestId;
 
     dispatch({
         type: BotsHandler,
@@ -112,7 +106,10 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
         htmlArtifactsEnabled: Boolean(response.htmlArtifactsEnabled),
     });
 
-    return response.bots;
+    dispatch({
+        type: SearchEnabledHandler,
+        searchEnabled: Boolean(response.searchEnabled),
+    });
 }
 
 export const useBotlist = () => {

@@ -9,7 +9,8 @@ import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
 import {ChannelAutoReplySettings, getAIBots, getChannelAutoReply, updateChannelAutoReply} from '@/client';
-import {LLMBot} from '@/bots';
+import {LLMBot, fetchAndStoreBots} from '@/bots';
+import {BotsHandler} from '@/redux';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {
     PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES,
@@ -117,7 +118,13 @@ function makeState(opts: {bots: LLMBot[] | null; channelPermissions?: string[]; 
 }
 
 function makeTestStore(state: GlobalState): WebappStore {
-    return createStore(() => state) as unknown as WebappStore;
+    const reducer = (current: GlobalState = state, action: {type?: string; bots?: LLMBot[]}) => {
+        if (action.type !== BotsHandler) {
+            return current;
+        }
+        return {...current, [botsKey]: {...(current as any)[botsKey], bots: action.bots}} as GlobalState;
+    };
+    return createStore(reducer as any) as unknown as WebappStore;
 }
 
 beforeEach(() => {
@@ -199,6 +206,23 @@ describe('makeLoadValues', () => {
 
         expect(mockedGetAIBots).toHaveBeenCalled();
         expect(values).toEqual({mode: 'off', bot_id: 'other', ...emptyExtras});
+    });
+
+    test('reads the newest stored bots when its own fetch response is superseded', async () => {
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'} as ChannelAutoReplySettings);
+        let resolveOlder: (value: unknown) => void = jest.fn();
+        mockedGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockedGetAIBots.mockResolvedValueOnce({bots: [other], searchEnabled: false, allowUnsafeLinks: false});
+        const store = makeTestStore(makeState({bots: null}));
+
+        const loading = makeLoadValues(store)(makeChannel('O'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await fetchAndStoreBots(store.dispatch);
+        resolveOlder({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+
+        await expect(loading).resolves.toEqual({mode: 'threads', bot_id: 'other', ...emptyExtras});
     });
 
     test('preserves the saved agent when the bots fetch fails', async () => {
