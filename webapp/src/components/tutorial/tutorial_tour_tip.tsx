@@ -105,6 +105,53 @@ function resolvePlacement(
 // host reports a 0×0 bounding box (compass-ui ≥ alpha.34).
 const TIP_SIZE_FALLBACK_HEIGHT = 240;
 
+// How far the TourPoint card extends from the tip origin for a given placement.
+function cardMarginsFromTip(
+    side: Side,
+    alignment: string | undefined,
+    tipSize: SizeLike,
+): {above: number; below: number; before: number; after: number} {
+    const {width, height} = tipSize;
+    if (side === 'left' || side === 'right') {
+        const above = alignment === 'start' ? 0 : alignment === 'end' ? height : height / 2;
+        const below = alignment === 'start' ? height : alignment === 'end' ? 0 : height / 2;
+        return side === 'left'
+            ? {above, below, before: width, after: 0}
+            : {above, below, before: 0, after: width};
+    }
+    const before = alignment === 'start' ? 0 : alignment === 'end' ? width : width / 2;
+    const after = alignment === 'start' ? width : alignment === 'end' ? 0 : width / 2;
+    return side === 'top'
+        ? {above: height, below: 0, before, after}
+        : {above: 0, below: height, before, after};
+}
+
+function clampTipOriginToCard(
+    top: number,
+    left: number,
+    side: Side,
+    alignment: string | undefined,
+    tipSize: SizeLike,
+    viewport: SizeLike,
+): {top: number; left: number} {
+    const {above, below, before, after} = cardMarginsFromTip(side, alignment, tipSize);
+
+    const minTop = VIEWPORT_PADDING + above;
+    const maxTop = viewport.height - VIEWPORT_PADDING - below;
+    // When the card is taller than the viewport, fall back to keeping the tip on-screen.
+    const nextTop = maxTop < minTop
+        ? Math.min(Math.max(VIEWPORT_PADDING, top), viewport.height - VIEWPORT_PADDING)
+        : Math.min(Math.max(minTop, top), maxTop);
+
+    const minLeft = VIEWPORT_PADDING + before;
+    const maxLeft = viewport.width - VIEWPORT_PADDING - after;
+    const nextLeft = maxLeft < minLeft
+        ? Math.min(Math.max(VIEWPORT_PADDING, left), viewport.width - VIEWPORT_PADDING)
+        : Math.min(Math.max(minLeft, left), maxLeft);
+
+    return {top: nextTop, left: nextLeft};
+}
+
 export function computeAnchoredPosition(
     triggerRect: RectLike,
     tipSize: SizeLike,
@@ -114,7 +161,7 @@ export function computeAnchoredPosition(
 ): {top: number; left: number; placement: Placement} {
     const [skidding, distance] = offset;
     const resolvedPlacement = resolvePlacement(triggerRect, tipSize, placement, distance, viewport);
-    const [side, alignment] = resolvedPlacement.split('-');
+    const [side, alignment] = resolvedPlacement.split('-') as [Side, string | undefined];
 
     // TourPoint's root is a 0×0 tip origin — place that origin on the trigger
     // edge facing the tip. The card/pointer lay out around (0,0).
@@ -141,9 +188,10 @@ export function computeAnchoredPosition(
         }
     }
 
+    const clamped = clampTipOriginToCard(top, left, side, alignment, tipSize, viewport);
     return {
-        top: Math.min(Math.max(VIEWPORT_PADDING, top), viewport.height - VIEWPORT_PADDING),
-        left: Math.min(Math.max(VIEWPORT_PADDING, left), viewport.width - VIEWPORT_PADDING),
+        top: clamped.top,
+        left: clamped.left,
         placement: resolvedPlacement,
     };
 }
