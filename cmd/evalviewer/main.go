@@ -224,6 +224,11 @@ func (r evalRun) broken() bool {
 // leaving failed evals to `evalviewer report`.
 const reportOnlyEnv = "EVALS_REPORT_ONLY"
 
+// partialRunEnv marks a run of only some eval packages. Its results are never
+// marked complete, so the report does not take an eval of a skipped package
+// for a removed one.
+const partialRunEnv = "EVALS_PARTIAL"
+
 // runEvals cleans up stale results, then runs `go test` with GOEVALS=1 set,
 // streaming output to the terminal, so each command can apply its own
 // exit-code policy.
@@ -255,7 +260,7 @@ func runEvals(args []string) evalRun {
 	}
 	run.incomplete = append(run.incomplete, watcher.unrecordedFailures(records, goModulePath())...)
 	reportIncomplete(run.incomplete)
-	if findErr == nil && !run.broken() {
+	if findErr == nil && !run.broken() && os.Getenv(partialRunEnv) == "" {
 		if err := markComplete(evalFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to mark results complete: %v\n", err)
 		}

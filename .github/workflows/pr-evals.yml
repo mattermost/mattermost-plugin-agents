@@ -32,15 +32,16 @@ jobs:
           go-version-file: 'go.mod'
       - id: select
         # The mcpserver evals cost the most by far, so they run only when the
-        # pull request changes code their test binary depends on.
+        # pull request changes code their test binary depends on. An empty
+        # list runs every package.
         run: |
           # The pull_request checkout is a merge commit; its first parent is the base.
           changed=$(git diff --name-only HEAD^1 HEAD)
-          packages="./conversations ./threads ./channels ./react"
-          if ./.github/scripts/eval-deps-changed.sh ./mcpserver <<< "$changed"; then
-            packages="$packages ./mcpserver"
+          packages=""
+          if ! ./.github/scripts/eval-deps-changed.sh ./mcpserver <<< "$changed"; then
+            packages="./conversations ./threads ./channels ./react"
           fi
-          echo "Eval packages: $packages"
+          echo "Eval packages: ${packages:-all}"
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
   evals:

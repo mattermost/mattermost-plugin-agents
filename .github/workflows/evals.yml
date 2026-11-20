@@ -52,6 +52,8 @@ jobs:
           LLM_PROVIDER: ${{ matrix.provider.name }}
           EVAL_TEST_PARALLEL: ${{ matrix.provider.parallel }}
           EVAL_PACKAGES: ${{ inputs.packages }}
+          # A subset of packages must not mark its results complete.
+          EVALS_PARTIAL: ${{ inputs.packages != '' && '1' || '' }}
           # Runs per eval, combined by majority vote in the report.
           GOEVALS: ${{ inputs.runs }}
           # OpenAI
