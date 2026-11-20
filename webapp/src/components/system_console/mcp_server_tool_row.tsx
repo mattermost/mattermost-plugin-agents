@@ -1,9 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
-import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
+import {ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {Button} from '@mattermost/compass-ui/components/button';
@@ -13,12 +13,10 @@ import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {useIsLicensedFor} from '@/license';
 
-import {ToggleSwitch} from '../toggle_switch';
-
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
+import MCPServerAccordion, {MCPBulkScope, MCPBulkToggleState} from '../mcp_tools/mcp_server_accordion';
 
 import {SelectField} from './item';
-
 import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo} from './mcp_types';
 import MCPToolConfigRow, {useToolPolicyOptions} from './mcp_tool_config_row';
 import {reviewToolConfigs} from './mcp_tool_review';
@@ -32,17 +30,45 @@ type MCPServerToolRowProps = {
     // reviewing renders the row inside the tool review: expanded, without the
     // server toggle or review markers.
     reviewing?: boolean;
+
+    // Optional search-filtered subset of server.tools supplied by MCPToolsViewer.
+    visibleTools?: MCPToolInfo[];
+    isSearchFiltered?: boolean;
 };
 
-const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing = false}: MCPServerToolRowProps) => {
+const MCPServerToolRow = ({
+    server,
+    serverConfig,
+    onServerConfigChange,
+    reviewing = false,
+    visibleTools,
+    isSearchFiltered = false,
+}: MCPServerToolRowProps) => {
     const readOnly = useSettingsReadOnly();
-    const [expanded, setExpanded] = useState(reviewing);
+    const [manualExpanded, setManualExpanded] = useState(reviewing);
+    const [collapsedInSearch, setCollapsedInSearch] = useState(false);
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
     const policyOptions = useToolPolicyOptions();
     const isRemoteMcp = server.serverType === 'remote' || server.serverType === 'plugin';
     const enableRemoteBlocked = isRemoteMcp && !remoteMcpLicensed;
+
+    useEffect(() => {
+        if (!isSearchFiltered) {
+            setCollapsedInSearch(false);
+        }
+    }, [isSearchFiltered]);
+
+    const expanded = reviewing || (isSearchFiltered ? !collapsedInSearch : manualExpanded);
+    const toggleExpanded = () => {
+        if (isSearchFiltered) {
+            setCollapsedInSearch((prev) => !prev);
+            return;
+        }
+        setManualExpanded((prev) => !prev);
+    };
+    const toolsToDisplay = visibleTools ?? server.tools;
 
     const findStoredConfig = (toolName: string) => serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
 
@@ -72,11 +98,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
         }
     };
 
-    const enabledToolCount = server.tools.filter((tool) => {
-        const tc = getToolConfig(tool);
-        return tc.enabled;
-    }).length;
-
+    const enabledToolCount = server.tools.filter((tool) => getToolConfig(tool).enabled).length;
     const serverEnabled = serverConfig?.enabled ?? false;
 
     const handleServerToggle = (enabled: boolean) => {
@@ -126,26 +148,97 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
         onServerConfigChange({...serverConfig, tool_configs: updatedConfigs});
     };
 
+    // Sets enabled on every tool in tools without choosing a policy for
+    // unreviewed tools and while keeping each tool's retrieval override.
+    const handleBulkEnabledChange = (tools: MCPToolInfo[], enabled: boolean) => {
+        if (!serverConfig) {
+            return;
+        }
+        const names = new Set(tools.map((tool) => tool.name));
+        const existingConfigs = serverConfig.tool_configs || [];
+        const configuredNames = new Set(existingConfigs.map((tc) => tc.name));
+        const updatedConfigs = existingConfigs.map((tc) => (names.has(tc.name) ? {...tc, enabled} : tc));
+        for (const tool of tools) {
+            if (!configuredNames.has(tool.name)) {
+                updatedConfigs.push({name: tool.name, policy: '', enabled});
+            }
+        }
+        onServerConfigChange({...serverConfig, tool_configs: updatedConfigs});
+    };
+
     // The policy every tool in tools shares, or '' when they differ.
     const sharedPolicy = (tools: MCPToolInfo[]): string => {
         const policies = new Set(tools.map((tool) => getToolConfig(tool).policy));
         return policies.size === 1 ? [...policies][0] : '';
     };
 
-    const bulkDisabled = readOnly || !serverConfig || !serverEnabled || !approvalPoliciesLicensed;
+    const bulkPolicyDisabled = readOnly || !serverConfig || !serverEnabled || !approvalPoliciesLicensed;
+    const bulkToggleDisabled = readOnly || !serverConfig || !serverEnabled;
 
-    const renderBulkPolicyControl = (tools: MCPToolInfo[], ariaLabel: string) => (
+    const bulkPolicyAriaLabel = (scope: MCPBulkScope): string => {
+        switch (scope) {
+        case 'read':
+            return intl.formatMessage({defaultMessage: 'Approval policy for all read-only tools on {serverName}'}, {serverName: server.name});
+        case 'write':
+            return intl.formatMessage({defaultMessage: 'Approval policy for all write tools on {serverName}'}, {serverName: server.name});
+        case 'all':
+        default:
+            return intl.formatMessage({defaultMessage: 'Approval policy for all tools on {serverName}'}, {serverName: server.name});
+        }
+    };
+
+    const bulkToggleAriaLabel = (scope: MCPBulkScope, allEnabled: boolean): string => {
+        switch (scope) {
+        case 'read':
+            return allEnabled ? intl.formatMessage(
+                {defaultMessage: 'Disable all read-only tools on {serverName}'},
+                {serverName: server.name},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Enable all read-only tools on {serverName}'},
+                {serverName: server.name},
+            );
+        case 'write':
+            return allEnabled ? intl.formatMessage(
+                {defaultMessage: 'Disable all write tools on {serverName}'},
+                {serverName: server.name},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Enable all write tools on {serverName}'},
+                {serverName: server.name},
+            );
+        case 'all':
+        default:
+            return allEnabled ? intl.formatMessage(
+                {defaultMessage: 'Disable all tools on {serverName}'},
+                {serverName: server.name},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Enable all tools on {serverName}'},
+                {serverName: server.name},
+            );
+        }
+    };
+
+    const renderBulkPolicy = (tools: MCPToolInfo[], scope: MCPBulkScope) => (
         <BulkPolicySelect>
             <SelectField
                 value={sharedPolicy(tools)}
                 onChange={(policy) => handleBulkPolicyChange(tools, policy as MCPToolConfig['policy'])}
                 options={policyOptions}
-                disabled={bulkDisabled}
+                disabled={bulkPolicyDisabled}
                 placeholder={intl.formatMessage({defaultMessage: 'Mixed'})}
-                ariaLabel={ariaLabel}
+                ariaLabel={bulkPolicyAriaLabel(scope)}
             />
         </BulkPolicySelect>
     );
+
+    const getBulkToggleState = (tools: MCPToolInfo[], scope: MCPBulkScope): MCPBulkToggleState => {
+        const allEnabled = tools.length > 0 && tools.every((tool) => getToolConfig(tool).enabled);
+        return {
+            checked: allEnabled,
+            disabled: bulkToggleDisabled || tools.length === 0,
+            ariaLabel: bulkToggleAriaLabel(scope, allEnabled),
+            onChange: (checked) => handleBulkEnabledChange(tools, checked),
+        };
+    };
 
     const renderToolRow = (tool: MCPToolInfo) => {
         const isPlugin = server.serverType === 'plugin';
@@ -161,33 +254,12 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                     handleToolConfigChange(tool, updatedConfig, policyChosen)
                 }
                 serverDisabled={!serverEnabled}
+                serverName={server.name}
                 displayName={displayName}
                 notReviewed={isUnreviewed(tool)}
             />
         );
     };
-
-    // Tools are grouped by the server's readOnlyHint annotation. A server
-    // that annotates none of its tools gets one ungrouped list: "write"
-    // would be a guess for every tool.
-    const readOnlyTools = server.tools.filter((tool) => tool.readOnlyHint);
-    const writeTools = server.tools.filter((tool) => !tool.readOnlyHint);
-    const toolGroups = readOnlyTools.length > 0 ? [
-        {
-            key: 'read',
-            tools: readOnlyTools,
-            title: intl.formatMessage({defaultMessage: 'Read-only tools'}),
-            description: intl.formatMessage({defaultMessage: 'The server reports that these tools only read data.'}),
-            ariaLabel: intl.formatMessage({defaultMessage: 'Approval policy for all read-only tools on {serverName}'}, {serverName: server.name}),
-        },
-        {
-            key: 'write',
-            tools: writeTools,
-            title: intl.formatMessage({defaultMessage: 'Write tools'}),
-            description: intl.formatMessage({defaultMessage: 'Tools the server does not mark as read-only. They may create, change, or delete data.'}),
-            ariaLabel: intl.formatMessage({defaultMessage: 'Approval policy for all write tools on {serverName}'}, {serverName: server.name}),
-        },
-    ].filter((group) => group.tools.length > 0) : [];
 
     const markReviewedButton = (
         <Button
@@ -201,171 +273,134 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
         </Button>
     );
 
-    return (
-        <ServerRowContainer>
-            <ServerRowHeader>
-                <ServerRowExpandButton
-                    type='button'
-                    onClick={() => setExpanded(!expanded)}
-                    aria-expanded={expanded}
-                >
-                    <ServerAvatar>
-                        {server.name.charAt(0).toUpperCase()}
-                    </ServerAvatar>
-                    <ServerInfo>
-                        <ServerName>{server.name}</ServerName>
-                        <ServerMeta>
-                            {server.serverType === 'plugin' && (
-                                <Tag label={<FormattedMessage defaultMessage='Plugin'/>}/>
-                            )}
-                            {server.error && (
-                                <ErrorIndicator>
-                                    <ExclamationThickIcon size={16}/>
-                                    <FormattedMessage defaultMessage='Error'/>
-                                </ErrorIndicator>
-                            )}
-                            {!server.error && server.needsOAuth && (
-                                <OAuthIndicator>
-                                    <FormattedMessage defaultMessage='Needs OAuth'/>
-                                </OAuthIndicator>
-                            )}
-                            {!server.error && !server.needsOAuth && (
-                                <ToolCount>
-                                    <FormattedMessage
-                                        defaultMessage='{enabled}/{total} tools enabled'
-                                        values={{enabled: enabledToolCount, total: server.tools.length}}
-                                    />
-                                </ToolCount>
-                            )}
-                            {unreviewedCount > 0 && (
-                                <Tag
-                                    type='warning'
-                                    label={(
-                                        <FormattedMessage
-                                            defaultMessage='{count, plural, one {# tool not reviewed} other {# tools not reviewed}}'
-                                            values={{count: unreviewedCount}}
-                                        />
-                                    )}
-                                />
-                            )}
-                        </ServerMeta>
-                    </ServerInfo>
-                    <ExpandChevron>
-                        <StyledChevron $expanded={expanded}>
-                            <ChevronDownIcon size={16}/>
-                        </StyledChevron>
-                    </ExpandChevron>
-                </ServerRowExpandButton>
-                {unreviewedCount > 0 && serverConfig && (expanded ? markReviewedButton : (
+    const headerActions = (() => {
+        if (unreviewedCount <= 0 || !serverConfig) {
+            return null;
+        }
+        if (expanded) {
+            return markReviewedButton;
+        }
 
-                    // Until the tool list is open the button only tells the
-                    // admin there is something to review: tools are marked
-                    // reviewed only after the admin has seen them.
-                    <WithTooltip title={intl.formatMessage({defaultMessage: 'Open the tool list to review its tools'})}>
-                        <InactiveButtonAnchor>{markReviewedButton}</InactiveButtonAnchor>
-                    </WithTooltip>
-                ))}
-                {serverConfig && !reviewing && (
-                    <ToggleWrapper>
-                        <ToggleSwitch
-                            checked={serverEnabled}
-                            onChange={(enabled) => {
-                                if (enabled && enableRemoteBlocked) {
-                                    return;
-                                }
-                                handleServerToggle(enabled);
-                            }}
-                            disabled={readOnly || (enableRemoteBlocked && !serverEnabled)}
-                            size='medium'
-                            ariaLabel={intl.formatMessage(
-                                {defaultMessage: 'Enable {serverName}'},
-                                {serverName: server.name},
-                            )}
-                        />
-                    </ToggleWrapper>
-                )}
-            </ServerRowHeader>
+        // Until the tool list is open the button only tells the
+        // admin there is something to review: tools are marked
+        // reviewed only after the admin has seen them.
+        return (
+            <WithTooltip title={intl.formatMessage({defaultMessage: 'Open the tool list to review its tools'})}>
+                <InactiveButtonAnchor>{markReviewedButton}</InactiveButtonAnchor>
+            </WithTooltip>
+        );
+    })();
 
-            {expanded && (
-                <ToolsContainer>
-                    {server.error && (
-                        <RowNotice
-                            type='danger'
-                            title={<FormattedMessage defaultMessage='Connection Error'/>}
-                            description={server.error}
-                        />
-                    )}
-                    {!server.error && server.needsOAuth && server.oauthURL && (
-                        <RowNotice
-                            type='info'
-                            title={<FormattedMessage defaultMessage='OAuth Required'/>}
-                            description={<FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>}
-                            primaryButtonLabel={remoteMcpLicensed ? <FormattedMessage defaultMessage='Connect Account'/> : null}
-                            onPrimaryAction={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
-                        />
-                    )}
-                    {!server.error && !server.needsOAuth && server.tools.length === 0 && (
-                        <EmptyTools>
-                            <FormattedMessage defaultMessage='No tools available from this server'/>
-                        </EmptyTools>
-                    )}
-                    {!server.error && !server.needsOAuth && server.tools.length > 0 && (
-                        <>
-                            {unreviewedCount > 0 && (
-                                <RowNotice
-                                    type='warning'
-                                    title={(
-                                        <FormattedMessage
-                                            defaultMessage='{count, plural, one {# tool has not been reviewed} other {# tools have not been reviewed}}'
-                                            values={{count: unreviewedCount}}
-                                        />
-                                    )}
-                                    description={<FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>}
-                                />
-                            )}
-                            <BulkRow>
-                                <BulkLabel>
-                                    <BulkTitle>
-                                        <FormattedMessage defaultMessage='All tools'/>
-                                    </BulkTitle>
-                                    <BulkDescription>
-                                        <FormattedMessage defaultMessage='Set the approval policy for every tool on this server.'/>
-                                    </BulkDescription>
-                                </BulkLabel>
-                                {renderBulkPolicyControl(
-                                    server.tools,
-                                    intl.formatMessage({defaultMessage: 'Approval policy for all tools on {serverName}'}, {serverName: server.name}),
-                                )}
-                            </BulkRow>
-                            {toolGroups.length === 0 && server.tools.map(renderToolRow)}
-                            {toolGroups.map((group) => (
-                                <ToolGroup
-                                    key={group.key}
-                                    role='group'
-                                    aria-label={group.title}
-                                >
-                                    <BulkRow>
-                                        <BulkLabel>
-                                            <BulkTitle>
-                                                {group.title}
-                                                <GroupCount>{group.tools.length}</GroupCount>
-                                            </BulkTitle>
-                                            <BulkDescription>{group.description}</BulkDescription>
-                                        </BulkLabel>
-                                        {renderBulkPolicyControl(group.tools, group.ariaLabel)}
-                                    </BulkRow>
-                                    {group.tools.map(renderToolRow)}
-                                </ToolGroup>
-                            ))}
-                        </>
-                    )}
-                </ToolsContainer>
+    const meta = (
+        <>
+            {server.error && (
+                <ErrorIndicator>
+                    <ExclamationThickIcon size={16}/>
+                    <FormattedMessage defaultMessage='Error'/>
+                </ErrorIndicator>
             )}
-        </ServerRowContainer>
+            {!server.error && server.needsOAuth && (
+                <OAuthIndicator>
+                    <FormattedMessage defaultMessage='Needs OAuth'/>
+                </OAuthIndicator>
+            )}
+            {!server.error && !server.needsOAuth && (
+                <ToolCount>
+                    <FormattedMessage
+                        defaultMessage='{enabled}/{total} tools enabled'
+                        values={{enabled: enabledToolCount, total: server.tools.length}}
+                    />
+                </ToolCount>
+            )}
+            {unreviewedCount > 0 && (
+                <Tag
+                    type='warning'
+                    label={(
+                        <FormattedMessage
+                            defaultMessage='{count, plural, one {# tool not reviewed} other {# tools not reviewed}}'
+                            values={{count: unreviewedCount}}
+                        />
+                    )}
+                />
+            )}
+        </>
+    );
+
+    const showTools = !server.error && !server.needsOAuth && toolsToDisplay.length > 0;
+
+    const notices = (
+        <>
+            {server.error && (
+                <RowNotice
+                    type='danger'
+                    title={<FormattedMessage defaultMessage='Connection Error'/>}
+                    description={server.error}
+                />
+            )}
+            {!server.error && server.needsOAuth && server.oauthURL && (
+                <RowNotice
+                    type='info'
+                    title={<FormattedMessage defaultMessage='OAuth Required'/>}
+                    description={<FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>}
+                    primaryButtonLabel={remoteMcpLicensed ? <FormattedMessage defaultMessage='Connect Account'/> : null}
+                    onPrimaryAction={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
+                />
+            )}
+            {!server.error && !server.needsOAuth && server.tools.length === 0 && (
+                <EmptyTools>
+                    <FormattedMessage defaultMessage='No tools available from this server'/>
+                </EmptyTools>
+            )}
+            {showTools && unreviewedCount > 0 && (
+                <RowNotice
+                    type='warning'
+                    title={(
+                        <FormattedMessage
+                            defaultMessage='{count, plural, one {# tool has not been reviewed} other {# tools have not been reviewed}}'
+                            values={{count: unreviewedCount}}
+                        />
+                    )}
+                    description={<FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>}
+                />
+            )}
+        </>
+    );
+
+    return (
+        <MCPServerAccordion
+            serverName={server.name}
+            serverIdKey={server.id ?? `${server.name}:${server.url}`}
+            serverType={server.serverType}
+            meta={meta}
+            expanded={expanded}
+            onToggleExpanded={toggleExpanded}
+            headerActions={headerActions}
+            serverToggle={serverConfig && !reviewing ? {
+                checked: serverEnabled,
+                disabled: readOnly || (enableRemoteBlocked && !serverEnabled),
+                ariaLabel: intl.formatMessage(
+                    {defaultMessage: 'Enable {serverName}'},
+                    {serverName: server.name},
+                ),
+                onChange: (enabled) => {
+                    if (enabled && enableRemoteBlocked) {
+                        return;
+                    }
+                    handleServerToggle(enabled);
+                },
+            } : null}
+            notices={notices}
+            tools={showTools ? toolsToDisplay : []}
+            totalToolCount={server.tools.length}
+            isSearchFiltered={isSearchFiltered}
+            allToolsDescription={<FormattedMessage defaultMessage='Enable, disable, or set the approval policy for every tool on this server.'/>}
+            getBulkToggleState={getBulkToggleState}
+            renderBulkPolicy={renderBulkPolicy}
+            renderToolRow={renderToolRow}
+        />
     );
 };
 
-// Styled components
 // Hovering a disabled button reaches no handler, so the tooltip anchors on
 // this wrapper instead.
 const InactiveButtonAnchor = styled.span`
@@ -376,157 +411,10 @@ const InactiveButtonAnchor = styled.span`
     }
 `;
 
-const ServerRowContainer = styled.div`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: var(--radius-s);
-    background-color: var(--center-channel-bg);
-    overflow: hidden;
-`;
-
-const ServerRowHeader = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    padding-right: var(--spacing-l);
-`;
-
-const ServerRowExpandButton = styled.button`
-    display: flex;
-    align-items: center;
-    flex: 1;
-    min-width: 0;
-    padding: var(--spacing-m) var(--spacing-xs) var(--spacing-m) var(--spacing-l);
-    cursor: pointer;
-    gap: var(--spacing-xs);
-    border: none;
-    background: none;
-    text-align: left;
-    font: inherit;
-    color: inherit;
-
-    &:hover {
-        background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    }
-`;
-
-const ServerAvatar = styled.div`
-    width: var(--spacing-xxxxl);
-    height: var(--spacing-xxxxl);
-    border-radius: var(--radius-full);
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: var(--font-size-100);
-    font-weight: var(--font-weight-semibold);
-    flex-shrink: 0;
-`;
-
-const ServerInfo = styled.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-    gap: 2px;
-`;
-
-const ServerName = styled.div`
-    font-family: var(--font-family-body, 'Open Sans', sans-serif);
-    font-weight: var(--font-weight-semibold);
-    font-size: var(--font-size-100);
-    line-height: var(--line-height-100);
-    color: var(--center-channel-color);
-`;
-
-const ServerMeta = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-`;
-
 const ToolCount = styled.span`
     font-family: var(--font-family-body, 'Open Sans', sans-serif);
     font-size: var(--font-size-75);
     font-weight: var(--font-weight-regular);
-    line-height: var(--line-height-75);
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-`;
-
-const ToggleWrapper = styled.div`
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-`;
-
-const ExpandChevron = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: auto;
-    padding: var(--spacing-xs);
-    flex-shrink: 0;
-`;
-
-const StyledChevron = styled.div<{$expanded: boolean}>`
-    display: flex;
-    align-items: center;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    transform: ${(props) => (props.$expanded ? 'rotate(0deg)' : 'rotate(-90deg)')};
-    transition: transform 0.2s;
-`;
-
-const ToolsContainer = styled.div`
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-l);
-    padding: var(--spacing-m) 0;
-`;
-
-const ToolGroup = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-l);
-    padding-top: var(--spacing-m);
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-`;
-
-// Lines the bulk select up with the per-tool policy selects: the tool rows
-// put a toggle and a details button to the right of theirs.
-const BulkRow = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-m);
-    padding: 0 calc(var(--spacing-l) + 90px) 0 var(--spacing-l);
-`;
-
-const BulkLabel = styled.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-`;
-
-const BulkTitle = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    font-size: var(--font-size-100);
-    font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-100);
-    color: var(--center-channel-color);
-`;
-
-const GroupCount = styled.span`
-    font-size: var(--font-size-75);
-    font-weight: var(--font-weight-regular);
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-`;
-
-const BulkDescription = styled.div`
-    font-size: var(--font-size-75);
     line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
 `;

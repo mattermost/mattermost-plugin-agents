@@ -2,10 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {getUserMCPTools} from '@/client';
+import {getUserMCPTools, refreshUserMCPTools} from '@/client';
 
 import McpsTab from './mcps_tab';
 
@@ -25,6 +25,7 @@ jest.mock('react-intl', () => {
 
 jest.mock('@/client', () => ({
     getUserMCPTools: jest.fn(),
+    refreshUserMCPTools: jest.fn(),
 }));
 
 jest.mock('@/license', () => ({
@@ -48,6 +49,7 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 }));
 
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
+const mockedRefreshUserMCPTools = refreshUserMCPTools as unknown as jest.Mock;
 
 const serviceAccountToggleName = /^Use service accounts for authentication/;
 const serviceAccountWarning = /^Anyone who can use this agent acts with its shared service account access/;
@@ -137,6 +139,7 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
 describe('McpsTab', () => {
     beforeEach(() => {
         mockedGetUserMCPTools.mockReset();
+        mockedRefreshUserMCPTools.mockReset();
         const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
         useIsLicensedFor.mockReturnValue(true);
     });
@@ -534,5 +537,197 @@ describe('McpsTab', () => {
         await screen.findByText('Headers Only');
         expect(screen.getByText('Not connected')).not.toBeNull();
         expect(screen.queryByText('Unavailable')).toBeNull();
+    });
+
+    test('groups tools into Read-only and Write sections with bulk enable/disable switches', async () => {
+        const origin = 'https://tracker.example.com/mcp';
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Tracker',
+                serverOrigin: origin,
+                kind: 'remote',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {name: 'list_issues', description: 'List issues', enabled: true, policy: 'auto_run_in_dm', readOnlyHint: true},
+                    {name: 'get_issue', description: 'Get issue', enabled: true, policy: 'auto_run_everywhere', readOnlyHint: true},
+                    {name: 'delete_issue', description: 'Delete issue', enabled: true, policy: 'ask', readOnlyHint: false},
+                ],
+            }],
+        });
+
+        const {onChange} = renderTab({
+            autoEnableNewMCPTools: false,
+            enabledTools: [],
+        });
+
+        await screen.findByText('Tracker');
+        fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
+
+        const readGroup = screen.getByRole('group', {name: 'Read-only tools'});
+        const writeGroup = screen.getByRole('group', {name: 'Write tools'});
+        expect(within(readGroup).getByText('list_issues')).not.toBeNull();
+        expect(within(readGroup).getByText('get_issue')).not.toBeNull();
+        expect(within(writeGroup).getByText('delete_issue')).not.toBeNull();
+
+        // Read-only policy tags are visible per tool.
+        expect(within(readGroup).getByText('Auto Run (DM)')).not.toBeNull();
+        expect(within(readGroup).getByText('Auto Run (Everywhere)')).not.toBeNull();
+        expect(within(writeGroup).getByText('Ask Every Time')).not.toBeNull();
+
+        // Bulk enable read-only tools grants only the read-only tools.
+        fireEvent.click(screen.getByRole('switch', {name: /Enable all read-only tools on/}));
+        expect(onChange).toHaveBeenCalledWith({
+            enabledTools: [
+                {server_origin: origin, tool_name: 'list_issues'},
+                {server_origin: origin, tool_name: 'get_issue'},
+            ],
+        });
+    });
+
+    test('shows admin-disabled tools as locked off, allows inspecting schema, and excludes them from grants', async () => {
+        const origin = 'https://tracker.example.com/mcp';
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Tracker',
+                serverOrigin: origin,
+                kind: 'remote',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {
+                        name: 'list_issues',
+                        description: 'List issues',
+                        enabled: true,
+                        policy: 'auto_run_in_dm',
+                        readOnlyHint: true,
+                    },
+                    {
+                        name: 'delete_issue',
+                        description: 'Delete an issue permanently',
+                        enabled: false,
+                        policy: 'ask',
+                        readOnlyHint: false,
+                        inputSchema: {type: 'object', properties: {issue_id: {type: 'string'}}},
+                    },
+                ],
+            }],
+        });
+
+        const {onChange} = renderTab({
+            autoEnableNewMCPTools: false,
+            enabledTools: [],
+        });
+
+        await screen.findByText('Tracker');
+        expect(screen.getByText(/disabled by admin/)).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
+
+        const writeGroup = screen.getByRole('group', {name: 'Write tools'});
+        expect(within(writeGroup).getByText('delete_issue')).not.toBeNull();
+        expect(within(writeGroup).getByText('Disabled by admin')).not.toBeNull();
+
+        const disabledToolSwitch = within(writeGroup).getByRole('switch', {name: toolToggleName}) as HTMLInputElement;
+        expect(disabledToolSwitch.disabled).toBe(true);
+        expect(disabledToolSwitch.getAttribute('aria-checked')).toBe('false');
+
+        // Details drawer stays inspectable even for admin-disabled tools.
+        fireEvent.click(within(writeGroup).getByRole('button', {name: 'Show tool details'}));
+        expect(within(writeGroup).getByText(/"issue_id"/)).not.toBeNull();
+
+        // Bulk write-group toggle is disabled because all write tools are admin-disabled.
+        const writeBulkSwitch = within(writeGroup).getByRole('switch', {name: /Enable all write tools on/}) as HTMLInputElement;
+        expect(writeBulkSwitch.disabled).toBe(true);
+
+        // Server toggle grants only the admin-enabled tool.
+        fireEvent.click(screen.getByRole('switch', {name: serverToggleName}));
+        expect(onChange).toHaveBeenCalledWith({
+            enabledTools: [{server_origin: origin, tool_name: 'list_issues'}],
+        });
+    });
+
+    test('disables server toggle when every tool on the server is disabled by admin', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'LockedServer',
+                serverOrigin: 'https://locked.example.com/mcp',
+                kind: 'remote',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {name: 'dangerous_op', description: 'Blocked globally', enabled: false, policy: 'ask'},
+                ],
+            }],
+        });
+
+        const {onChange} = renderTab({autoEnableNewMCPTools: false, enabledTools: []});
+        await screen.findByText('LockedServer');
+
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName}) as HTMLInputElement;
+        expect(serverToggle.disabled).toBe(true);
+        expect(serverToggle.getAttribute('aria-checked')).toBe('false');
+        fireEvent.click(serverToggle);
+        expect(onChange).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
+        expect(screen.getByText('All tools on this server are disabled by an administrator.')).not.toBeNull();
+        expect(screen.getByText('dangerous_op')).not.toBeNull();
+    });
+
+    test('keeps search enabled when auto-enable all is checked and finds admin-disabled tools', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Mattermost',
+                serverOrigin: 'embedded://mattermost',
+                kind: 'embedded',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [
+                    {name: 'read_post', description: 'Read a post', enabled: true, policy: 'auto_run_in_dm', readOnlyHint: true},
+                    {name: 'delete_post', description: 'Delete a post permanently', enabled: false, policy: 'ask'},
+                ],
+            }],
+        });
+
+        renderTab({autoEnableNewMCPTools: true});
+        await screen.findByText('Mattermost');
+
+        const search = screen.getByPlaceholderText('Search servers and tools...') as HTMLInputElement;
+        expect(search.disabled).toBe(false);
+
+        fireEvent.change(search, {target: {value: 'delete_post'}});
+
+        // Auto-expanded and narrowed to delete_post even though auto-enable is on and tool is admin-disabled.
+        expect(screen.getByText('delete_post')).not.toBeNull();
+        expect(screen.queryByText('read_post')).toBeNull();
+        expect(screen.getByText('Disabled by admin')).not.toBeNull();
+    });
+
+    test('Refresh Tools button triggers refreshUserMCPTools with agent config options', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
+        mockedRefreshUserMCPTools.mockResolvedValue({
+            servers: [{
+                ...mattermostServer,
+                tools: [
+                    {name: 'read_post', description: '', enabled: true, policy: 'auto_run_in_dm'},
+                    {name: 'search_posts', description: 'Search posts', enabled: true, policy: 'auto_run_in_dm'},
+                ],
+            }],
+        });
+
+        renderTab({agentId: 'agent-42', useServiceAccountAuth: true});
+        await screen.findByText('Mattermost');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Refresh Tools'}));
+        await waitFor(() => expect(mockedRefreshUserMCPTools).toHaveBeenCalledWith({
+            agentId: 'agent-42',
+            serviceAccount: true,
+            agentConfig: true,
+        }));
     });
 });
