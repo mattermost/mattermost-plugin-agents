@@ -78,7 +78,9 @@ const DotMenu = ({
     };
     const hasMountedRef = useRef(false);
     const onOpenChangeRef = useRef(onOpenChange);
-    onOpenChangeRef.current = onOpenChange;
+    useEffect(() => {
+        onOpenChangeRef.current = onOpenChange;
+    }, [onOpenChange]);
     useEffect(() => {
         if (!hasMountedRef.current) {
             hasMountedRef.current = true;

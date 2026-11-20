@@ -20,6 +20,7 @@ import {useBotlist} from '@/bots';
 
 import IconAI from './assets/icon_ai';
 import {ChannelSummarizePopover} from './channel_summarize_popover';
+import {isDialogOpen} from './animated_modal_shell';
 import {OPEN_POPUP_ATTRIBUTE} from './dropdown';
 
 const POPOVER_FALLBACK_WIDTH = 328;
@@ -125,8 +126,9 @@ const AskChannelButton = () => {
                 return;
             }
 
-            // Let nested dropdown menus or modals handle Escape first.
-            if (document.querySelector(`[${OPEN_POPUP_ATTRIBUTE}]`) || document.querySelector('[role="dialog"]')) {
+            // Let nested dropdown menus or visible modals handle Escape first.
+            const hasOpenDialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).some(isDialogOpen);
+            if (document.querySelector(`[${OPEN_POPUP_ATTRIBUTE}]`) || hasOpenDialog) {
                 return;
             }
             setShowPopover(false);

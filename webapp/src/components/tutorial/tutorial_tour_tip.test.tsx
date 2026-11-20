@@ -67,7 +67,11 @@ describe('TutorialTourTip', () => {
             fireEvent.keyDown(document, {key: 'Escape'});
             expect(mockHandleDismiss).toHaveBeenCalledTimes(1);
 
-            fireEvent.click(screen.getByTestId('agents-tour-overlay'));
+            const overlay = screen.getByTestId('agents-tour-overlay');
+            fireEvent.mouseDown(overlay);
+            expect(mockHandleDismiss).toHaveBeenCalledTimes(1);
+
+            fireEvent.click(overlay);
             expect(mockHandleDismiss).toHaveBeenCalledTimes(2);
         } finally {
             portal.remove();

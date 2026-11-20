@@ -174,6 +174,9 @@ const TipContainer = styled.div.attrs<{$top: number; $left: number; $maxWidth: n
 }))<{$top: number; $left: number; $maxWidth: number}>`
     position: fixed;
     z-index: 9999;
+`;
+
+const TipContent = styled.div`
     animation: ${scaleIn} 250ms ease-out;
 `;
 
@@ -225,6 +228,7 @@ const TutorialTourTip: React.FC<Props> = ({
 }) => {
     const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
     const tipRef = useRef<HTMLDivElement | null>(null);
+    const overlayRef = useRef<HTMLDivElement | null>(null);
     const [position, setPosition] = useState<{top: number; left: number; placement: Placement}>({
         top: 0,
         left: 0,
@@ -304,23 +308,23 @@ const TutorialTourTip: React.FC<Props> = ({
             handleDismiss();
         };
 
-        const handleMouseDown = (event: MouseEvent) => {
+        const handleOutsideClick = (event: MouseEvent) => {
             const target = event.target as Node | null;
             if (!target) {
                 return;
             }
-            if (tipRef.current?.contains(target) || triggerElement?.contains(target)) {
+            if (tipRef.current?.contains(target) || triggerElement?.contains(target) || overlayRef.current?.contains(target)) {
                 return;
             }
             handleDismiss();
         };
 
         document.addEventListener('keydown', handleEscape, true);
-        document.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('click', handleOutsideClick);
 
         return () => {
             document.removeEventListener('keydown', handleEscape, true);
-            document.removeEventListener('mousedown', handleMouseDown);
+            document.removeEventListener('click', handleOutsideClick);
         };
     }, [show, handleDismiss, triggerElement]);
 
@@ -344,8 +348,12 @@ const TutorialTourTip: React.FC<Props> = ({
             {show && rootPortal && ReactDOM.createPortal(
                 // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- backdrop; Escape and the tip's Close button dismiss the tour
                 <TourOverlay
+                    ref={overlayRef}
                     data-testid='agents-tour-overlay'
-                    onClick={handleDismiss}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        handleDismiss();
+                    }}
                 />,
                 rootPortal,
             )}
@@ -358,16 +366,18 @@ const TutorialTourTip: React.FC<Props> = ({
                     $left={position.left}
                     $maxWidth={width}
                 >
-                    <TourPoint
-                        title={title}
-                        pointerPosition={pointerPositionFor(position.placement)}
-                        showPulsingDot={false}
-                        onClose={handleDismiss}
-                        closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
-                        closeButtonProps={{'data-testid': 'agents-tour-close'}}
-                    >
-                        {screen}
-                    </TourPoint>
+                    <TipContent>
+                        <TourPoint
+                            title={title}
+                            pointerPosition={pointerPositionFor(position.placement)}
+                            showPulsingDot={false}
+                            onClose={handleDismiss}
+                            closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                            closeButtonProps={{'data-testid': 'agents-tour-close'}}
+                        >
+                            {screen}
+                        </TourPoint>
+                    </TipContent>
                 </TipContainer>,
                 rootPortal,
             )}

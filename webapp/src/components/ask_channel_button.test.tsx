@@ -176,4 +176,29 @@ describe('AskChannelButton toggle', () => {
             document.body.removeChild(nestedPopup);
         }
     });
+
+    test('closes on Escape when only a hidden dialog is in the DOM', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
+        expect(screen.getByTestId('channel-summarize-popover')).toBeTruthy();
+
+        const hiddenDialog = document.createElement('div');
+        hiddenDialog.setAttribute('role', 'dialog');
+        hiddenDialog.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(hiddenDialog);
+
+        try {
+            fireEvent.keyDown(document, {key: 'Escape'});
+            expect(screen.queryByTestId('channel-summarize-popover')).toBeNull();
+        } finally {
+            document.body.removeChild(hiddenDialog);
+        }
+    });
 });
