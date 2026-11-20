@@ -1,25 +1,25 @@
 name: pr-evals
 
 # Runs the LLM evals on a pull request only while it has the "Run Evals"
-# label: when the label is added and on every later push. Results are compared
-# with the latest master run of ci.yml and posted as a comment when a check
-# newly fails.
+# label: when the label is added and on every later push. Removing the label
+# cancels a run in progress. Results are compared with the latest master run of
+# ci.yml and posted as a comment when a check newly fails.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
 
-# A new push cancels the evals of the push it replaces. Adding any other label
-# gets its own group so it never cancels a run in progress.
+# A new push, or removing the label, cancels the evals in progress. Adding or
+# removing any other label gets its own group so it never cancels them.
 concurrency:
-  group: pr-evals-${{ github.event.pull_request.number }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'Run Evals') && github.run_id || 'evals' }}
+  group: pr-evals-${{ github.event.pull_request.number }}-${{ ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'Run Evals') && github.run_id || 'evals' }}
   cancel-in-progress: true
 
 jobs:
   eval-packages:
-    if: contains(github.event.pull_request.labels.*.name, 'Run Evals') && (github.event.action != 'labeled' || github.event.label.name == 'Run Evals')
+    if: contains(github.event.pull_request.labels.*.name, 'Run Evals') && github.event.action != 'unlabeled' && (github.event.action != 'labeled' || github.event.label.name == 'Run Evals')
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.select.outputs.packages }}
