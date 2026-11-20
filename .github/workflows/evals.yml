@@ -10,6 +10,10 @@ on:
         description: Runs per eval, combined by majority vote in the report.
         type: string
         default: '1'
+      packages:
+        description: Space-separated eval packages to run; empty runs them all.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -47,6 +51,7 @@ jobs:
         env:
           LLM_PROVIDER: ${{ matrix.provider.name }}
           EVAL_TEST_PARALLEL: ${{ matrix.provider.parallel }}
+          EVAL_PACKAGES: ${{ inputs.packages }}
           # Runs per eval, combined by majority vote in the report.
           GOEVALS: ${{ inputs.runs }}
           # OpenAI

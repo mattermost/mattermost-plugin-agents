@@ -1,0 +1,136 @@
+name: pr-evals
+
+# Runs the LLM evals on a pull request only while it has the "Run Evals"
+# label: when the label is added and on every later push. Results are compared
+# with the latest master run of ci.yml and posted as a comment when a check
+# newly fails.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+# A new push cancels the evals of the push it replaces. Adding any other label
+# gets its own group so it never cancels a run in progress.
+concurrency:
+  group: pr-evals-${{ github.event.pull_request.number }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'Run Evals') && github.run_id || 'evals' }}
+  cancel-in-progress: true
+
+jobs:
+  eval-packages:
+    if: contains(github.event.pull_request.labels.*.name, 'Run Evals') && (github.event.action != 'labeled' || github.event.label.name == 'Run Evals')
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - id: select
+        # The mcpserver evals cost the most by far, so they run only when the
+        # pull request changes code their test binary depends on.
+        run: |
+          # The pull_request checkout is a merge commit; its first parent is the base.
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          packages="./conversations ./threads ./channels ./react"
+          if ./.github/scripts/eval-deps-changed.sh ./mcpserver <<< "$changed"; then
+            packages="$packages ./mcpserver"
+          fi
+          echo "Eval packages: $packages"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+  evals:
+    needs: eval-packages
+    uses: ./.github/workflows/evals.yml
+    with:
+      runs: ${{ vars.EVAL_RUNS || '1' }}
+      packages: ${{ needs.eval-packages.outputs.packages }}
+    secrets: inherit
+
+  evals-comment:
+    runs-on: ubuntu-latest
+    needs: [eval-packages, evals]
+    if: always() && needs.eval-packages.result == 'success'
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Download evaluation results
+        # No artifact exists when the evals job failed before uploading; the
+        # report then lists every provider as unavailable.
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: eval-results-*
+          path: eval-results
+
+      - name: Find master baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The newest master push run whose eval jobs all succeeded (a failed
+        # eval job has partial results) and whose eval results are unexpired.
+        # Other jobs of the run may fail.
+        run: |
+          run_id=""
+          repo="repos/${{ github.repository }}"
+          for id in $(gh api "$repo/actions/workflows/ci.yml/runs?branch=master&event=push&status=completed&per_page=20" --jq '.workflow_runs[].id'); do
+            evals_ok=$(gh api "$repo/actions/runs/$id/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name | startswith("evals / evals-"))] | length > 0 and all(.conclusion == "success")')
+            [ "$evals_ok" = true ] || continue
+            artifacts=$(gh api "$repo/actions/runs/$id/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select(.expired == false and (.name | startswith("eval-results-")))] | length')
+            if [ "$artifacts" -gt 0 ]; then
+              run_id=$id
+              break
+            fi
+          done
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download master baseline
+        if: steps.baseline.outputs.run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: eval-results-*
+          path: eval-baseline
+          run-id: ${{ steps.baseline.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Load existing eval comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/scripts/post-eval-comment.js');
+            await script.saveEvalComment(github, context, 'previous-comment.md');
+
+      - name: Build report
+        run: |
+          make evalviewer
+          ./bin/evalviewer report \
+            --results eval-results \
+            --baseline eval-baseline \
+            --providers openai,anthropic,azure,mistral,bedrock \
+            --previous previous-comment.md \
+            --comment comment.md \
+            --summary summary.md \
+            --commit "${{ github.event.pull_request.head.sha }}" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or resolve pull request comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/scripts/post-eval-comment.js');
+            await script.postEvalComment(github, context, 'comment.md');

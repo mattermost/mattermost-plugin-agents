@@ -451,8 +451,9 @@ release-notes:
 	./bin/releasenotes $(if $(BASE),--base $(BASE)) $(if $(HEAD),--head $(HEAD)) $(if $(TAG),--tag $(TAG)) $(if $(OUTPUT),--output $(OUTPUT)) $(if $(PRINT_PROMPT),--print-prompt)
 
 # Packages with evals. Eval test names end in "Eval" so -run skips unit tests;
-# mcpserver evals boot Mattermost containers and need Docker.
-EVAL_PACKAGES = ./conversations ./threads ./channels ./react ./mcpserver
+# mcpserver evals boot Mattermost containers and need Docker. Set EVAL_PACKAGES
+# to run a subset.
+EVAL_PACKAGES := $(or $(EVAL_PACKAGES),./conversations ./threads ./channels ./react ./mcpserver)
 # EVAL_TEST_PARALLEL limits how many packages run at once, for providers with
 # low rate limits.
 EVAL_TEST_FLAGS = -run 'Eval$$' -timeout 30m $(if $(EVAL_TEST_PARALLEL),-p $(EVAL_TEST_PARALLEL))
