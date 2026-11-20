@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -43,12 +45,14 @@ func (c *autoSetupConfig) EnableAgentAutoSetup() bool { return c.enabled }
 type recordingThreads struct {
 	mu       sync.Mutex
 	requests []conversations.AgentThreadRequest
+	contexts []context.Context
 }
 
-func (r *recordingThreads) StartAgentThread(_ context.Context, req conversations.AgentThreadRequest) (*conversations.AgentThread, error) {
+func (r *recordingThreads) StartAgentThread(ctx context.Context, req conversations.AgentThreadRequest) (*conversations.AgentThread, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.requests = append(r.requests, req)
+	r.contexts = append(r.contexts, ctx)
 	return &conversations.AgentThread{
 		RootPost:  &model.Post{Id: "setuproot00000000000000000", ChannelId: "setupdm0000000000000000000", UserId: req.User.Id, Message: req.Message},
 		BotUserID: req.Bot.BotUserID(),
@@ -565,4 +569,22 @@ func TestSetupToolWriteKeepsAConcurrentManagerSave(t *testing.T) {
 	assert.True(t, raced)
 	assert.Equal(t, setupNewPromptText, stored.CustomInstructions)
 	assert.Empty(t, stored.EnabledNativeTools, "the manager's concurrent change must not be overwritten")
+}
+
+func TestStartAgentSetupTurnOutlivesTheRequest(t *testing.T) {
+	env := setupAgentSetupEnv(t, true)
+	defer env.Cleanup(t)
+	reqCtx, cancel := context.WithCancel(context.Background())
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/agents/"+setupAgentID+"/setup", nil).WithContext(reqCtx)
+	ginCtx.Request.Header.Set("Mattermost-User-Id", testUserID)
+	ginCtx.Params = gin.Params{{Key: "agentid", Value: setupAgentID}}
+
+	env.api.handleStartAgentSetup(ginCtx)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	cancel() // net/http cancels the request context once the handler returns.
+
+	require.Len(t, env.threads.contexts, 1)
+	assert.NoError(t, env.threads.contexts[0].Err(), "the background setup turn must not be canceled with the request")
 }
