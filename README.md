@@ -6,26 +6,26 @@ Self-hosted AI agents for [Mattermost](https://github.com/mattermost/mattermost)
 
 </div>
 
-![Mattermost Agents workspace showing specialized agents, tool approval cards, and an interactive HTML artifact](img/mattermost-agents.webp)
+![Mattermost Agents workspace showing specialized agents, multi-tool execution, and an interactive HTML artifact](img/mattermost-agents.webp)
 
-Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to a Mattermost server. Talk to an agent in the Agents workspace, the Agents pane, a direct message, or a channel. Agents search and post in Mattermost, call external tools through the Model Context Protocol (MCP), and create files and interactive HTML artifacts using your permissions. You choose the LLM, including self-hosted models so conversations and data stay in your environment.
+Mattermost Agents (plugin ID `mattermost-ai`) adds AI agents to a Mattermost server. Talk to an agent in the Agents workspace, the Agents pane, a direct message, or a channel. Agents search and post in Mattermost, call external tools through the Model Context Protocol (MCP), and create files and interactive HTML artifacts using your permissions. You choose the LLM, including on-premises and self-hosted models so conversations and data stay in your environment.
 
 ## Key features
 
-- **Dedicated Agents workspace**: Create and manage multiple agents with custom instructions, models, version history, and conversation history from the **Agents** product view. See [Use Mattermost Agents](docs/user_guide.md).
+- **Sovereign AI**: Connect on-premises and self-hosted models (Ollama, vLLM, and OpenAI-compatible servers) for air-gapped or private deployments, or choose OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini, Vertex AI, Cohere (including Cohere North), and Mistral. See [Sovereign AI deployments](docs/sovereign_ai.md) and [Provider configuration](docs/providers.md).
 - **Tools and MCP**: Use built-in Mattermost tools, remote MCP servers with per-user OAuth or service accounts, and tools registered by other Mattermost plugins. See [Use tools and approve actions](docs/using_tools.md).
 - **Built-in Mattermost MCP server**: Connect Claude Code, Claude Desktop, Cursor, VS Code, or any streamable HTTP MCP client to `/plugins/mattermost-ai/mcp-server/mcp` using OAuth or a personal access token, with over 100 tools running under the signed-in user's permissions. See [Mattermost MCP server](docs/mcp_server.md).
 - **Governance and observability**: Per-tool approval policies, user/team/channel and attribute-based access controls, delegated settings access, server audit logging, token usage logs, and OpenTelemetry tracing. See the [Admin guide](docs/admin_guide.md).
-- **Bring your own LLM**: Connect self-hosted OpenAI-compatible servers (Ollama, vLLM) or OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Gemini, Vertex AI, Cohere (including Cohere North), and Mistral. See [Provider configuration](docs/providers.md) and [Sovereign AI deployments](docs/sovereign_ai.md).
 - **Summaries, search, and meetings**: Summarize threads, channels, unread messages, and Mattermost Calls or Zoom recordings, and search with keyword and semantic search. See [Summaries and AI search](docs/summaries_and_search.md) and [Meeting summaries](docs/meeting_summaries.md).
 - **Files and HTML artifacts**: Read attachments, analyze images with vision models, attach generated text files, and render sandboxed interactive HTML artifacts in the conversation. See [Secure AI-generated links and HTML](docs/ai_output_security.md).
+- **Dedicated Agents workspace**: Create and manage multiple agents with custom instructions, models, version history, and conversation history from the **Agents** product view. See [Use Mattermost Agents](docs/user_guide.md).
 - **Channels and Skills**: @mention agents or configure channel auto-reply with private/shared tool results, and save, pin, share, or auto-load reusable [Skills](docs/skills.md).
 
 Some features depend on your Mattermost license level. See [License requirements](docs/admin_guide.md#license-requirements).
 
 ## Documentation
 
-Product documentation lives in [`docs/`](docs/) and is published on docs.mattermost.com.
+Product documentation lives in [`docs/`](docs/) and is published on [docs.mattermost.com](https://docs.mattermost.com/end-user-guide/agents) ([User guide](https://docs.mattermost.com/end-user-guide/agents), [Admin guide](https://docs.mattermost.com/administration-guide/configure/agents-admin-guide)).
 
 ### For users
 
@@ -58,13 +58,7 @@ Product documentation lives in [`docs/`](docs/) and is published on docs.matterm
 
 ## Installation and quick start
 
-### Requirements
-
-- Mattermost Server v12.0.0+ with **Site URL** configured
-- PostgreSQL (with `pgvector` for semantic search)
-- Network access from the Mattermost Server to your LLM provider
-
-### Setup
+Check the [system requirements](docs/admin_guide.md#requirements) in the Admin guide before installing.
 
 1. Download the latest release from the [releases page](https://github.com/mattermost/mattermost-plugin-agents/releases) (or the experimental [latest master](https://github.com/mattermost/mattermost-plugin-agents/releases/tag/latest-master) build).
 2. Upload and enable the plugin in **System Console > Plugins > Plugin Management**.
