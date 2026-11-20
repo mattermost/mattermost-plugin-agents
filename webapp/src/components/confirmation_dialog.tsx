@@ -19,6 +19,9 @@ interface ConfirmationDialogProps {
     onCancel: () => void;
     isDestructive?: boolean;
 
+    /** Shows only the confirm button, for a dialog that just informs. */
+    hideCancel?: boolean;
+
     /** Disables buttons (e.g. while a request is in flight). */
     confirmPending?: boolean;
 
@@ -47,6 +50,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     onConfirm,
     onCancel,
     isDestructive = false,
+    hideCancel = false,
     confirmPending = false,
     zIndex = 1000,
     managedAccessibility = false,
@@ -83,13 +87,15 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
                 scrollable={false}
                 footer={(
                     <>
-                        <Button
-                            emphasis='tertiary'
-                            disabled={confirmPending}
-                            onClick={onCancel}
-                        >
-                            {cancelButtonText}
-                        </Button>
+                        {!hideCancel && (
+                            <Button
+                                emphasis='tertiary'
+                                disabled={confirmPending}
+                                onClick={onCancel}
+                            >
+                                {cancelButtonText}
+                            </Button>
+                        )}
                         <Button
                             ref={confirmButtonRef}
                             emphasis='primary'
