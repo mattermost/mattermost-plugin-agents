@@ -1,16 +1,13 @@
-# Schema Migration Review: 000022 — Add LastVersion to Agents_ChannelArtifacts
+# Schema Migration Review: 000021 — Add Format to Agents_ChannelArtifacts
 
-> **Context:** A channel artifact's version number is a public identifier (rollback, version
-> records, content reads). Numbering the next version as `MAX(Version) + 1` reuses a number
-> after the highest version is deleted, so a stale number could read different content.
-> `LastVersion` is a counter that only grows, so a deleted number is never reused. Rows from
-> before the column existed hold 0; the code takes the larger of the counter, the head, and
-> the highest stored version, so they keep numbering correctly. The table holds one row per
-> saved artifact and is bounded by the per-channel cap.
+> **Context:** The channel artifact library now holds Markdown documents as well as HTML.
+> `Format` records which, so the webapp picks the right viewer and the content routes serve
+> the right type. Rows from before the column existed are HTML, which the default covers. The
+> table holds one row per saved artifact and is bounded by the per-channel cap.
 
 ## Schema Changes
 - [ ] New table(s): —
-- [x] New column(s): `LastVersion INT NOT NULL DEFAULT 0` on `Agents_ChannelArtifacts`
+- [x] New column(s): `Format VARCHAR(16) NOT NULL DEFAULT 'html'` on `Agents_ChannelArtifacts`
 - [ ] New index(es): —
 - [ ] Modified column(s): —
 - [ ] Dropped object(s): —
@@ -31,7 +28,7 @@
 ## Backwards Compatibility
 - Compatible with previous ESR: Yes (plugin-owned table; no Mattermost core change).
 - Can previous plugin version run with new schema: Yes — additive; older code selects
-  explicit columns on reads. Its inserts omit the column and get the default 0.
+  explicit columns on reads. Its inserts omit the column and get the default 'html'.
 - Impact if not compatible: N/A.
 
 ## Table Locks & Impact
@@ -56,5 +53,5 @@
 
 ## SQL Queries
 ```sql
-ALTER TABLE Agents_ChannelArtifacts ADD COLUMN IF NOT EXISTS LastVersion INT NOT NULL DEFAULT 0;
+ALTER TABLE Agents_ChannelArtifacts ADD COLUMN IF NOT EXISTS Format VARCHAR(16) NOT NULL DEFAULT 'html';
 ```

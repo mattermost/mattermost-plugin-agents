@@ -125,6 +125,11 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
         channelArtifactsEnabled: Boolean(response.channelArtifactsEnabled),
     });
 
+    dispatch({
+        type: 'SET_SCOPED_SESSIONS_SUPPORTED',
+        scopedSessionsSupported: Boolean(response.scopedSessionsSupported),
+    });
+
     return response.bots;
 }
 

@@ -1,4 +1,4 @@
-# Schema Migration Review: 000021 — Create Agents_ChannelArtifacts and Agents_ChannelArtifactVersions
+# Schema Migration Review: 000019 — Create Agents_ChannelArtifacts and Agents_ChannelArtifactVersions
 
 > **Context:** New plugin tables for the channel artifact library. `Agents_ChannelArtifacts`
 > holds one row per saved artifact (title, head version, audit fields).

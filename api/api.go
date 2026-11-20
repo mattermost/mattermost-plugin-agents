@@ -539,6 +539,7 @@ func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engin
 	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
 	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
+	adminRouter.GET("/agents/:agentid/scoped_access", a.handleGetAgentScopedAccess)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
@@ -859,6 +860,9 @@ type AIBotsResponse struct {
 	LinkPolicy              config.LinkPolicy `json:"linkPolicy"`
 	HTMLArtifactsEnabled    bool              `json:"htmlArtifactsEnabled"`
 	ChannelArtifactsEnabled bool              `json:"channelArtifactsEnabled"`
+	// ScopedSessionsSupported reports whether this server can create the
+	// scoped sessions scoped channel mode runs on.
+	ScopedSessionsSupported bool `json:"scopedSessionsSupported"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -969,6 +973,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		LinkPolicy:              a.config.LinkPolicy(),
 		HTMLArtifactsEnabled:    a.config.EnableHTMLArtifacts(),
 		ChannelArtifactsEnabled: a.config.EnableChannelArtifacts(),
+		ScopedSessionsSupported: a.contextBuilder.ServerSupportsScopedSessions(),
 	})
 }
 

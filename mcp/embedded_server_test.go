@@ -29,6 +29,7 @@ func TestEmbeddedServer_InvalidSession(t *testing.T) {
 
 	// Attempt to create connection with invalid session resolver
 	_, err := suite.embeddedServer.CreateConnectionForUser(
+		context.Background(),
 		user.Id,
 		"invalid-session-id",
 		tokenResolver,
@@ -58,6 +59,7 @@ func TestEmbeddedServer_MissingSessionToken(t *testing.T) {
 	// When a sessionID and tokenResolver are provided, CreateConnectionForUser validates
 	// the session immediately by calling GetMe() which will fail with an empty token
 	_, err := suite.embeddedServer.CreateConnectionForUser(
+		context.Background(),
 		user.Id,
 		session.Id,
 		tokenResolver,
@@ -160,6 +162,7 @@ func TestEmbeddedServer_TokenResolverCalledAsNeeded(t *testing.T) {
 
 	// Create connection
 	clientTransport, err := suite.embeddedServer.CreateConnectionForUser(
+		context.Background(),
 		user.Id,
 		session.Id,
 		tokenResolver,

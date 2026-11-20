@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -88,7 +89,7 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 		// not run never triggers LLM spend.
 		if _, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post}); policyErr != nil {
 			_, unlicensed := errors.AsType[*enterprise.LicenseError](policyErr)
-			if unlicensed || errors.Is(policyErr, bots.ErrUsageRestriction) {
+			if unlicensed || errors.Is(policyErr, bots.ErrUsageRestriction) || errors.Is(policyErr, llmcontext.ErrScopedRequesterCannotReadTeamChannels) {
 				return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", policyErr, ErrNoResponse)
 			}
 			return fmt.Errorf("ambient auto-reply turn policy failed: %w", policyErr)

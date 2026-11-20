@@ -49,6 +49,9 @@ func TestArchivedConversationEntryPoints(t *testing.T) {
 	for _, entry := range turnEntryPoints {
 		t.Run(entry.name, func(t *testing.T) {
 			t.Run("an accepted turn restores the archived conversation", func(t *testing.T) {
+				if entry.dropsWhenArchived {
+					t.Skip("this entry point is dropped when the conversation is archived")
+				}
 				env := setupInvariantEnv(t, policyBotConfig(), dmMakeTextStream("answer"))
 				start := entry.seed(t, env)
 				turnCounts := archiveAll(t, env)

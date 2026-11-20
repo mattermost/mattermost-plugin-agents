@@ -186,6 +186,10 @@ function channelArtifactsLoadFailed(state = false, action: any) {
         return false;
     case 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED':
         return true;
+function scopedSessionsSupported(state: boolean | null = null, action: any) {
+    switch (action.type) {
+    case 'SET_SCOPED_SESSIONS_SUPPORTED':
+        return action.scopedSessionsSupported;
     default:
         return state;
     }
@@ -343,6 +347,7 @@ export const pluginReducer = combineReducers({
     channelArtifactsLoaded,
     channelArtifactsLoadFailed,
     channelArtifactLibrary,
+    scopedSessionsSupported,
     customPrompts,
     pinnedPromptIds,
     showCustomPromptsModal,

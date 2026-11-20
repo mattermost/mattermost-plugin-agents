@@ -19,6 +19,7 @@ interface PluginState {
     channelArtifactsLoaded?: boolean;
     channelArtifactsLoadFailed?: boolean;
     channelArtifactLibrary?: ChannelArtifactLibrary;
+    scopedSessionsSupported?: boolean | null;
 }
 
 type AppState = GlobalState & {
@@ -73,3 +74,6 @@ export const channelSupportsArtifacts = (state: GlobalState, channelId: string):
 /** True when the library is on and the open channel can hold one. */
 export const getChannelArtifactsAvailableHere = (state: AppState): boolean =>
     getChannelArtifactsEnabled(state) && channelSupportsArtifacts(state, state.entities?.channels?.currentChannelId || '');
+// Null until /ai_bots has answered.
+export const getScopedSessionsSupported = (state: AppState): boolean | null =>
+    state[`plugins-${manifest.id}`]?.scopedSessionsSupported ?? null;

@@ -535,6 +535,7 @@ func (p *Plugin) OnActivate() error {
 	// embedded Mattermost server is connected at every level.
 	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
+	mcpClientManager.SetScopedSessions(newScopedSessionMinter(p.API, &pluginAPI.Log))
 	reinitMCP := func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	}
@@ -552,6 +553,20 @@ func (p *Plugin) OnActivate() error {
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	})
+
+	// End live scoped runs as soon as their agent can no longer run scoped
+	// (the setting was turned off, the bot went away, or a prerequisite
+	// lapsed) or no longer lists an extra channel the run can read.
+	// Every node reloads its registry and config, so this runs on each one.
+	revokeLapsedScopedRuns := func() {
+		mcpClientManager.RevokeScopedSessionsWhere(func(run *mcp.ScopedRun) bool {
+			return contextBuilder.ScopedRunLapsed(bots.GetBotByID(run.BotUserID()), run)
+		})
+	}
+	bots.AddRegistryListener(revokeLapsedScopedRuns)
+	p.configuration.RegisterUpdateListener(revokeLapsedScopedRuns)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, revokeLapsedScopedRuns)
+
 	conversationsService := conversations.New(
 		prompts,
 		mmClient,
