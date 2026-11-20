@@ -733,7 +733,7 @@ func (p *Plugin) OnActivate() error {
 		if conv == nil {
 			return ""
 		}
-		return conversationsService.ProjectSystemPromptSuffix(context.Background(), conv.BotID)
+		return conversationsService.ProjectSystemPromptSuffix(context.Background(), conv.BotID, conv.Operation)
 	})
 	toolProvider.AddToolSource(projectsService.ToolsForRequest)
 	agentSetupService.RegisterExtension(projectsService)

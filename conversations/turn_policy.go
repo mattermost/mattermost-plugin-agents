@@ -369,6 +369,10 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	opts = append(opts, extraOpts...)
 
 	llmContext := p.c.buildConversationContextWithTools(ctx, p.bot, p.user, p.channel, prefsLogMessage, opts...)
+	if p.bot.IsProjectAgent() && !llmContext.ToolsScoped {
+		llmContext.ReleaseScopedSession()
+		return nil, fmt.Errorf("%w: the scoped session is unavailable", ErrProjectTurnRefused)
+	}
 	skillsCfg := p.bot.GetConfig()
 	if !p.interactive {
 		skillsCfg.Skills.AllowPersonal = false
@@ -382,7 +386,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		if llmContext.Tools == nil {
 			llmContext.Tools = llm.NewToolStore()
 		}
-		llmContext.Tools.AddTools(tools.OperationTools(ctx, p.bot, llmContext))
+		llmContext.Tools.AddTools(builder.AuditScopedToolCalls(llmContext, p.bot, p.user.Id, tools.OperationTools(ctx, p.bot, llmContext)))
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():

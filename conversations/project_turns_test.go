@@ -18,8 +18,8 @@ type suffixGate struct{}
 func (suffixGate) CheckTurn(context.Context, *bots.Bot, *model.Channel, *model.User) error {
 	return nil
 }
-func (suffixGate) SystemPromptSuffix(_ context.Context, bot *bots.Bot) string {
-	return "project of " + bot.BotUserID()
+func (suffixGate) SystemPromptSuffix(_ context.Context, bot *bots.Bot, operation string) string {
+	return "project of " + bot.BotUserID() + " for " + operation
 }
 
 func TestProjectSystemPromptSuffix(t *testing.T) {
@@ -28,7 +28,7 @@ func TestProjectSystemPromptSuffix(t *testing.T) {
 		botID string
 		want  string
 	}{
-		{name: "project agent", botID: "projectbot", want: "project of projectbot"},
+		{name: "project agent", botID: "projectbot", want: "project of projectbot for conversation"},
 		{name: "regular agent", botID: "regularbot"},
 		{name: "agent no longer running", botID: "goneagent"},
 		{name: "no agent"},
@@ -42,7 +42,7 @@ func TestProjectSystemPromptSuffix(t *testing.T) {
 	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, env.conversations.ProjectSystemPromptSuffix(context.Background(), tt.botID))
+			assert.Equal(t, tt.want, env.conversations.ProjectSystemPromptSuffix(context.Background(), tt.botID, llm.OperationConversation))
 		})
 	}
 }

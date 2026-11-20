@@ -21,9 +21,8 @@ const ProjectLink = ({path, children, testId}: Props) => {
             data-testid={testId}
             {...(isAppPath ? {} : {target: '_blank', rel: 'noopener noreferrer'})}
             onClick={(e) => {
-                if (isAppPath && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+                if (isAppPath && !e.metaKey && !e.ctrlKey && !e.shiftKey && navigateTo(path)) {
                     e.preventDefault();
-                    navigateTo(path);
                 }
             }}
         >

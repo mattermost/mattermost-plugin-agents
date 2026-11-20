@@ -92,10 +92,12 @@ type Binder struct {
 }
 
 // onceState tracks one once-only create. inFlight reserves it while the
-// create runs without holding the binder's lock.
+// create runs without holding the binder's lock. pending holds the result of
+// a create whose link failed, so a retry links it instead of creating again.
 type onceState struct {
 	inFlight bool
 	done     bool
+	pending  string
 }
 
 // NewBinder returns a binder for project.
@@ -118,28 +120,31 @@ func (b *Binder) Bind(tools []llm.Tool) []llm.Tool {
 	return bound
 }
 
+// bind matches rules on the bare tool name; catalogs namespace MCP tools by
+// server, and the bound tool keeps its namespaced name.
 func (b *Binder) bind(tool llm.Tool) (llm.Tool, bool) {
+	name := llm.BareMCPToolName(tool.Name)
 	switch llm.NormalizeMCPServerOrigin(tool.ServerOrigin) {
 	case BoardsOrigin:
-		return b.bindBoards(tool)
+		return b.bindBoards(tool, name)
 	case PlaybooksOrigin:
-		return b.bindPlaybooks(tool)
+		return b.bindPlaybooks(tool, name)
 	case CursorOrigin:
-		return b.bindCursor(tool)
+		return b.bindCursor(tool, name)
 	default:
 		return llm.Tool{}, false
 	}
 }
 
-func (b *Binder) bindBoards(tool llm.Tool) (llm.Tool, bool) {
+func (b *Binder) bindBoards(tool llm.Tool, name string) (llm.Tool, bool) {
 	boardID := b.project.BoardChannelID
 	switch {
-	case boardBoundTools[tool.Name]:
+	case boardBoundTools[name]:
 		if boardID == "" {
 			return llm.Tool{}, false
 		}
 		return tool.WithBoundParams(map[string]any{"board_id": boardID}), true
-	case boardCardTools[tool.Name]:
+	case boardCardTools[name]:
 		if boardID == "" {
 			return llm.Tool{}, false
 		}
@@ -147,7 +152,7 @@ func (b *Binder) bindBoards(tool llm.Tool) (llm.Tool, bool) {
 			return tool.WithBoundParams(map[string]any{"board_id": boardID}), true
 		}
 		return tool, true
-	case tool.Name == "create_board":
+	case name == "create_board":
 		if boardID != "" {
 			return llm.Tool{}, false
 		}
@@ -170,15 +175,15 @@ func (b *Binder) bindBoards(tool llm.Tool) (llm.Tool, bool) {
 	}
 }
 
-func (b *Binder) bindPlaybooks(tool llm.Tool) (llm.Tool, bool) {
+func (b *Binder) bindPlaybooks(tool llm.Tool, name string) (llm.Tool, bool) {
 	runID := b.project.PlaybookRunID
 	switch {
-	case playbookRunTools[tool.Name]:
+	case playbookRunTools[name]:
 		if runID == "" {
 			return llm.Tool{}, false
 		}
 		return tool.WithBoundParams(map[string]any{"run_id": runID}), true
-	case tool.Name == "create_checklist":
+	case name == "create_checklist":
 		if runID != "" {
 			return llm.Tool{}, false
 		}
@@ -199,8 +204,8 @@ func (b *Binder) bindPlaybooks(tool llm.Tool) (llm.Tool, bool) {
 	}
 }
 
-func (b *Binder) bindCursor(tool llm.Tool) (llm.Tool, bool) {
-	if !cursorTools[tool.Name] || !b.interactiveUserPresent {
+func (b *Binder) bindCursor(tool llm.Tool, name string) (llm.Tool, bool) {
+	if !cursorTools[name] || !b.interactiveUserPresent {
 		return llm.Tool{}, false
 	}
 	tool.AlwaysAsk = true
@@ -220,15 +225,27 @@ func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.P
 			return "", ErrToolOutsideProject
 		}
 		state.inFlight = true
+		pending := state.pending
 		b.mu.Unlock()
-		created := false
+		created, linked := pending, false
 		defer func() {
 			b.mu.Lock()
 			defer b.mu.Unlock()
 			state.inFlight = false
-			state.done = state.done || created
+			if linked {
+				state.done, state.pending = true, ""
+			} else {
+				state.pending = created
+			}
 		}()
 
+		if pending != "" {
+			if err := record(ctx, pending); err != nil {
+				return "", fmt.Errorf("created, but failed to link it to the project: %w", err)
+			}
+			linked = true
+			return pending, nil
+		}
 		if b.callbacks.Current == nil {
 			return "", ErrToolOutsideProject
 		}
@@ -246,10 +263,11 @@ func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.P
 		if err != nil {
 			return result, err
 		}
-		created = true
+		created = result
 		if err := record(ctx, result); err != nil {
 			return result, fmt.Errorf("created, but failed to link it to the project: %w", err)
 		}
+		linked = true
 		return result, nil
 	}
 	return tool

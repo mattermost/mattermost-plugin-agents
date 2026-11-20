@@ -102,8 +102,11 @@ func parseField(field string, lo, hi int) ([]bool, error) {
 		if start < lo || end > hi || start > end {
 			return nil, fmt.Errorf("value out of range in %q", field)
 		}
-		for v := start; v <= end; v += step {
+		for v := start; ; v += step {
 			set[v] = true
+			if step > end-v {
+				break
+			}
 		}
 	}
 	return set, nil

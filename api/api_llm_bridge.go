@@ -338,6 +338,9 @@ func (a *API) prepareAgentBridgeCompletion(
 		if bot.GetConfig().DisableTools {
 			return nil, http.StatusBadRequest, errors.New("agent has tools disabled")
 		}
+		if scopedChannel != nil && !llmRequest.Context.ToolsScoped {
+			return nil, http.StatusServiceUnavailable, errors.New("the agent's scoped session is unavailable; try again later")
+		}
 
 		if llmRequest.Context.Tools == nil || len(llmRequest.Context.Tools.GetTools()) == 0 {
 			return nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")

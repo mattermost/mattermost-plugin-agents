@@ -196,6 +196,9 @@ type scopedEnvOpts struct {
 	namedBuiltins []string
 	// alwaysAsk marks the scoped test tool as one that asks even in scoped turns.
 	alwaysAsk bool
+	// projectAgent makes the agent the project agent of the channel, with a
+	// gate that admits the turn and no project runtime to scope its session.
+	projectAgent bool
 }
 
 func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
@@ -280,6 +283,9 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 		ScopedChannelMode:     true,
 		EnabledMCPTools:       enabledTools,
 	}
+	if opts.projectAgent {
+		env.botConfig.ProjectChannelID = channel.Id
+	}
 	conversations.SetBotsWithAccounts(mockAPI, botService, bots.NewBot(
 		env.botConfig,
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
@@ -318,6 +324,9 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
 		&testToolCallingConfig{enableChannelMentionToolCalling: true}, policies)
 	env.conversations.SetConversationService(conversation.NewService(env.convStore, promptsManager, mmClient, botService))
+	if opts.projectAgent {
+		env.conversations.SetProjectGate(suffixGate{})
+	}
 
 	post := &model.Post{Id: model.NewId(), ChannelId: channel.Id, UserId: scopedUserID, CreateAt: 100, Message: "@" + scopedBotUsername + " find the evidence"}
 	if opts.botRequester {
@@ -327,7 +336,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
 	env.conversations.MessageHasBeenPosted(nil, post)
-	if opts.streamingErr != nil || opts.skillErr != nil || ((opts.guestRequester || opts.noTeamRead) && !opts.expectRun && llmcontext.ScopedChannelModeAppliesTo(channel)) {
+	if opts.streamingErr != nil || opts.skillErr != nil || opts.projectAgent || ((opts.guestRequester || opts.noTeamRead) && !opts.expectRun && llmcontext.ScopedChannelModeAppliesTo(channel)) {
 		return env
 	}
 
@@ -753,4 +762,22 @@ func TestScopedChannelTurnStopsAutoRunningRemovedTool(t *testing.T) {
 			assert.Equal(t, "call-1", toolUse[0].ID)
 		})
 	}
+}
+
+// A project agent whose scoped session can't be minted refuses the turn
+// instead of running it with unscoped built-in tools.
+func TestProjectTurnRefusedWithoutAScopedSession(t *testing.T) {
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "launch"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{projectAgent: true}, dmMakeToolCallStream(toolCall), dmMakeTextStream("done"))
+
+	assert.Zero(t, env.catalog.scoped)
+	assert.Zero(t, env.catalog.unscoped, "no catalog is built for a refused turn")
+	assert.Zero(t, env.runs())
+	select {
+	case <-env.streaming.finished:
+		require.Fail(t, "a refused turn must not stream a response")
+	case <-time.After(200 * time.Millisecond):
+	}
+	assert.Empty(t, env.streaming.streamedPosts)
 }

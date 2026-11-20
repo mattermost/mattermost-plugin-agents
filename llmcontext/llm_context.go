@@ -571,6 +571,16 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 // carry identifiers and the outcome only, never arguments or results.
 // User-interaction tools are answered by the user, not run, so they are left
 // as they are.
+// AuditScopedToolCalls wraps tools added to c's catalog after it was built,
+// so they are audited like the rest of a scoped catalog. Unscoped catalogs are
+// returned as they are.
+func (b *Builder) AuditScopedToolCalls(c *llm.Context, bot *bots.Bot, requesterID string, tools []llm.Tool) []llm.Tool {
+	if c == nil || !c.ToolsScoped {
+		return tools
+	}
+	return b.auditScopedToolCalls(tools, bot, requesterID)
+}
+
 func (b *Builder) auditScopedToolCalls(tools []llm.Tool, bot *bots.Bot, requesterID string) []llm.Tool {
 	wrapped := make([]llm.Tool, 0, len(tools))
 	for _, tool := range tools {

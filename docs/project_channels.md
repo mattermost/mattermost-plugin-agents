@@ -20,10 +20,12 @@ When someone creates a project, Agents creates the channel (or uses the channel 
 
 The agent is limited to its project:
 
-- It reads and writes only the project channel and its board channel. If its bot account is found in any other channel, every turn is refused until it is removed.
+- It reads and writes only the project channel and its board channel. If its bot account is found in any other channel, every turn is refused until it is removed. The exception is the team's default channel (usually Town Square), which Mattermost keeps every team member in; the agent still can't read it.
+- It saves and removes artifacts in the project channel without asking for approval.
 - Board tools are bound to the project's board, and checklist tools to the project's run. It can create one board and one checklist, and can't delete cards, list other boards, or change views and fields.
-- Starting a Cursor run or adding a follow-up always asks the person who requested it, and is never offered when nobody is present to approve it.
-- Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list. They can't be deleted from the agent settings; end the project instead.
+- Starting a Cursor run or adding a follow-up always asks the person who requested it, runs as that person once approved, and is never offered when nobody is present to approve it.
+- It treats the status note as information from the channel, not as instructions, and doesn't see the note in the setup thread, where it can change its own instructions.
+- Project agents don't appear in agent lists, pickers, the LLM Bridge or the Mattermost MCP server's agent list. They can't be changed or deleted from the agent settings while the project is running; end the project instead. If a project agent remains after its project ended, it can be deleted from the agent settings.
 
 ## Check-ins
 

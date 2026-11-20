@@ -4,14 +4,18 @@
 package llmcontext
 
 import (
+	"cmp"
 	stdcontext "context"
 	"slices"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -23,13 +27,14 @@ const (
 // nameBindingRuntime binds only the tools it knows by name, like the
 // projects binder.
 type nameBindingRuntime struct {
-	bound    []string
-	received []string
+	bound     []string
+	received  []string
+	channelID string
 }
 
 func (r *nameBindingRuntime) Scope(stdcontext.Context, *bots.Bot, *model.Channel) (ProjectScope, error) {
 	return ProjectScope{
-		WriteChannelIDs:        []string{"project"},
+		WriteChannelIDs:        []string{cmp.Or(r.channelID, "project")},
 		BotPluginOrigins:       []string{testBoardsOrigin, testPlaybooksOrigin},
 		RequesterPluginOrigins: []string{testCursorOrigin},
 	}, nil
@@ -92,6 +97,96 @@ func TestProjectPluginToolsIgnoreTheEmptyAgentAllowlist(t *testing.T) {
 			}
 			assert.ElementsMatch(t, tt.wantReceived, runtime.received)
 			assert.ElementsMatch(t, tt.wantBound, names)
+		})
+	}
+}
+
+// identityCatalogProvider serves the same Cursor tool to every catalog, each
+// copy reporting the identity its catalog connected as.
+type identityCatalogProvider struct {
+	*scopedCatalogProvider
+}
+
+func (p *identityCatalogProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	identity := req.InvokingUserID
+	if req.Scoped != nil {
+		identity = "scoped bot session"
+	}
+	tool := testMCPTool("cursor__launch_agent", testCursorOrigin, "launch a Cursor agent")
+	tool.Resolver = func(stdcontext.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+		return "ran as " + identity, nil
+	}
+	if !selection.Allows(tool.ServerOrigin) {
+		return nil, nil
+	}
+	return []llm.Tool{tool}, nil
+}
+
+// Cursor tools are credited to the person who asked: the bot's scoped catalog
+// never carries them, so the requester's copy is the one a turn, or the
+// approval that resumes it, executes.
+func TestProjectCursorToolsRunAsTheRequester(t *testing.T) {
+	provider := &identityCatalogProvider{newScopedCatalogProvider(t, &recordingScopedMinter{}, nil)}
+	builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+	projectChannelID := model.NewId()
+	builder.SetProjectRuntime(&nameBindingRuntime{bound: []string{"cursor__launch_agent"}, channelID: projectChannelID})
+
+	cfg := scopedTestBotConfig()
+	cfg.ProjectChannelID = projectChannelID
+	cfg.ScopedExtraChannelIDs = nil
+	bot := newScopedTestBot(cfg)
+	requester := &model.User{Id: model.NewId(), Username: "alice"}
+	channel := &model.Channel{Id: projectChannelID, TeamId: scopedTestTeamID, Type: model.ChannelTypeOpen}
+
+	for _, phase := range []string{"turn", "approval resume"} {
+		t.Run(phase, func(t *testing.T) {
+			llmContext := builder.BuildLLMContextUserRequest(bot, requester, channel,
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ThreadRootID: model.NewId(), ConversationID: model.NewId()}),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+			defer llmContext.ReleaseScopedSession()
+			require.True(t, llmContext.ToolsScoped)
+
+			var cursorTools int
+			for _, tool := range llmContext.Tools.GetTools() {
+				if llm.NormalizeMCPServerOrigin(tool.ServerOrigin) == testCursorOrigin {
+					cursorTools++
+				}
+			}
+			require.Equal(t, 1, cursorTools, "only the requester's copy is in the catalog")
+			result, err := llmContext.Tools.ResolveTool(stdcontext.Background(), "cursor__launch_agent", func(any) error { return nil }, llmContext)
+			require.NoError(t, err)
+			assert.Equal(t, "ran as "+requester.Id, result)
+		})
+	}
+}
+
+func TestAuditScopedToolCallsCoversToolsAddedAfterTheCatalog(t *testing.T) {
+	tests := []struct {
+		name       string
+		scoped     bool
+		wantAudits int
+	}{
+		{name: "scoped turn", scoped: true, wantAudits: 1},
+		{name: "unscoped turn", scoped: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder, auditRecords := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, nil)
+			bot := newScopedTestBot(scopedTestBotConfig())
+			c := &llm.Context{ToolsScoped: tt.scoped, Channel: &model.Channel{Id: model.NewId()}}
+
+			tools := builder.AuditScopedToolCalls(c, bot, "requester", []llm.Tool{testBuiltinTool("update_my_instructions")})
+			require.Len(t, tools, 1)
+			_, err := tools[0].Resolver(stdcontext.Background(), c, func(any) error { return nil })
+			require.NoError(t, err)
+
+			records := auditRecords()
+			require.Len(t, records, tt.wantAudits)
+			for _, rec := range records {
+				assert.Equal(t, audit.EventAgentScopedToolCall, rec.EventName)
+				assert.Equal(t, "update_my_instructions", rec.EventData.Parameters[audit.KeyToolName])
+			}
 		})
 	}
 }

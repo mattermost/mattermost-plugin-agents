@@ -60,6 +60,7 @@ type Store interface {
 	SetProjectAgent(channelID, agentID, botUserID, setupRootPostID string) error
 	SetProjectSetupRoot(channelID, rootPostID string) error
 	TransitionProject(channelID, from, to string) error
+	ClaimEndingResume(channelID string, updateAt int64) error
 	EndProject(channelID, endedBy string, withoutWrapUp bool) error
 	SetProjectBoard(channelID, boardChannelID string) error
 	SetProjectRun(channelID, runID string) error
@@ -90,8 +91,8 @@ type Platform interface {
 	RemoveChannelMember(channelID, userID string) error
 	GetChannelMember(channelID, userID string) (*model.ChannelMember, error)
 	SetChannelAdmin(channelID, userID string, admin bool) error
-	// BotChannelIDs returns every channel, on every team, userID belongs to.
-	BotChannelIDs(userID string) ([]string, error)
+	// BotChannels returns every channel, on every team, userID belongs to.
+	BotChannels(userID string) ([]*model.Channel, error)
 	CreateBot(bot *model.Bot) error
 	DeactivateBot(botUserID string) error
 	CreatePost(post *model.Post) error
@@ -247,12 +248,14 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 		return nil, err
 	}
 
+	claimed := project
 	var agent *llm.BotConfig
 	defer func() {
 		if err == nil {
 			return
 		}
-		s.undoCreate(project, agent)
+		s.deps.Platform.LogError("Failed to create project; undoing it", "channel_id", claimed.ChannelID, "error", err)
+		s.undoCreate(claimed, agent)
 	}()
 
 	agent, err = s.createAgent(actor, channel)
@@ -388,7 +391,6 @@ func (s *Service) createAgent(actor *model.User, channel *model.Channel) (*llm.B
 		Username:    username,
 		DisplayName: displayName,
 		Description: "Project agent for ~" + channel.Name,
-		OwnerId:     actor.Id,
 	}
 	if err := s.deps.Platform.CreateBot(mmBot); err != nil {
 		return nil, fmt.Errorf("failed to create the project agent's bot: %w", err)
@@ -431,7 +433,7 @@ func (s *Service) grantProjectAccess(channelID, teamID, botUserID string) error 
 	if err := s.grantChannelAdmin(channelID, channelID, botUserID); err != nil {
 		return err
 	}
-	memberships, err := s.deps.Platform.BotChannelIDs(botUserID)
+	memberships, err := s.botChannelIDs(botUserID, teamID)
 	if err != nil {
 		return fmt.Errorf("failed to check the project agent's channels: %w", err)
 	}
@@ -444,6 +446,23 @@ func (s *Service) grantProjectAccess(channelID, teamID, botUserID string) error 
 		}
 	}
 	return nil
+}
+
+// botChannelIDs lists the channels the bot belongs to, leaving out the
+// project team's default channel: Mattermost keeps every team member in it,
+// and the scoped session still limits reads to the project's channels.
+func (s *Service) botChannelIDs(botUserID, teamID string) ([]string, error) {
+	channels, err := s.deps.Platform.BotChannels(botUserID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(channels))
+	for _, channel := range channels {
+		if channel.TeamId != teamID || channel.Name != model.DefaultChannelName {
+			ids = append(ids, channel.Id)
+		}
+	}
+	return ids, nil
 }
 
 func (s *Service) grantChannelAdmin(projectChannelID, channelID, botUserID string) error {
@@ -460,7 +479,13 @@ func (s *Service) grantChannelAdmin(projectChannelID, channelID, botUserID strin
 }
 
 func (s *Service) undoCreate(project *store.Project, agent *llm.BotConfig) {
+	if project == nil {
+		return
+	}
 	if agent != nil {
+		undo := *project
+		undo.AgentBotUserID = agent.BotUserID
+		s.revokeGrants(&undo)
 		if err := s.deps.Store.DeleteAgent(agent.ID); err != nil {
 			s.deps.Platform.LogError("Failed to delete project agent after failed create", "agent_id", agent.ID, "error", err)
 		}
@@ -576,6 +601,12 @@ func (s *Service) end(ctx context.Context, project *store.Project, actorID strin
 		// on its own; its wrap-up is not written again.
 		if time.Since(time.UnixMilli(project.UpdateAt)) < endingResumeAfter {
 			return nil, ErrNotActive
+		}
+		if err := s.deps.Store.ClaimEndingResume(project.ChannelID, project.UpdateAt); err != nil {
+			if errors.Is(err, store.ErrProjectStateChanged) {
+				return nil, ErrNotActive
+			}
+			return nil, err
 		}
 		withoutWrapUp = project.WrapUpArtifactID == ""
 	} else {
@@ -844,7 +875,7 @@ func (s *Service) liveProjectFor(bot *bots.Bot) (*store.Project, error) {
 	if project.State != store.ProjectStateActive && project.State != store.ProjectStateEnding {
 		return nil, ErrNotActive
 	}
-	memberships, err := s.deps.Platform.BotChannelIDs(bot.BotUserID())
+	memberships, err := s.botChannelIDs(bot.BotUserID(), project.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check the project agent's channels: %w", err)
 	}
@@ -878,8 +909,25 @@ func (s *Service) CheckTurn(_ context.Context, bot *bots.Bot, channel *model.Cha
 	return nil
 }
 
+// AgentRetired reports whether agent no longer leads a live project.
+func (s *Service) AgentRetired(agent *llm.BotConfig) (bool, error) {
+	if agent == nil || !agent.IsProjectAgent() {
+		return false, nil
+	}
+	project, err := s.deps.Store.GetProject(agent.ProjectChannelID)
+	if errors.Is(err, store.ErrProjectNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return project.State == store.ProjectStateEnded || project.AgentID != agent.ID, nil
+}
+
 // SystemPromptSuffix implements conversations.ProjectGate.
-func (s *Service) SystemPromptSuffix(_ context.Context, bot *bots.Bot) string {
+// Setup turns leave out the status note: channel members write it, and setup
+// turns can change the agent's own instructions.
+func (s *Service) SystemPromptSuffix(_ context.Context, bot *bots.Bot, operation string) string {
 	if bot == nil || !bot.IsProjectAgent() {
 		return ""
 	}
@@ -887,7 +935,7 @@ func (s *Service) SystemPromptSuffix(_ context.Context, bot *bots.Bot) string {
 	if err != nil || !project.Live() {
 		return ""
 	}
-	return FormatStatusSuffix(project)
+	return FormatStatusSuffix(project, operation != llm.OperationAgentSetup)
 }
 
 // Scope implements llmcontext.ProjectRuntime.

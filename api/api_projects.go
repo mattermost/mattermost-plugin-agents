@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/projects"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -27,6 +28,9 @@ type Projects interface {
 	GetChecklistSummary(ctx context.Context, viewerID, channelID string) (*projects.ChecklistSummary, error)
 	ProjectResponse(project *store.Project) projects.Response
 	Available() bool
+	// AgentRetired reports whether agent no longer leads a live project:
+	// its project ended, or never finished being created.
+	AgentRetired(agent *llm.BotConfig) (bool, error)
 }
 
 // SetProjects installs the projects service. Without it every project route

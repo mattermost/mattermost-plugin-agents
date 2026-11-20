@@ -23,6 +23,13 @@ export function checklistRunPath(project: Project, checklistUrl?: string): strin
     return project.playbook_run_id ? `/playbooks/runs/${project.playbook_run_id}` : '';
 }
 
-export function navigateTo(path: string) {
-    window.WebappUtils?.browserHistory?.push(path);
+// navigateTo routes path through the host's router, and reports false when there is none so the
+// caller can let the browser follow the link.
+export function navigateTo(path: string): boolean {
+    const history = window.WebappUtils?.browserHistory;
+    if (!history?.push) {
+        return false;
+    }
+    history.push(path);
+    return true;
 }

@@ -23,8 +23,8 @@ type ProjectGate interface {
 	// CheckTurn returns nil when bot may run a turn in channel for user.
 	CheckTurn(ctx context.Context, bot *bots.Bot, channel *model.Channel, user *model.User) error
 	// SystemPromptSuffix is the project block every turn of bot sees, built
-	// from the project's current state.
-	SystemPromptSuffix(ctx context.Context, bot *bots.Bot) string
+	// from the project's current state, for a conversation of operation.
+	SystemPromptSuffix(ctx context.Context, bot *bots.Bot, operation string) string
 }
 
 // SetProjectGate installs the projects service.
@@ -58,7 +58,7 @@ func (c *Conversations) checkProjectTurn(ctx context.Context, req turnRequest, i
 
 // ProjectSystemPromptSuffix returns the project block for bot's turns, or ""
 // for agents that do not lead a project.
-func (c *Conversations) ProjectSystemPromptSuffix(ctx context.Context, botID string) string {
+func (c *Conversations) ProjectSystemPromptSuffix(ctx context.Context, botID, operation string) string {
 	gate := c.projects()
 	if gate == nil || c.bots == nil || botID == "" {
 		return ""
@@ -67,7 +67,7 @@ func (c *Conversations) ProjectSystemPromptSuffix(ctx context.Context, botID str
 	if bot == nil || !bot.IsProjectAgent() {
 		return ""
 	}
-	return gate.SystemPromptSuffix(ctx, bot)
+	return gate.SystemPromptSuffix(ctx, bot, operation)
 }
 
 // projectRefusalNotice tells the person whose post was refused why the

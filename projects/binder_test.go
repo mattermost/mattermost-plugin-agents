@@ -237,3 +237,74 @@ func TestOnceOnlyCreateDoesNotHoldTheLockAcrossTheCall(t *testing.T) {
 		})
 	}
 }
+
+func TestBinderMatchesNamespacedCatalogNames(t *testing.T) {
+	project := &store.Project{ChannelID: "P", TeamID: "T", State: store.ProjectStateActive, BoardChannelID: "B", PlaybookRunID: "R"}
+	tests := []struct {
+		origin, slug, bare string
+		wantArgs           map[string]any
+	}{
+		{origin: BoardsOrigin, slug: "boards", bare: "list_cards", wantArgs: map[string]any{"board_id": "B"}},
+		{origin: PlaybooksOrigin, slug: "playbooks", bare: "check_item", wantArgs: map[string]any{"run_id": "R"}},
+		{origin: CursorOrigin, slug: "cursor", bare: "create_agent", wantArgs: map[string]any{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.bare, func(t *testing.T) {
+			name := llm.NamespaceMCPToolName(tc.slug, tc.bare)
+			var props []string
+			for key := range tc.wantArgs {
+				props = append(props, key)
+			}
+			var got map[string]any
+			tool := recordingTool(tc.origin, name, props, "ok", &got)
+
+			bound := NewBinder(project, true, BinderCallbacks{}).Bind([]llm.Tool{tool, recordingTool(tc.origin, llm.NamespaceMCPToolName(tc.slug, "delete_everything"), nil, "ok", &got)})
+			require.Len(t, bound, 1, "the known tool is kept and the unknown one dropped")
+			assert.Equal(t, name, bound[0].Name, "the bound tool keeps its catalog name")
+			_, err := callTool(t, bound[0], map[string]any{})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantArgs, got)
+		})
+	}
+}
+
+func TestOnceOnlyCreateRetriesTheLinkWithoutCreatingAgain(t *testing.T) {
+	current := &store.Project{ChannelID: "P", TeamID: "T", State: store.ProjectStateActive}
+	linkErr := errors.New("database down")
+	var linked []string
+	callbacks := BinderCallbacks{
+		Current: func(string) (*store.Project, error) { return current, nil },
+		BoardCreated: func(_ context.Context, _ *store.Project, id string) error {
+			if linkErr != nil {
+				return linkErr
+			}
+			linked = append(linked, id)
+			return nil
+		},
+	}
+	creates := 0
+	tool := llm.Tool{
+		Name:         llm.NamespaceMCPToolName("boards", "create_board"),
+		ServerOrigin: BoardsOrigin,
+		Schema:       map[string]any{"type": "object", "properties": map[string]any{}},
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			creates++
+			return `{"board":{"channel_id":"NEWB"}}`, nil
+		},
+	}
+	bound := NewBinder(current, false, callbacks).Bind([]llm.Tool{tool})
+	require.Len(t, bound, 1)
+
+	_, err := callTool(t, bound[0], map[string]any{})
+	require.ErrorIs(t, err, linkErr)
+
+	linkErr = nil
+	_, err = callTool(t, bound[0], map[string]any{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, creates, "the retry links the board already created")
+	assert.Equal(t, []string{"NEWB"}, linked)
+
+	_, err = callTool(t, bound[0], map[string]any{})
+	require.ErrorIs(t, err, ErrToolOutsideProject)
+	assert.Equal(t, 1, creates)
+}

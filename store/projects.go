@@ -200,6 +200,14 @@ func (s *Store) TransitionProject(channelID, from, to string) error {
 		to, model.GetMillis(), channelID, from)
 }
 
+// ClaimEndingResume takes over a stalled end: it succeeds for one caller
+// while the project is still ending and unchanged since updateAt, and marks
+// the project updated.
+func (s *Store) ClaimEndingResume(channelID string, updateAt int64) error {
+	return s.updateProject(`UPDATE Agents_Projects SET UpdateAt = $1 WHERE ChannelID = $2 AND State = $3 AND UpdateAt = $4`,
+		max(model.GetMillis(), updateAt+1), channelID, ProjectStateEnding, updateAt)
+}
+
 // EndProject moves a live project to ended.
 func (s *Store) EndProject(channelID, endedBy string, withoutWrapUp bool) error {
 	now := model.GetMillis()

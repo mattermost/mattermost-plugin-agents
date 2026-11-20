@@ -81,12 +81,12 @@ func (p projectPlatform) SetChannelAdmin(channelID, userID string, admin bool) e
 	_, err := p.client.Channel.UpdateChannelMemberRoles(channelID, userID, roles)
 	return err
 }
-func (p projectPlatform) BotChannelIDs(userID string) ([]string, error) {
+func (p projectPlatform) BotChannels(userID string) ([]*model.Channel, error) {
 	teams, appErr := p.api.GetTeamsForUser(userID)
 	if appErr != nil {
 		return nil, appErr
 	}
-	var ids []string
+	var out []*model.Channel
 	for _, team := range teams {
 		channels, appErr := p.api.GetChannelsForTeamForUser(team.Id, userID, false)
 		if appErr != nil {
@@ -96,12 +96,12 @@ func (p projectPlatform) BotChannelIDs(userID string) ([]string, error) {
 			if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 				continue
 			}
-			if !slices.Contains(ids, channel.Id) {
-				ids = append(ids, channel.Id)
+			if !slices.ContainsFunc(out, func(c *model.Channel) bool { return c.Id == channel.Id }) {
+				out = append(out, channel)
 			}
 		}
 	}
-	return ids, nil
+	return out, nil
 }
 func (p projectPlatform) CreateBot(bot *model.Bot) error { return p.client.Bot.Create(bot) }
 func (p projectPlatform) DeactivateBot(botUserID string) error {
@@ -164,7 +164,7 @@ func (w projectWrapUps) WriteWrapUp(ctx context.Context, bot *bots.Bot, project 
 	return model.ChatCompletionNoStream(ctx, llm.CompletionRequest{
 		Operation: llm.OperationProjectWrapUp,
 		Posts: []llm.Post{
-			{Role: llm.PostRoleSystem, Message: w.projects().SystemPromptSuffix(ctx, bot)},
+			{Role: llm.PostRoleSystem, Message: w.projects().SystemPromptSuffix(ctx, bot, llm.OperationProjectWrapUp)},
 			{Role: llm.PostRoleUser, Message: instruction + "\n\nRecent project channel messages, oldest first:\n" + history.String()},
 		},
 	})

@@ -701,6 +701,12 @@ func (a *API) handleGetAgent(c *gin.Context) {
 // enrichAudit, which may be nil) is recorded before the authorization check so
 // 403 fail records identify the target.
 func (a *API) loadManageableAgent(c *gin.Context, agentID, userID, forbiddenMsg string, enrichAudit func(*llm.BotConfig)) (*llm.BotConfig, bool) {
+	return a.loadAgentForManagement(c, agentID, userID, forbiddenMsg, enrichAudit, false)
+}
+
+// loadAgentForManagement is loadManageableAgent; allowRetiredProject also
+// admits a project agent whose project is over, so it can be deleted.
+func (a *API) loadAgentForManagement(c *gin.Context, agentID, userID, forbiddenMsg string, enrichAudit func(*llm.BotConfig), allowRetiredProject bool) (*llm.BotConfig, bool) {
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
@@ -719,6 +725,20 @@ func (a *API) loadManageableAgent(c *gin.Context, agentID, userID, forbiddenMsg 
 	if !a.canManageAgent(cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New(forbiddenMsg))
 		return nil, false
+	}
+	if cfg.IsProjectAgent() {
+		retired := false
+		if allowRetiredProject && a.projects != nil {
+			var err error
+			if retired, err = a.projects.AgentRetired(cfg); err != nil {
+				abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check the agent's project: %w", err))
+				return nil, false
+			}
+		}
+		if !retired {
+			abortAgentRequest(c, http.StatusBadRequest, errors.New("this agent belongs to a project; set it up in its project channel, or end the project instead"))
+			return nil, false
+		}
 	}
 	return cfg, true
 }
@@ -810,17 +830,12 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	// Identify the target early so 404/403 fail records carry it.
 	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
-	cfg, ok := a.loadManageableAgent(c, agentID, userID, "not authorized to delete this agent", func(cfg *llm.BotConfig) {
+	cfg, ok := a.loadAgentForManagement(c, agentID, userID, "not authorized to delete this agent", func(cfg *llm.BotConfig) {
 		audit.AddParam(auditRec(c), "bot_user_id", cfg.BotUserID)
-	})
+	}, true)
 	if !ok {
 		return
 	}
-	if cfg.IsProjectAgent() {
-		abortAgentRequest(c, http.StatusBadRequest, errors.New("this agent belongs to a project; end the project instead"))
-		return
-	}
-
 	if err := a.agentStore.DeleteAgent(agentID); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
 		return

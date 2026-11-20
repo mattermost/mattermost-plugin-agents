@@ -38,6 +38,8 @@ type fakeProjects struct {
 	calls      []string
 	lastCreate projects.CreateRequest
 	lastSkip   bool
+	retired    bool
+	retiredErr error
 }
 
 func (f *fakeProjects) project() *store.Project {
@@ -87,6 +89,9 @@ func (f *fakeProjects) ProjectResponse(p *store.Project) projects.Response {
 	return r
 }
 func (f *fakeProjects) Available() bool { return f.available }
+func (f *fakeProjects) AgentRetired(*llm.BotConfig) (bool, error) {
+	return f.retired, f.retiredErr
+}
 
 func TestProjectRoutes(t *testing.T) {
 	base := "/projects/" + projectChannelID

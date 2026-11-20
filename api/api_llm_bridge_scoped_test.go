@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,11 +41,15 @@ type scopedBridgeMinter struct {
 	mu      sync.Mutex
 	minted  []string
 	revoked []string
+	fail    bool
 }
 
 func (m *scopedBridgeMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fail {
+		return nil, errors.New("session store unavailable")
+	}
 	session := &model.Session{Id: model.NewId(), UserId: userID, ExpiresAt: expiresAt}
 	m.minted = append(m.minted, session.Id)
 	return session, nil
@@ -91,6 +96,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 		channelID    string
 		allowedTools []string
 		noScoped     bool
+		mintFails    bool
 		wantStatus   int
 		wantErr      string
 		wantScoped   bool
@@ -128,6 +134,14 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			wantErr:      "scoped channel mode is not available",
 		},
 		{
+			name:         "a failed mint refuses instead of running unscoped",
+			channelID:    publicChannel.Id,
+			allowedTools: []string{"jira__get_issue"},
+			mintFails:    true,
+			wantStatus:   http.StatusServiceUnavailable,
+			wantErr:      "scoped session is unavailable",
+		},
+		{
 			name:         "private channel the user cannot read",
 			channelID:    unreadableChannel.Id,
 			allowedTools: []string{"jira__get_issue"},
@@ -154,7 +168,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			e.mockAPI.On("RolesGrantPermission", mock.Anything, model.PermissionJoinPublicTeams.Id).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionToTeam", testUserID, mock.Anything, model.PermissionReadPublicChannel).Return(true).Maybe()
 
-			minter := &scopedBridgeMinter{}
+			minter := &scopedBridgeMinter{fail: tt.mintFails}
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 			t.Cleanup(manager.Close)
 			if !tt.noScoped {
