@@ -64,6 +64,7 @@ type Conversations struct {
 
 	operationsMu sync.RWMutex
 	operations   map[string]OperationTools
+	projectGate  ProjectGate
 
 	// rootCtx overrides lifecycle.Context() for approved tool runs. Tests only.
 	rootCtx                  stdcontext.Context

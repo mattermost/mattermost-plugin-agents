@@ -50,6 +50,9 @@ type Config struct {
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	EnableAgentAutoSetup            bool                             `json:"enableAgentAutoSetup"`
+	EnableProjectChannels           bool                             `json:"enableProjectChannels"`
+	ProjectDefaultServiceID         string                           `json:"projectDefaultServiceID"`
+	ProjectDefaultModel             string                           `json:"projectDefaultModel"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
@@ -250,6 +253,23 @@ func (c *Container) EnableAmbientAutoReply() bool {
 // name, instructions, and tools with them.
 func (c *Container) EnableAgentAutoSetup() bool {
 	return c.Config().EnableAgentAutoSetup
+}
+
+// EnableProjectChannels reports whether the experimental project channels are
+// on: channels led by their own hidden agent.
+func (c *Container) EnableProjectChannels() bool {
+	return c.Config().EnableProjectChannels
+}
+
+// ProjectDefaultServiceID is the LLM service new project agents use.
+func (c *Container) ProjectDefaultServiceID() string {
+	return c.Config().ProjectDefaultServiceID
+}
+
+// ProjectDefaultModel is the model new project agents use; empty means the
+// service's default model.
+func (c *Container) ProjectDefaultModel() string {
+	return c.Config().ProjectDefaultModel
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {

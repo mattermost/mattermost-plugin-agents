@@ -97,6 +97,18 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		}
 	}
 
+	if err := c.checkProjectTurn(ctx, req, isDM); err != nil {
+		return nil, err
+	}
+
+	if !isDM && req.conv == nil && req.operation == "" && req.bot.IsProjectAgent() {
+		op, err := c.projectThreadOperation(req)
+		if err != nil {
+			return nil, err
+		}
+		req.operation = op
+	}
+
 	if req.conv == nil && isDM && req.trigger != nil && req.trigger.RootId != "" {
 		if c.convService == nil {
 			return nil, errors.New("conversation service not configured")
@@ -129,6 +141,17 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 	} else {
 		p.setChannelRunTools(initiator, initiatingUser)
 		p.scoped = p.toolsEnabled && c.contextBuilder != nil && c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel)
+	}
+	if req.bot.IsProjectAgent() {
+		// A project turn runs scoped or not at all, never unscoped with
+		// approvals.
+		if !p.scoped {
+			return nil, fmt.Errorf("%w: scoped mode is not available", ErrProjectTurnRefused)
+		}
+		// The project's tool allowlist, its argument binder, and the scope
+		// bound unattended turns, so they are not limited to tools that
+		// auto-run everywhere. Tools that always ask are dropped instead.
+		p.autoEverywhereOnly = false
 	}
 	return p, nil
 }
@@ -364,6 +387,9 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		llmContext.DisableTools(llmContext.Tools.GetToolsInfo()...)
 	case p.autoEverywhereOnly:
 		p.c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+	}
+	if p.scoped && !p.interactive {
+		dropAlwaysAskTools(llmContext)
 	}
 	return llmContext, nil
 }

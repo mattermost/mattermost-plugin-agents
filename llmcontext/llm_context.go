@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -93,6 +94,9 @@ type Builder struct {
 	skillProvider   SkillProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
+
+	projectMu      sync.RWMutex
+	projectRuntime ProjectRuntime
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -523,14 +527,28 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 	if !ok {
 		return nil, mcp.ErrScopedSessionsUnavailable
 	}
-	run, err := minter.MintScopedSession(ctx, mcp.ScopedSessionRequest{
+	req := mcp.ScopedSessionRequest{
 		BotUserID:       bot.BotUserID(),
 		RequesterID:     requesterID,
 		ChannelID:       c.Channel.Id,
 		TeamID:          c.Channel.TeamId,
 		ExtraChannelIDs: cfg.ScopedExtraChannelIDs,
 		EnabledTools:    cfg.EnabledMCPTools,
-	})
+	}
+	if bot.IsProjectAgent() {
+		// A project agent reads exactly its project and writes reactions and
+		// bookmarks only there.
+		scope, scopeErr := b.projectScope(ctx, bot, c.Channel)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		req.ExtraChannelIDs = scope.ExtraChannelIDs
+		req.ExactChannels = true
+		req.WriteChannelIDs = scope.WriteChannelIDs
+		audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, false)
+		audit.AddParam(rec, audit.KeyScopeTriggeringTeamPublicChannels, false)
+	}
+	run, err := minter.MintScopedSession(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -709,7 +727,10 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
 		mcpTools = dropChannelArtifactTools(mcpTools, c)
 		if scopedRun != nil {
-			mcpTools = mcp.FilterScopedCatalog(mcpTools, botCfg.EnabledMCPTools)
+			mcpTools = scopedRun.FilterCatalog(mcpTools, botCfg.EnabledMCPTools)
+			if bot.IsProjectAgent() {
+				mcpTools = append(mcpTools, b.projectPluginTools(ctx, c, bot, userID, selection)...)
+			}
 			mcpTools = b.auditScopedToolCalls(mcpTools, bot, userID)
 			store.AddTools(b.auditScopedToolCalls(builtInTools, bot, userID))
 			c.ToolsScoped = true

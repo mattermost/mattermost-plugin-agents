@@ -21,7 +21,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs, Skills,
-	CreateAt, UpdateAt, DeleteAt, SetupCompletedAt`
+	CreateAt, UpdateAt, DeleteAt, SetupCompletedAt, ProjectChannelID`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
 // nil and [] both encode as "[]", as does a marshal error.
@@ -100,6 +100,7 @@ type agentRow struct {
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
 	SetupCompletedAt        int64  `db:"setupcompletedat"`
+	ProjectChannelID        string `db:"projectchannelid"`
 }
 
 // toBotConfig converts an agentRow (DB scan result) to an *llm.BotConfig.
@@ -130,6 +131,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		UpdateAt:                r.UpdateAt,
 		DeleteAt:                r.DeleteAt,
 		SetupCompletedAt:        r.SetupCompletedAt,
+		ProjectChannelID:        r.ProjectChannelID,
 	}
 
 	if err := unmarshalJSONSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
@@ -196,8 +198,8 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 			MaxToolTurns, UseServiceAccountAuth, ScopedChannelMode, ScopedExtraChannelIDs, Skills,
-			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
+			CreateAt, UpdateAt, DeleteAt, ProjectChannelID
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -230,6 +232,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
+		cfg.ProjectChannelID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
@@ -313,7 +316,7 @@ func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 // CountActiveAgents returns the number of non-deleted agents.
 func (s *Store) CountActiveAgents() (int, error) {
 	var count int
-	if err := s.db.Get(&count, `SELECT COUNT(*) FROM Agents_UserAgents WHERE DeleteAt = 0`); err != nil {
+	if err := s.db.Get(&count, `SELECT COUNT(*) FROM Agents_UserAgents WHERE DeleteAt = 0 AND ProjectChannelID = ''`); err != nil {
 		return 0, fmt.Errorf("failed to count active agents: %w", err)
 	}
 	return count, nil

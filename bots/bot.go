@@ -35,6 +35,12 @@ func (b *Bot) GetConfig() llm.BotConfig {
 	return b.cfg
 }
 
+// IsProjectAgent reports whether the bot is the hidden agent of a project
+// channel, which works only there and is never listed.
+func (b *Bot) IsProjectAgent() bool {
+	return b != nil && b.cfg.IsProjectAgent()
+}
+
 func (b *Bot) GetMMBot() *model.Bot {
 	return b.mmBot
 }

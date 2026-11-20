@@ -117,6 +117,7 @@ func agentVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	snap.UpdateAt = 0
 	snap.DeleteAt = 0
 	snap.SetupCompletedAt = 0
+	snap.ProjectChannelID = ""
 	snap.ChannelIDs = emptyToNil(snap.ChannelIDs)
 	snap.UserIDs = emptyToNil(snap.UserIDs)
 	snap.TeamIDs = emptyToNil(snap.TeamIDs)

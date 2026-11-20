@@ -39,6 +39,12 @@ type ScopedSessionRequest struct {
 	ExtraChannelIDs []string
 	// EnabledTools is the agent's tool allowlist when the run was started.
 	EnabledTools []llm.EnabledMCPTool
+	// ExactChannels limits reads to ChannelID and ExtraChannelIDs: no public
+	// channels on the team or on open teams.
+	ExactChannels bool
+	// WriteChannelIDs, with ExactChannels, are the listed channels the run may
+	// also add reactions and bookmarks in.
+	WriteChannelIDs []string
 }
 
 // ScopedRun is one run's scoped session and the embedded MCP connection that
@@ -90,6 +96,26 @@ func (r *ScopedRun) EnabledTools() []llm.EnabledMCPTool {
 		return nil
 	}
 	return slices.Clone(r.enabled)
+}
+
+// GrantsWrites reports whether the run's session may add reactions and
+// bookmarks in some of its channels.
+func (r *ScopedRun) GrantsWrites() bool {
+	return r != nil && r.scope != nil && r.scope.GrantsWrites()
+}
+
+// WriteChannelIDs returns the channels the run may write reactions and
+// bookmarks in.
+func (r *ScopedRun) WriteChannelIDs() []string {
+	if r == nil || r.scope == nil {
+		return nil
+	}
+	return slices.Clone(r.scope.Resources.WriteChannelIDs)
+}
+
+// ExactChannels reports whether the run reads only its listed channels.
+func (r *ScopedRun) ExactChannels() bool {
+	return r != nil && r.scope != nil && !r.scope.Resources.OpenTeamPublicChannels && len(r.scope.Resources.PublicChannelTeamIDs) == 0
 }
 
 // Closed reports whether the run has ended, by its owner or by revocation.
@@ -176,6 +202,9 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 		}
 	}
 	scope := scopedsession.NewRunScope(req.RequesterID, channelIDs, req.TeamID)
+	if req.ExactChannels {
+		scope = scopedsession.NewExactRunScope(req.RequesterID, channelIDs, req.WriteChannelIDs)
+	}
 
 	expiresAt := time.Now().Add(scopedsession.RunTTL).UnixMilli()
 	session, err := minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
@@ -190,6 +219,9 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 			m.log.Warn("Scoped channel mode lists channels that no longer exist; leaving them out of the run's scope",
 				"botUserID", req.BotUserID, "missingChannelCount", len(channelIDs)-len(existing))
 			scope.Resources.ChannelIDs = existing
+			if req.ExactChannels {
+				scope = scopedsession.NewExactRunScope(req.RequesterID, existing, req.WriteChannelIDs)
+			}
 			session, err = minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
 		}
 	}
@@ -322,6 +354,49 @@ func ScopedCatalogExclusion(tool llm.Tool, allowlist []llm.EnabledMCPTool) Scope
 		return ScopedExcludedNotNamed
 	}
 	return ScopedIncluded
+}
+
+// scopedWriteGrantTools are the embedded tools a run with a write grant may
+// offer: the writes the grant covers, and the bookmark read whose route the
+// same server version allows for scoped sessions.
+var scopedWriteGrantTools = map[string]bool{
+	"add_reaction":            true,
+	"create_channel_bookmark": true,
+	"update_channel_bookmark": true,
+	"list_channel_bookmarks":  true,
+}
+
+// CatalogExclusion is ScopedCatalogExclusion for this run: a run whose
+// session grants writes may also offer the embedded tools the grant covers.
+func (r *ScopedRun) CatalogExclusion(tool llm.Tool, allowlist []llm.EnabledMCPTool) ScopedToolExclusion {
+	exclusion := ScopedCatalogExclusion(tool, allowlist)
+	if (exclusion == ScopedExcludedWriteTool || exclusion == ScopedExcludedNeedsWiderAccess) && r.allowsWriteGrantTool(tool) {
+		if len(llm.FilterMCPToolsByExplicitAllowlist([]llm.Tool{tool}, allowlist)) == 0 {
+			return ScopedExcludedNotNamed
+		}
+		return ScopedIncluded
+	}
+	return exclusion
+}
+
+// Allows is ScopedCatalogAllows for this run.
+func (r *ScopedRun) Allows(tool llm.Tool) bool {
+	if ScopedCatalogAllows(tool) {
+		return true
+	}
+	exclusion := scopedToolExclusion(tool)
+	return (exclusion == ScopedExcludedWriteTool || exclusion == ScopedExcludedNeedsWiderAccess) && r.allowsWriteGrantTool(tool)
+}
+
+func (r *ScopedRun) allowsWriteGrantTool(tool llm.Tool) bool {
+	return r.GrantsWrites() && ServerKind(tool.ServerOrigin) == ServerKindEmbedded && scopedWriteGrantTools[llm.BareMCPToolName(tool.Name)]
+}
+
+// FilterCatalog keeps the tools this run's catalog may hold.
+func (r *ScopedRun) FilterCatalog(tools []llm.Tool, allowlist []llm.EnabledMCPTool) []llm.Tool {
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return r.CatalogExclusion(tool, allowlist) != ScopedIncluded
+	})
 }
 
 // FilterScopedCatalog keeps the tools a scoped run's catalog may hold.

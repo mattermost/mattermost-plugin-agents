@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -103,6 +104,9 @@ type Service struct {
 	prompts  *llm.Prompts
 	mmClient mmapi.Client
 	bots     BotLookup
+
+	systemPromptSuffixMu sync.RWMutex
+	systemPromptSuffix   func(conv *store.Conversation) string
 }
 
 // NewService creates a new conversation Service.
@@ -695,7 +699,9 @@ func (s *Service) BuildCompletionRequest(
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
+	withSuffix := *conv
+	withSuffix.SystemPrompt = s.systemPrompt(conv)
+	return AssembleRequest(&withSuffix, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
 }
 
 // AssembleRequest builds the CompletionRequest from already-loaded turns and
@@ -1303,7 +1309,7 @@ func (s *Service) BuildChannelMentionRequest(
 	// System prompt is always first.
 	posts = append(posts, llm.Post{
 		Role:    llm.PostRoleSystem,
-		Message: conv.SystemPrompt,
+		Message: s.systemPrompt(conv),
 	})
 
 	// Emit any non-post turns that precede all post-linked turns
@@ -1437,4 +1443,26 @@ func hasInterruptedToolCall(anchor store.Turn) bool {
 	return slices.ContainsFunc(blocks, func(b ContentBlock) bool {
 		return b.Type == BlockTypeToolUse && b.Status == StatusInterrupted
 	})
+}
+
+// SetSystemPromptSuffix installs fn, whose result is appended to the stored
+// system prompt of every request built for a conversation. It lets state that
+// changes between turns, such as a project's status, reach every turn.
+func (s *Service) SetSystemPromptSuffix(fn func(conv *store.Conversation) string) {
+	s.systemPromptSuffixMu.Lock()
+	defer s.systemPromptSuffixMu.Unlock()
+	s.systemPromptSuffix = fn
+}
+
+func (s *Service) systemPrompt(conv *store.Conversation) string {
+	s.systemPromptSuffixMu.RLock()
+	fn := s.systemPromptSuffix
+	s.systemPromptSuffixMu.RUnlock()
+	if fn == nil {
+		return conv.SystemPrompt
+	}
+	if suffix := fn(conv); suffix != "" {
+		return conv.SystemPrompt + "\n\n" + suffix
+	}
+	return conv.SystemPrompt
 }

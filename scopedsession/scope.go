@@ -123,6 +123,29 @@ func NewRunScope(requesterID string, channelIDs []string, teamID string) *model.
 	}
 }
 
+// NewExactRunScope is the scope of one run that may read exactly the listed
+// channels: no public channels beyond them, on any team. writeChannelIDs,
+// a subset of channelIDs, additionally get every scoped write permission
+// (reactions and bookmarks); nil grants no writes.
+func NewExactRunScope(requesterID string, channelIDs, writeChannelIDs []string) *model.SessionScope {
+	scope := &model.SessionScope{
+		Permissions:      slices.Clone(model.ScopeReadPermissions),
+		Resources:        model.SessionScopeResources{ChannelIDs: slices.Clone(channelIDs)},
+		OnBehalfOfUserID: requesterID,
+	}
+	var writes []string
+	for _, id := range writeChannelIDs {
+		if slices.Contains(channelIDs, id) && !slices.Contains(writes, id) && len(writes) < model.SessionScopeMaxWriteChannelIDs {
+			writes = append(writes, id)
+		}
+	}
+	if len(writes) > 0 {
+		scope.WritePermissions = slices.Clone(model.ScopeWritePermissions)
+		scope.Resources.WriteChannelIDs = writes
+	}
+	return scope
+}
+
 // TeamClosedReason says why a team does not count as open to all users.
 type TeamClosedReason string
 

@@ -569,7 +569,7 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 	rawTools := collectToolsFromSnapshots(req.InvokingUserID, m.log, remoteClients.snapshotClients(), localSnapshot)
 	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, plugins)
 	if req.Scoped != nil {
-		filtered = slices.DeleteFunc(filtered, func(tool llm.Tool) bool { return !ScopedCatalogAllows(tool) })
+		filtered = slices.DeleteFunc(filtered, func(tool llm.Tool) bool { return !req.Scoped.Allows(tool) })
 	}
 	return CatalogAccess{
 		Tools:         retainToolsFromOrigins(filtered, servers.origins),

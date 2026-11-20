@@ -280,6 +280,15 @@ type BotConfig struct {
 	// SetupCompletedAt is when the agent finished its auto-setup
 	// conversation; 0 means it never did. Agent saves never change it.
 	SetupCompletedAt int64 `json:"setupCompletedAt,omitempty"`
+	// ProjectChannelID is set on the hidden agent that leads a project
+	// channel. Such an agent works only in that channel and is never listed.
+	// Only the projects service sets it.
+	ProjectChannelID string `json:"projectChannelID,omitempty"`
+}
+
+// IsProjectAgent reports whether the agent leads a project channel.
+func (c BotConfig) IsProjectAgent() bool {
+	return c.ProjectChannelID != ""
 }
 
 // UnmarshalJSON defaults fields whose zero value is not their behavior from

@@ -43,6 +43,9 @@ type Config interface {
 	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
 	GetTranscriptBotUserID() string
+	// EnableProjectChannels gates project agents: while it is off they are
+	// left out of the registry, which deactivates their bots on every node.
+	EnableProjectChannels() bool
 }
 
 // AgentStore provides read access to user-created agents from the database.
@@ -223,6 +226,11 @@ func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, dbAgentBotSet, map[
 		if err != nil {
 			return nil, dbAgentBotSet{}, nil, fmt.Errorf("failed to list user agents: %w", err)
 		}
+	}
+	if !b.config.EnableProjectChannels() {
+		dbAgents = slices.DeleteFunc(slices.Clone(dbAgents), func(cfg *llm.BotConfig) bool {
+			return cfg != nil && cfg.IsProjectAgent()
+		})
 	}
 	dbNames := make(map[string]struct{}, len(dbAgents))
 	for _, cfg := range dbAgents {
@@ -477,9 +485,9 @@ func (b *MMBots) EnsureBots() error {
 		return nil
 	}
 
-	previousMMBots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner(botOwnerID), pluginapi.BotIncludeDeleted())
+	previousMMBots, err := b.listOwnedBots()
 	if err != nil {
-		return fmt.Errorf("failed to list bots: %w", err)
+		return err
 	}
 	botCfgs := currentBotCfgs
 
@@ -569,6 +577,26 @@ func (b *MMBots) EnsureBots() error {
 	b.notifyRegistryChange()
 
 	return nil
+}
+
+// botListPageSize is how many bot accounts EnsureBots reads per page. Every
+// project adds one, so the plugin can own more than fit in one page.
+const botListPageSize = 200
+
+// listOwnedBots returns every bot account the plugin owns, deleted ones
+// included, reading every page.
+func (b *MMBots) listOwnedBots() ([]*model.Bot, error) {
+	var all []*model.Bot
+	for page := 0; ; page++ {
+		bots, err := b.pluginAPI.Bot.List(page, botListPageSize, pluginapi.BotOwner(botOwnerID), pluginapi.BotIncludeDeleted())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list bots: %w", err)
+		}
+		all = append(all, bots...)
+		if len(bots) < botListPageSize {
+			return all, nil
+		}
+	}
 }
 
 // AddRegistryListener registers fn to run after this node's bot registry is
@@ -1091,8 +1119,10 @@ func (b *MMBots) GetBotByUsernameOrFirst(botUsername string) *Bot {
 
 	b.botsLock.RLock()
 	defer b.botsLock.RUnlock()
-	if len(b.bots) > 0 {
-		return b.bots[0]
+	for _, bot := range b.bots {
+		if !bot.cfg.IsProjectAgent() {
+			return bot
+		}
 	}
 
 	return nil

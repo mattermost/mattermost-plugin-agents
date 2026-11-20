@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -262,6 +263,12 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		if errors.Is(policyErr, llmcontext.ErrScopedRequesterCannotReadTeamChannels) {
 			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 		}
+		if errors.Is(policyErr, ErrProjectTurnRefused) {
+			if mentioned := c.bots.GetBotMentioned(post.Message); mentioned != nil && mentioned.BotUserID() == bot.BotUserID() {
+				c.projectRefusalNotice(bot, post)
+			}
+			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
+		}
 		return policyErr
 	}
 
@@ -327,7 +334,7 @@ func (c *Conversations) handleMentionViaConversation(
 		BotID:        bot.GetMMBot().UserId,
 		ChannelID:    channel.Id,
 		RootPostID:   responsePost.RootId,
-		Operation:    "conversation",
+		Operation:    cmp.Or(policy.operation, llm.OperationConversation),
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
 		UserPostID:   &userPostID,
