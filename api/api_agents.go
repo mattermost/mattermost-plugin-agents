@@ -11,13 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentconfig"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -26,12 +25,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
-
-var errInvalidAgentUsername = errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores")
 
 // errNoAgentConfigReferences aborts the config update when no setting references the agent.
 var errNoAgentConfigReferences = errors.New("no setting references the agent")
@@ -39,7 +34,7 @@ var errNoAgentConfigReferences = errors.New("no setting references the agent")
 // errServiceAccountAuthRequiresAdmin is returned when a caller who is neither a
 // system admin nor a read/write settings delegate (canManageServiceAccounts)
 // tries to save an agent with the service account flag on.
-var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators and people with read and write access to the Agents settings can save an agent with service account authentication enabled; turn the setting off to make other changes")
+var errServiceAccountAuthRequiresAdmin = agentconfig.ErrServiceAccountAuthRequiresAdmin
 
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
@@ -285,24 +280,12 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 	return true
 }
 
-// checkAgentLicenseGates denies create/update requests that newly enable a
-// gated BotConfig field. prev is nil on create (compared against defaults).
-func (a *API) checkAgentLicenseGates(c *gin.Context, proposed llm.BotConfig, prev *llm.BotConfig) bool {
-	var before llm.BotConfig
-	if prev != nil {
-		before = *prev
-	}
-	level := a.licenseChecker.Level()
-	if err := config.ValidateAgentTransition(before, proposed, level); err != nil {
+// checkAgentLicenseGates denies create requests that enable a gated
+// BotConfig field. It writes the abort response and returns false when denied.
+func (a *API) checkAgentLicenseGates(c *gin.Context, proposed llm.BotConfig) bool {
+	if err := a.agentLicenseGateError(proposed, nil); err != nil {
 		abortNotLicensed(c, err)
 		return false
-	}
-	// Below Enterprise only the active service may be newly selected.
-	if !a.licenseChecker.Allows(enterprise.CapMultipleLLMServices) && (prev == nil || prev.ServiceID != proposed.ServiceID) {
-		if !slices.Contains(config.ActiveServiceIDs(a.pluginConfigOrEmpty(), level), proposed.ServiceID) {
-			abortNotLicensed(c, enterprise.NewLicenseError(enterprise.CapMultipleLLMServices, level))
-			return false
-		}
 	}
 	return true
 }
@@ -351,41 +334,6 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 	}
 	req.applyTo(cfg)
 	return cfg
-}
-
-// applyAgentUpdateRequest overwrites mutable fields on cfg from req; returns whether DisplayName changed.
-func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displayNameChanged bool) {
-	displayNameChanged = cfg.DisplayName != req.DisplayName
-	req.applyTo(cfg)
-	return displayNameChanged
-}
-
-// renameAgentBot renames the agent's Mattermost bot account in place and
-// reports whether it changed it; the account may already carry the name when
-// a concurrent save renamed it first. It writes the abort response and returns
-// ok=false when the rename is rejected.
-func (a *API) renameAgentBot(c *gin.Context, botUserID, username string) (renamed, ok bool) {
-	existing, err := a.pluginAPI.User.GetByUsername(username)
-	switch {
-	case err == nil && existing.Id == botUserID:
-		return false, true
-	case err == nil:
-		abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", username))
-		return false, false
-	case !errors.Is(err, pluginapi.ErrNotFound):
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check username availability: %w", err))
-		return false, false
-	}
-
-	if _, err := a.pluginAPI.Bot.Patch(botUserID, &model.BotPatch{Username: &username}); err != nil {
-		if appErr, ok := errors.AsType[*model.AppError](err); ok && appErr.StatusCode >= 400 && appErr.StatusCode < 500 {
-			abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("username %q cannot be used: %s", username, appErr.Message))
-			return false, false
-		}
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to rename bot account: %w", err))
-		return false, false
-	}
-	return true, true
 }
 
 // clearAgentConfigReferences clears the default agent and transcript agent
@@ -562,8 +510,8 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	audit.AddParam(auditRec(c), audit.KeyAgentName, audit.TruncateID(req.Username))
 	audit.AddParam(auditRec(c), "service_id", audit.TruncateID(req.ServiceID))
 
-	if !validUsernameRe.MatchString(req.Username) {
-		abortAgentRequest(c, http.StatusBadRequest, errInvalidAgentUsername)
+	if !agentconfig.ValidUsername(req.Username) {
+		abortAgentRequest(c, http.StatusBadRequest, agentconfig.ErrInvalidUsername)
 		return
 	}
 
@@ -572,7 +520,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	proposed := buildAgentConfigForCreate(req, userID, "")
-	if !a.checkAgentLicenseGates(c, *proposed, nil) {
+	if !a.checkAgentLicenseGates(c, *proposed) {
 		return
 	}
 
@@ -777,137 +725,26 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// updateAgent validates req against the stored agent cfg (already loaded
-// through loadManageableAgent) and persists the update as a new version
-// recorded with meta. It writes the abort response and returns false on
-// failure; on success bots are refreshed and the caller writes the response.
+// updateAgent persists req as a new version of cfg (already loaded through
+// loadManageableAgent) recorded with meta. It writes the abort response and
+// returns false on failure.
 func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req UpdateAgentRequest, meta store.AgentVersionMeta) (*llm.BotConfig, bool) {
-	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
-	proposed := *cfg
-	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
-	usernameChanged := req.usernameProvided && req.Username != cfg.Name
-	if usernameChanged {
-		proposed.Name = req.Username
+	update := agentconfig.UpdateRequest{
+		ActorID: userID,
+		AgentID: cfg.ID,
+		Stored:  cfg,
+		Apply:   req.applyTo,
+		Meta:    meta,
 	}
-
-	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !a.canManageServiceAccounts(userID) {
-		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+	if req.usernameProvided {
+		update.Username = &req.Username
+	}
+	result, err := a.agentConfig.Update(c.Request.Context(), update)
+	if err != nil {
+		abortAgentConfigError(c, err)
 		return nil, false
 	}
-
-	if usernameChanged {
-		audit.AddParam(auditRec(c), "new_agent_name", audit.TruncateID(req.Username))
-		if !validUsernameRe.MatchString(req.Username) {
-			abortAgentRequest(c, http.StatusBadRequest, errInvalidAgentUsername)
-			return nil, false
-		}
-		if cfg.BotUserID == "" {
-			abortAgentRequest(c, http.StatusBadRequest, errors.New("this agent has no bot account to rename"))
-			return nil, false
-		}
-	}
-	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
-		return nil, false
-	}
-
-	if !a.checkAgentLicenseGates(c, proposed, cfg) {
-		return nil, false
-	}
-
-	// Snapshot the stored config for the audit field diff, then adopt the
-	// already-applied proposed update (apply-then-compare ACL above).
-	prev := *cfg
-	cfg = &proposed
-
-	// Audit which fields the update changed — never their values, since
-	// customInstructions carries prompt content.
-	// Field names only — the agent config carries prompt content
-	// (customInstructions), so the record never says what values changed to.
-	audit.AddParam(auditRec(c), "changed_fields", audit.ChangedJSONKeys(&prev, cfg))
-
-	if err := cfg.Validate(); err != nil {
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
-		return nil, false
-	}
-
-	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
-		abortAgentRequest(c, statusForAccessErr(err), err)
-		return nil, false
-	}
-
-	// The bot account is renamed first so a taken username fails the request
-	// before anything is persisted. It keeps its user ID, so DMs, channel
-	// memberships, and history stay with the agent.
-	revertRename := func() {}
-	renameReverted := false
-	if usernameChanged {
-		if err := a.bindAgentConfigReferences(cfg.BotUserID, prev.Name); err != nil {
-			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to point settings at the agent before renaming it: %w", err))
-			return nil, false
-		}
-		renamed, ok := a.renameAgentBot(c, cfg.BotUserID, cfg.Name)
-		if !ok {
-			return nil, false
-		}
-		// From here a failure can leave the bot account, the stored agent, and
-		// the registries disagreeing on the name (a rollback or the revert can
-		// fail too), with the previous username already released. Bring all of
-		// them to the stored agent before the error is returned, unless the
-		// rename was fully reverted and they already agree.
-		defer func() {
-			if c.IsAborted() && !renameReverted {
-				_ = a.refreshBotsAndNotify(cfg.ID)
-			}
-		}()
-		if renamed {
-			revertRename = func() {
-				if _, err := a.pluginAPI.Bot.Patch(cfg.BotUserID, &model.BotPatch{Username: &prev.Name}); err != nil {
-					a.pluginAPI.Log.Error("Failed to revert bot username after agent update failure", "agent_id", cfg.ID, "error", err.Error())
-					return
-				}
-				renameReverted = true
-			}
-		}
-	}
-
-	if err := a.agentStore.UpdateAgent(cfg, meta); err != nil {
-		revertRename()
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
-		return nil, false
-	}
-
-	// Switching away from attribute-based access: delete the agent policy.
-	// If policy deletion fails with an unexpected error, rollback the agent
-	// store to prev so the agent is not left in an inconsistent state where
-	// legacy access claims everyone is allowed but a dangling policy continues
-	// to deny users.
-	if prev.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
-		cfg.UserAccessLevel != llm.UserAccessLevelAttributeBased {
-		auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
-
-		if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
-			if rollbackErr := a.agentStore.UpdateAgent(&prev, store.SystemAgentVersionMeta()); rollbackErr != nil {
-				a.pluginAPI.Log.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", err.Error())
-			} else {
-				revertRename()
-			}
-			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
-			return nil, false
-		}
-	}
-
-	ensureErr := a.refreshBotsAndNotify(cfg.ID)
-
-	// EnsureBots patches display name on success; when it did not run (no bot registry) or failed, sync explicitly.
-	if displayNameChanged && (ensureErr != nil || a.bots == nil) {
-		if _, err := a.pluginAPI.Bot.Patch(cfg.BotUserID, &model.BotPatch{
-			DisplayName: &cfg.DisplayName,
-		}); err != nil {
-			_ = c.Error(fmt.Errorf("failed to patch bot display name: %w", err))
-		}
-	}
-
-	return cfg, true
+	return result.Agent, true
 }
 
 // handleDeleteAgent handles DELETE /agents/:agentid (soft-delete and deactivate bot).

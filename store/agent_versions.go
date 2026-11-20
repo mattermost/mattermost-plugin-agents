@@ -30,6 +30,10 @@ const (
 	AgentVersionSourceRestore AgentVersionSource = "restore"
 	// AgentVersionSourceSystem marks internal writes (migrations, rollbacks).
 	AgentVersionSourceSystem AgentVersionSource = "system"
+	// AgentVersionSourceSelfSetup marks a change the agent made to its own
+	// configuration in a setup conversation, on behalf of ActorID. Restoring
+	// an earlier version undoes it.
+	AgentVersionSourceSelfSetup AgentVersionSource = "self_setup"
 )
 
 // AgentVersionMeta describes who and what produced an agent write; every
@@ -141,7 +145,7 @@ func changedVersionFields(prev string, next llm.BotConfig) []string {
 func validateAgentVersionMeta(meta AgentVersionMeta) error {
 	switch meta.Source {
 	case AgentVersionSourceInitial, AgentVersionSourceCreate, AgentVersionSourceUpdate,
-		AgentVersionSourceSystem:
+		AgentVersionSourceSystem, AgentVersionSourceSelfSetup:
 		if meta.RestoredFromVersion != 0 {
 			return fmt.Errorf("restoredFromVersion is only valid for source %q", AgentVersionSourceRestore)
 		}

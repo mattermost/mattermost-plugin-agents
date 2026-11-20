@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentconfig"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -223,6 +224,7 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+	agentConfig           *agentconfig.Service
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -315,6 +317,7 @@ func New(
 		autoReplyStore:        autoReplyStore,
 		accessChecker:         accessChecker,
 	}
+	a.agentConfig = newAgentConfigService(a)
 	a.auditEvents = buildAuditEventRegistry(a)
 	return a
 }
