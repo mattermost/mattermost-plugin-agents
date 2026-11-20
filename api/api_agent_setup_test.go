@@ -367,6 +367,25 @@ func TestSetupToolWrites(t *testing.T) {
 			},
 		},
 		{
+			name: "disable_my_tools accepts repeated names", tool: agentsetup.ToolDisableMyTools,
+			args:        map[string]any{"native_tools": []string{"web_search", " web_search "}},
+			wantChanged: []string{"enabledNativeTools"},
+			checkAgent: func(t *testing.T, agent *llm.BotConfig) {
+				assert.Empty(t, agent.EnabledNativeTools)
+				assert.Len(t, agent.EnabledMCPTools, 1, "MCP tools are untouched")
+			},
+		},
+		{
+			name: "disable_my_tools refuses an empty tool name", tool: agentsetup.ToolDisableMyTools,
+			args:    map[string]any{"native_tools": []string{"web_search", ""}},
+			wantErr: "empty name", wantNoVersion: true,
+		},
+		{
+			name: "disable_my_tools refuses an MCP tool without a name", tool: agentsetup.ToolDisableMyTools,
+			args:    map[string]any{"mcp_tools": []map[string]string{{"server_origin": "https://mcp.example.com", "tool_name": " "}}},
+			wantErr: "tool_name", wantNoVersion: true,
+		},
+		{
 			name: "disable_my_tools turns every tool off", tool: agentsetup.ToolDisableMyTools,
 			args: map[string]any{"all": true}, wantChanged: []string{"disableTools"},
 			checkAgent: func(t *testing.T, agent *llm.BotConfig) { assert.True(t, agent.DisableTools) },

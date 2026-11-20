@@ -126,18 +126,17 @@ func (s *Service) setupTools(agentID string) []llm.Tool {
 				if err := json.Unmarshal(raw, &args); err != nil {
 					return fmt.Errorf("invalid arguments: %w", err)
 				}
-				if !args.All && len(args.NativeTools) == 0 && len(args.MCPTools) == 0 {
-					return errors.New("name the tools to turn off, or set all")
-				}
-				return nil
+				_, err := normalizeDisableArgs(args)
+				return err
 			},
 			Resolver: func(ctx context.Context, llmCtx *llm.Context, getArgs llm.ToolArgumentGetter) (string, error) {
 				var args disableMyToolsArgs
 				if err := getArgs(&args); err != nil {
 					return "", fmt.Errorf("invalid arguments: %w", err)
 				}
-				if !args.All && len(args.NativeTools) == 0 && len(args.MCPTools) == 0 {
-					return "", errors.New("name the tools to turn off, or set all")
+				args, err := normalizeDisableArgs(args)
+				if err != nil {
+					return "", err
 				}
 				return s.write(ctx, ToolDisableMyTools, requesterID(llmCtx), agentID, func(cfg *llm.BotConfig) error {
 					return disableTools(cfg, args)
@@ -178,7 +177,36 @@ func normalizeDisplayName(name string) (string, error) {
 // which only the agent's editor can do.
 var errMCPToolsGrantedAll = errors.New("you get every MCP tool, so single MCP tools cannot be turned off in setup; ask the user to change your MCP tools when they edit you in Agents, or turn off all of your tools")
 
-// disableTools narrows cfg's tools as args asks.
+// normalizeDisableArgs trims and deduplicates the named tools, and rejects an
+// empty name or a call that names nothing.
+func normalizeDisableArgs(args disableMyToolsArgs) (disableMyToolsArgs, error) {
+	out := disableMyToolsArgs{All: args.All}
+	for _, name := range args.NativeTools {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return disableMyToolsArgs{}, errors.New("native_tools must not contain an empty name")
+		}
+		if !slices.Contains(out.NativeTools, name) {
+			out.NativeTools = append(out.NativeTools, name)
+		}
+	}
+	for _, tool := range args.MCPTools {
+		tool = llm.EnabledMCPTool{ServerOrigin: strings.TrimSpace(tool.ServerOrigin), ToolName: strings.TrimSpace(tool.ToolName)}
+		if tool.ServerOrigin == "" || tool.ToolName == "" {
+			return disableMyToolsArgs{}, errors.New("each mcp_tools entry needs a server_origin and a tool_name")
+		}
+		if !slices.Contains(out.MCPTools, tool) {
+			out.MCPTools = append(out.MCPTools, tool)
+		}
+	}
+	if !out.All && len(out.NativeTools) == 0 && len(out.MCPTools) == 0 {
+		return disableMyToolsArgs{}, errors.New("name the tools to turn off, or set all")
+	}
+	return out, nil
+}
+
+// disableTools narrows cfg's tools as args asks. It replaces the tool slices
+// rather than editing them, because cfg shares them with the stored agent.
 func disableTools(cfg *llm.BotConfig, args disableMyToolsArgs) error {
 	if args.All {
 		cfg.DisableTools = true
