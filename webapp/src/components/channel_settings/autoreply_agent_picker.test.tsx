@@ -49,13 +49,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-// react-bootstrap is a webpack external provided by the host at runtime; the
-// picker import chain reaches it but never renders it here.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 // @/client is the real HTTP boundary; the picker only reads profile picture
 // URLs, and useBotlist would fetch when the redux cache is null.
 const mockGetAIBots = jest.fn();

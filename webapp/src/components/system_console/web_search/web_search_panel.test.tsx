@@ -18,11 +18,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
     useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
