@@ -1,3 +1,3 @@
-{{if .RequestingUser.Locale}}
-Their locale is '{{.RequestingUser.Locale}}', so try to answer in their language if you know that language.
+{{if and .RequestingUser .RequestingUser.Locale}}
+Their locale is '{{.RequestingUser.Locale}}'. Answer in that language when you know it. Prefer that language for headings, labels, and boilerplate as well as the body of the answer.
 {{end}}
