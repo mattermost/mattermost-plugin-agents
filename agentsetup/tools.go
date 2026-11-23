@@ -63,8 +63,6 @@ type selfConfig struct {
 	ChangeableFields []string             `json:"changeable_fields"`
 }
 
-var setupToolNames = []string{ToolGetMyConfig, ToolUpdateMyInstructions, ToolSetMyDisplayName, ToolDisableMyTools, ToolCompleteSetup}
-
 func (s *Service) setupTools(agentID string) []llm.Tool {
 	return []llm.Tool{
 		{

@@ -106,6 +106,20 @@ func (b *setupBackend) versionMetas() []store.AgentVersionMeta {
 	return append([]store.AgentVersionMeta(nil), b.versions...)
 }
 
+// wiringExtension claims every agent and adds one tool to its setup turns.
+type wiringExtension struct{}
+
+func (wiringExtension) Claims(*llm.BotConfig) bool { return true }
+func (wiringExtension) CanSetUpInChannel(context.Context, *llm.BotConfig, string) bool {
+	return true
+}
+func (wiringExtension) Instructions(*llm.BotConfig) string { return "" }
+func (wiringExtension) Tools(context.Context, *llm.BotConfig, *llm.Context) []llm.Tool {
+	return []llm.Tool{{Name: wiringExtensionTool, Description: "extension tool", Schema: llm.NewJSONSchemaFromStruct[struct{}]()}}
+}
+
+const wiringExtensionTool = "wiring_extension_tool"
+
 // setupAgentSetupWiring registers the real setup service on the DM harness
 // for an agent the harness user created, with built-in web search offered.
 func setupAgentSetupWiring(t *testing.T, responses ...*llm.TextStreamResult) (*dmTestEnv, *setupBackend, *agentsetup.Service) {
@@ -120,6 +134,7 @@ func setupAgentSetupWiring(t *testing.T, responses ...*llm.TextStreamResult) (*d
 	env.toolProvider.tools = []llm.Tool{
 		{Name: mmtools.WebSearchToolName, Description: "web search", Schema: llm.NewJSONSchemaFromStruct[struct{}]()},
 		{Name: mmtools.WebSearchSourceToolName, Description: "web fetch", Schema: llm.NewJSONSchemaFromStruct[struct{}]()},
+		{Name: "CreateFile", Description: "create a file", Schema: llm.NewJSONSchemaFromStruct[struct{}]()},
 	}
 
 	backend := &setupBackend{agent: llm.BotConfig{
@@ -136,6 +151,7 @@ func setupAgentSetupWiring(t *testing.T, responses ...*llm.TextStreamResult) (*d
 		Configs: configs, Threads: env.conversations, Bots: env.botService, Store: backend,
 		Config: backend, Prompts: promptsManager, I18n: i18n.Init(), Audit: backend,
 	})
+	setup.RegisterExtension(wiringExtension{})
 	env.conversations.RegisterOperation(llm.OperationAgentSetup, setup)
 	return env, backend, setup
 }
@@ -188,7 +204,7 @@ func TestAgentSetupWritesRunInTheRequestersDMWithoutApproval(t *testing.T) {
 	assert.True(t, sawUse && sawResult, "the stored turn records the tool round")
 }
 
-func TestAgentSetupTurnSendsOnlySetupTools(t *testing.T) {
+func TestAgentSetupTurnSendsSetupAndExtensionToolsOnly(t *testing.T) {
 	env, _, setup := setupAgentSetupWiring(t, dmMakeTextStream("Hello."))
 
 	_, err := setup.Start(context.Background(), env.user, wiringAgentID)
@@ -197,6 +213,6 @@ func TestAgentSetupTurnSendsOnlySetupTools(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{
 		agentsetup.ToolGetMyConfig, agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName,
-		agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup,
-	}, requestToolNames(t, env, 0), "web search and fetch stay out of a turn that saves on its own")
+		agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup, wiringExtensionTool,
+	}, requestToolNames(t, env, 0), "the catalog's web search, fetch and other tools stay out of a turn that saves on its own")
 }
