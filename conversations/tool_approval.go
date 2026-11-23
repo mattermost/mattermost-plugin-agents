@@ -306,7 +306,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// reports its own failures.
 	followUpAttempted := false
 	defer func() {
-		if err != nil && !followUpAttempted {
+		// A run that stream recovery declared lost was already ended for the
+		// requester by the sweep.
+		recoveredElsewhere := errors.Is(err, ErrToolRunInterrupted) && !run.shuttingDown()
+		if err != nil && !followUpAttempted && !recoveredElsewhere {
 			c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), ctx, post, policy.user, nil)
 		}
 	}()

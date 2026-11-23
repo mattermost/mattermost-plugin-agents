@@ -196,8 +196,21 @@ func (m *mockConvServiceStore) CompareAndSwapTurnContent(id string, expected, co
 	return false, nil
 }
 
-func (m *mockConvServiceStore) CompareAndSwapTurnContentAndStatus(_ string, _ json.RawMessage, _ string, _ json.RawMessage, _ string) (bool, error) {
-	return true, nil
+func (m *mockConvServiceStore) CompareAndSwapTurnContentAndStatus(id string, expected json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	for convID, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID != id {
+				continue
+			}
+			if !bytes.Equal(turns[i].Content, expected) || turns[i].Status != expectedStatus {
+				return false, nil
+			}
+			m.turns[convID][i].Content = content
+			m.turns[convID][i].Status = status
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConvServiceStore) TouchStreamingTurn(_ string) (bool, error) {
