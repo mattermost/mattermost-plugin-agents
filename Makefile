@@ -454,7 +454,7 @@ release-notes:
 
 # Packages with evals. Eval test names end in "Eval" so -run skips unit tests;
 # mcpserver evals boot Mattermost containers and need Docker.
-EVAL_PACKAGES = ./conversations ./threads ./channels ./react ./mcpserver
+EVAL_PACKAGES = ./conversations ./threads ./channels ./react ./mcpserver ./projects
 # EVAL_TEST_PARALLEL limits how many packages run at once, for providers with
 # low rate limits.
 EVAL_TEST_FLAGS = -run 'Eval$$' -timeout 30m $(if $(EVAL_TEST_PARALLEL),-p $(EVAL_TEST_PARALLEL))
