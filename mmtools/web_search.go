@@ -30,6 +30,11 @@ import (
 )
 
 const (
+	// WebSearchToolName and WebSearchFetchSourceToolName name the built-in
+	// web search tool and its page fetch companion.
+	WebSearchToolName            = "WebSearch"
+	WebSearchFetchSourceToolName = "WebSearchFetchSource"
+
 	// WebSearchContextKey is the key used within llm.Context.Parameters to store web search results
 	WebSearchContextKey = "mm_web_search_results"
 	// WebSearchAllowedURLsKey is the key used to store whitelisted URLs for source fetching
@@ -108,14 +113,14 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 	}
 
 	service.tool = &llm.Tool{
-		Name:        "WebSearch",
+		Name:        WebSearchToolName,
 		Description: WebSearchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchToolArgs](),
 		Resolver:    service.resolve,
 	}
 
 	service.sourceTool = &llm.Tool{
-		Name:        "WebSearchFetchSource",
+		Name:        WebSearchFetchSourceToolName,
 		Description: WebSearchSourceFetchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchSourceArgs](),
 		Resolver:    nil,

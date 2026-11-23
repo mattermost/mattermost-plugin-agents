@@ -29,6 +29,13 @@ type OperationTools interface {
 	OperationTools(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context) []llm.Tool
 }
 
+// OperationCatalogFilter is an optional addition to OperationTools. It narrows
+// the catalog of every turn of the operation after the operation's tools are
+// added, so no entry point that builds a turn can skip it.
+type OperationCatalogFilter interface {
+	KeepOperationTool(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context, tool llm.Tool) bool
+}
+
 // RegisterOperation makes conversations recorded with operation get tools
 // on every turn and regenerate like ordinary conversations. tools may be nil.
 // Register operations before the plugin starts serving requests.

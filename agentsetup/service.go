@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentconfig"
@@ -17,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -214,13 +216,28 @@ func (s *Service) OperationTools(ctx context.Context, bot *bots.Bot, llmCtx *llm
 	}
 
 	tools := s.setupTools(agent.ID)
+	if !llmCtx.ToolCatalog.InteractiveUserPresent {
+		// The writes run without approval, so they need the requester present.
+		tools = slices.DeleteFunc(tools, func(tool llm.Tool) bool { return tool.Name != ToolGetMyConfig })
+	}
 	if ext != nil {
-		for i := range tools {
-			if !tools[i].AutoExecute {
-				tools[i].AutoExecute = ext.AutoExecute(&agent, tools[i].Name)
-			}
-		}
 		tools = append(tools, ext.Tools(ctx, &agent, llmCtx)...)
 	}
 	return tools
+}
+
+// KeepOperationTool narrows the catalog of a setup turn so content the
+// agent's other tools fetch cannot reach a turn that saves the agent's
+// instructions on its own. In a direct message only the setup tools remain;
+// elsewhere the built-in web search and fetch are dropped.
+func (s *Service) KeepOperationTool(_ context.Context, _ *bots.Bot, llmCtx *llm.Context, tool llm.Tool) bool {
+	inDM := llmCtx == nil || llmCtx.Channel == nil || llmCtx.Channel.Type == model.ChannelTypeDirect
+	switch {
+	case inDM:
+		return tool.ServerOrigin == "" && slices.Contains(setupToolNames, tool.Name)
+	case tool.ServerOrigin != "":
+		return true
+	default:
+		return tool.Name != mmtools.WebSearchToolName && tool.Name != mmtools.WebSearchFetchSourceToolName
+	}
 }

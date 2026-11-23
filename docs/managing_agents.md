@@ -139,17 +139,17 @@ The default agent setting selects an agent by bot user ID, so it keeps working a
 
 In the agent's row menu on the **Agents** page, select **Set up with agent**. It's shown to people who can manage the agent, for running agents created on the **Agents** page. It opens a new thread in your direct message with the agent, starting with "Help me set up AGENT_NAME." The agent reads its current settings, asks what it's for, who it helps, its tasks, its tone, and its rules, and drafts instructions for you to confirm. Reply in the thread to answer.
 
-In that thread, and only there, the agent has these tools:
+In that thread, and only there, the agent has these tools. Only the setup tools are available in the thread: its other tools, including web search and MCP tools, are left out, so content from the web can't change its instructions.
 
 | Tool | What it does | Approval |
 |---|---|---|
 | `get_my_config` | Reads its display name, username, instructions, and tool settings. | Runs without approval. |
-| `update_my_instructions` | Replaces its custom instructions. | Asks you. |
-| `set_my_display_name` | Changes its display name (up to 64 characters). The username never changes. | Asks you. |
-| `disable_my_tools` | Turns off all of its tools, or specific native or MCP tools. It can't turn tools on. | Asks you. |
-| `complete_setup` | Marks setup as complete. | Asks you. |
+| `update_my_instructions` | Replaces its custom instructions. | Runs without approval in your direct message. |
+| `set_my_display_name` | Changes its display name (up to 64 characters). The username never changes. | Runs without approval in your direct message. |
+| `disable_my_tools` | Turns off all of its tools, or specific native or MCP tools. It can't turn tools on. | Runs without approval in your direct message. |
+| `complete_setup` | Marks setup as complete. | Runs without approval in your direct message. |
 
-The tools work even when the agent's tools are turned off, and they can't change anything else: not access, agent admins, the service, the model, the username, or MCP grants beyond removing tools. An agent that gets every MCP tool can turn off all its tools but not single MCP tools. While **Use service accounts for authentication** is on, removing MCP tools still needs a System Admin. Each call checks again that you can manage the agent, so removing your access stops the setup.
+The writes save as soon as the agent calls them, so the agent confirms the full instructions with you in the conversation first. The writes are offered only on turns you are present for. When the agent resumes on its own, for example after waiting for async work, it can read its settings but not change them. The tools work even when the agent's tools are turned off, and they can't change anything else: not access, agent admins, the service, the model, the username, or MCP grants beyond removing tools. An agent that gets every MCP tool can turn off all its tools but not single MCP tools. While **Use service accounts for authentication** is on, removing MCP tools still needs a System Admin. Each call checks again that you can manage the agent, so removing your access stops the setup.
 
 Every change is saved as a version labeled **Self-setup**, made by you. Restore an earlier version to undo it. See [Version history](#version-history). New instructions apply to new conversations, not to the setup thread itself. Turning **Enable agent auto-setup** off removes the menu item and the setup tools from existing setup threads.
 

@@ -346,6 +346,11 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			llmContext.Tools = llm.NewToolStore()
 		}
 		llmContext.Tools.AddTools(tools.OperationTools(ctx, p.bot, llmContext))
+		if filter, ok := tools.(OperationCatalogFilter); ok {
+			llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool {
+				return filter.KeepOperationTool(ctx, p.bot, llmContext, tool)
+			})
+		}
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():
