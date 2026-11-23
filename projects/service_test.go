@@ -447,6 +447,12 @@ func (f *fakePlatform) CreateBot(b *model.Bot) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.createBotErr[b.Username]; err != nil {
+		if errors.Is(err, errUsernameClaimedMeanwhile) {
+			if f.usernames == nil {
+				f.usernames = map[string]bool{}
+			}
+			f.usernames[b.Username] = true
+		}
 		return err
 	}
 	b.UserId = "botuser"
