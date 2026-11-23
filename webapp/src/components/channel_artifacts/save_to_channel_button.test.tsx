@@ -248,4 +248,17 @@ describe('SaveToChannelButton', () => {
         expect(createChannelArtifact).toHaveBeenCalledTimes(1);
         expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalledTimes(1);
     });
+
+    test('someone who may add but not edit starts a new artifact instead of an update', async () => {
+        jest.mocked(listChannelArtifacts).mockResolvedValue(permissions({can_edit: false, entries: [entry({source_file_id: fileId})]}));
+        renderButton();
+
+        const button = await screen.findByTestId('html-artifact-save-to-channel');
+        expect(button.getAttribute('aria-label')).toBe('Save to channel artifacts');
+        trustedClick(button);
+
+        expect(await screen.findByTestId('channel-artifact-save-modal')).toBeTruthy();
+        expect(screen.queryByTestId('channel-artifact-update-ack')).toBeNull();
+        expect(screen.getByTestId('channel-artifact-save-confirm').textContent).toBe('Save artifact');
+    });
 });

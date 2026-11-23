@@ -78,14 +78,15 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
         return (base || 'Artifact').slice(0, 64);
     };
 
-    const showModal = (entries: ChannelArtifactEntry[]) => {
+    const showModal = (entries: ChannelArtifactEntry[], mayEdit: boolean) => {
         const nextTitle = defaultTitle();
         setError('');
         setAckUpdate(false);
         setPinBookmark(false);
         setPendingPin(null);
 
-        const target = pickReplaceTarget(entries, fileId);
+        // Updating an entry is an edit; someone who may only add starts a new one.
+        const target = mayEdit ? pickReplaceTarget(entries, fileId) : null;
         if (target) {
             setReplaceId(target.id);
             setTitle(target.title || nextTitle);
@@ -106,12 +107,12 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
             library.reload().then(() => {
                 const loaded = getChannelLibrary(store.getState() as never, channelId);
                 if (loaded?.status === 'ready' && (loaded.canAdd || loaded.canEdit)) {
-                    showModal(loaded.entries);
+                    showModal(loaded.entries, loaded.canEdit);
                 }
             });
             return;
         }
-        showModal(existing);
+        showModal(existing, library.canEdit);
     };
 
     const saveErrorMessage = (err: any): string => {
@@ -198,7 +199,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
     const updating = Boolean(replaceId);
     const replaceEntry = updating ? existing.find((e) => e.id === replaceId) : null;
     const canSubmit = Boolean(title.trim()) && (!updating || ackUpdate);
-    const label = savedId ? intl.formatMessage({defaultMessage: 'Update channel artifact'}) : intl.formatMessage({defaultMessage: 'Save to channel artifacts'});
+    const label = savedId && library.canEdit ? intl.formatMessage({defaultMessage: 'Update channel artifact'}) : intl.formatMessage({defaultMessage: 'Save to channel artifacts'});
 
     return (
         <Wrap>
