@@ -64,12 +64,12 @@ describe('MCPServerDescription', () => {
         renderDescription(props);
 
         expect((autoFillButton() as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText('Save this server to auto-fill its description from the server.')).toBeTruthy();
+        expect(screen.getByText('Save the server first to auto-fill from it.')).toBeTruthy();
     });
 
     test.each([
-        ['description', 'Filled from the description the server reports. Edit it as needed, then save.'],
-        ['instructions', 'The server has no description, so this was filled from its usage instructions. Edit it as needed, then save.'],
+        ['description', 'Filled from the server description. Edit as needed and save.'],
+        ['instructions', 'Filled from server usage instructions (no description provided). Edit as needed and save.'],
     ])('fills the field from the server %s and says where it came from', async (source, message) => {
         mockGetSuggestion.mockResolvedValue({description: 'Search and update tickets.', source, needsOAuth: false});
         const {onSuggestion} = renderDescription();
@@ -87,7 +87,7 @@ describe('MCPServerDescription', () => {
 
         fireEvent.click(autoFillButton());
 
-        expect(await screen.findByText("This server doesn't describe itself. Write a description instead.")).toBeTruthy();
+        expect(await screen.findByText("This server doesn't provide a description.")).toBeTruthy();
         expect(onChange).not.toHaveBeenCalled();
         expect(onSuggestion).not.toHaveBeenCalled();
     });
