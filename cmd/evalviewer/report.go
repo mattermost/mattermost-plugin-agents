@@ -79,6 +79,7 @@ type providerResults struct {
 	cases   map[caseKey]*caseStats
 	// complete is set when every eval package of the provider's run finished.
 	complete bool
+	usage    providerUsage
 }
 
 // unavailable reports a provider whose every run errored or that produced no
@@ -157,6 +158,9 @@ func buildResultSet(records []EvalLogLine) resultSet {
 		p := set.provider(provider)
 		p.complete = p.complete || record.RunComplete
 		p.records++
+		if record.Usage != nil {
+			p.usage.add(*record.Usage)
+		}
 
 		key := caseKey{provider: provider, test: test, rubric: record.Rubric}
 		if record.Error != "" {
@@ -486,25 +490,30 @@ func (r report) writeRegressions(sb *strings.Builder) {
 func (r report) summaryMarkdown() string {
 	var sb strings.Builder
 	sb.WriteString("## LLM evaluation results\n\n")
-	sb.WriteString("| Provider | Status | Checks passed |\n")
-	sb.WriteString("|----------|--------|---------------|\n")
+	sb.WriteString("| Provider | Status | Checks passed | Tokens (model under test) | Cost |\n")
+	sb.WriteString("|----------|--------|---------------|---------------------------|------|\n")
+	var total providerUsage
 	for _, p := range r.providers {
+		total.merge(p.usage)
 		if p.unavailable() {
-			fmt.Fprintf(&sb, "| %s | ⚪ Unavailable: %s | – |\n", providerDisplayName(p.name), tableCell(truncateString(oneLine(p.firstError()), 200)))
+			fmt.Fprintf(&sb, "| %s | ⚪ Unavailable: %s | – | – | %s |\n", providerDisplayName(p.name), tableCell(truncateString(oneLine(p.firstError()), 200)), p.usage.costCell())
 			continue
 		}
-		passing, total := 0, 0
+		passing, checks := 0, 0
 		for _, c := range p.cases {
-			total++
+			checks++
 			if !c.failing() {
 				passing++
 			}
 		}
 		status := "✅ Passing"
-		if passing < total {
+		if passing < checks {
 			status = "⚠️ Failing"
 		}
-		fmt.Fprintf(&sb, "| %s | %s | %d/%d |\n", providerDisplayName(p.name), status, passing, total)
+		fmt.Fprintf(&sb, "| %s | %s | %d/%d | %s | %s |\n", providerDisplayName(p.name), status, passing, checks, p.usage.tokensCell(), p.usage.costCell())
+	}
+	if !total.empty() {
+		fmt.Fprintf(&sb, "\nTotal cost at list prices: %s. A `+` marks usage of models without a known price.\n", total.costCell())
 	}
 
 	writeCaseList(&sb, "Regressions", r.regressions)

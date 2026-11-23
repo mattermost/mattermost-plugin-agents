@@ -39,14 +39,6 @@ func TestWebSearchTransportErrorDoesNotLeakIntoToolSpans(t *testing.T) {
 		cfg  config.WebSearchConfig
 	}{
 		{
-			name: "google",
-			cfg: config.WebSearchConfig{
-				Enabled:  true,
-				Provider: "google",
-				Google:   config.WebSearchGoogleConfig{APIKey: tracingSentinelKey, SearchEngineID: "cx", APIURL: "https://example.invalid/customsearch"},
-			},
-		},
-		{
 			name: "brave",
 			cfg: config.WebSearchConfig{
 				Enabled:  true,

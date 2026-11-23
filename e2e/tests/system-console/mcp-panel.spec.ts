@@ -159,7 +159,7 @@ test.describe('MCP Panel', () => {
 
         await dialog.getByRole('button', {name: 'Auto-fill from server'}).click();
         await expect(description).toHaveValue(MOCK_SERVER_SELF_DESCRIPTION, {timeout: 30000});
-        await expect(dialog.getByText('Filled from the description the server reports. Edit it as needed, then save.')).toBeVisible();
+        await expect(dialog.getByText('Filled from the server description. Edit as needed and save.')).toBeVisible();
 
         const edited = `${MOCK_SERVER_SELF_DESCRIPTION} Use it for customer escalations.`;
         await description.fill(edited);

@@ -738,3 +738,24 @@ func TestUpdateConfigAllowsUUIDsBeforeMigration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, testUUIDA, current.Services[0].ID)
 }
+
+func TestIsLegacyUUID(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"lowercase UUID", testUUIDA, true},
+		{"uppercase UUID", "550E8400-E29B-41D4-A716-446655440000", true},
+		{"mattermost 26-char ID", model.NewId(), false},
+		{"missing dash", "550e8400xe29b-41d4-a716-446655440000", false},
+		{"non-hex character", "550e8400-e29b-41d4-a716-44665544000g", false},
+		{"empty", "", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isLegacyUUID(tc.input))
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,18 @@ type RubricResult struct {
 	Reasoning string
 	Score     float64
 	Pass      bool
+}
+
+// rubricVerdict is the grader's verdict on one numbered rubric.
+type rubricVerdict struct {
+	Rubric    int     `json:"rubric"`
+	Reasoning string  `json:"reasoning"`
+	Score     float64 `json:"score"`
+	Pass      bool    `json:"pass"`
+}
+
+type rubricVerdicts struct {
+	Verdicts []rubricVerdict `json:"verdicts"`
 }
 
 const llmRubricSystem = `You are grading the output of an AI agent that runs inside Mattermost against a rubric. The rubric is a statement about the output; the output passes when the statement is true.
@@ -35,51 +48,161 @@ Examples:
 <Rubric>Contains a reference to the mentos project</Rubric>
 {"reasoning": "The output contains a failure message instead of a reference to the mentos project", "score": 0.0, "pass": false}`
 
-func (e *Eval) LLMRubric(rubric, output string) (*RubricResult, error) {
-	req := llm.CompletionRequest{
+// llmRubricsSystem grades several rubrics in one request. A verdict inside a
+// list is graded more strictly than a single top-level verdict on borderline
+// outputs, so a single rubric uses llmRubricSystem instead.
+const llmRubricsSystem = `You are grading the output of an AI agent that runs inside Mattermost against numbered rubrics. Each rubric is a statement about the output; the output passes a rubric when the statement is true. Grade every rubric independently of the others.
+
+- Judge only what the rubric states. Ignore qualities it does not mention.
+- Read the output as a Mattermost user would see it: Markdown is rendered, and an emoji name such as "thumbsup" or ":heart_eyes_cat:" stands for the emoji it names.
+- An output that refuses, errors, or asks for more information instead of doing the task fails any rubric about the task's content.
+
+Respond with a JSON object with this structure: {verdicts: [{rubric: number, reasoning: string, score: number, pass: boolean}]}, with one verdict per rubric. Write the reasoning before deciding; score is between 0 and 1.
+Example:
+<Output>The steamclock is broken</Output>
+<Rubrics>
+1. The content contains the state of the clock
+2. Contains a reference to the mentos project
+</Rubrics>
+{"verdicts": [{"rubric": 1, "reasoning": "The output says the clock is broken", "score": 1.0, "pass": true}, {"rubric": 2, "reasoning": "The output only talks about a clock and never mentions the mentos project", "score": 0.0, "pass": false}]}`
+
+// withVerdictsOutput requests rubricVerdicts as structured output. Go slices
+// map to a nullable array, which Anthropic rejects, so verdicts is made a plain
+// array.
+func withVerdictsOutput(cfg *llm.LanguageModelConfig) {
+	schema := llm.NewJSONSchemaFromStruct[rubricVerdicts]()
+	verdicts := schema.Properties["verdicts"]
+	verdicts.Types = nil
+	verdicts.Type = "array"
+	cfg.JSONOutputFormat = schema
+}
+
+// LLMRubrics grades output against every rubric in a single grader request,
+// so the output is sent once rather than once per rubric. Results are in the
+// order of rubrics.
+func (e *Eval) LLMRubrics(rubrics []string, output string) ([]RubricResult, error) {
+	if len(rubrics) == 1 {
+		result, err := e.gradeOne(rubrics[0], output)
+		if err != nil {
+			return nil, err
+		}
+		return []RubricResult{*result}, nil
+	}
+
+	var numbered strings.Builder
+	for i, rubric := range rubrics {
+		fmt.Fprintf(&numbered, "%d. %s\n", i+1, rubric)
+	}
+	req := gradingRequest(llmRubricsSystem, fmt.Sprintf("<Output>%s</Output>\n<Rubrics>\n%s</Rubrics>", output, numbered.String()))
+
+	// The grader occasionally drops or repeats a verdict; one retry is cheaper
+	// than failing the eval.
+	var err error
+	for range 2 {
+		var llmResult string
+		llmResult, err = e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(500+500*len(rubrics)), withVerdictsOutput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to grade with llm: %w", err)
+		}
+		var parsed rubricVerdicts
+		if err = json.Unmarshal([]byte(llmResult), &parsed); err != nil {
+			err = fmt.Errorf("failed to unmarshal llm result: %w", err)
+			continue
+		}
+		var results []RubricResult
+		if results, err = verdictsInOrder(parsed.Verdicts, len(rubrics)); err == nil {
+			return results, nil
+		}
+	}
+	return nil, err
+}
+
+func (e *Eval) gradeOne(rubric, output string) (*RubricResult, error) {
+	req := gradingRequest(llmRubricSystem, fmt.Sprintf("<Output>%s</Output>\n<Rubric>%s</Rubric>", output, rubric))
+	llmResult, err := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
+	if err != nil {
+		return nil, fmt.Errorf("failed to grade with llm: %w", err)
+	}
+	result := RubricResult{}
+	if err := json.Unmarshal([]byte(llmResult), &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal llm result: %w", err)
+	}
+	return &result, nil
+}
+
+func gradingRequest(system, user string) llm.CompletionRequest {
+	return llm.CompletionRequest{
 		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: llmRubricSystem,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: fmt.Sprintf("<Output>%s</Output>\n<Rubric>%s</Rubric>", output, rubric),
-			},
+			{Role: llm.PostRoleSystem, Message: system},
+			{Role: llm.PostRoleUser, Message: user},
 		},
 		Context:   llm.NewContext(),
 		Operation: llm.OperationEvalGrading,
 	}
-
-	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
-	if gradeErr != nil {
-		return nil, fmt.Errorf("failed to grade with llm: %w", gradeErr)
-	}
-
-	rubricResult := RubricResult{}
-	unmarshalErr := json.Unmarshal([]byte(llmResult), &rubricResult)
-	if unmarshalErr != nil {
-		return nil, fmt.Errorf("failed to unmarshal llm result: %w", unmarshalErr)
-	}
-
-	return &rubricResult, nil
 }
 
+// verdictsInOrder matches verdicts to rubrics by number and fails unless every
+// rubric has exactly one verdict.
+func verdictsInOrder(verdicts []rubricVerdict, count int) ([]RubricResult, error) {
+	results := make([]RubricResult, count)
+	seen := make([]bool, count)
+	for _, v := range verdicts {
+		i := v.Rubric - 1
+		if i < 0 || i >= count {
+			return nil, fmt.Errorf("grader returned a verdict for rubric %d of %d", v.Rubric, count)
+		}
+		if seen[i] {
+			return nil, fmt.Errorf("grader returned more than one verdict for rubric %d", v.Rubric)
+		}
+		seen[i] = true
+		results[i] = RubricResult{Reasoning: v.Reasoning, Score: v.Score, Pass: v.Pass}
+	}
+	for i, ok := range seen {
+		if !ok {
+			return nil, fmt.Errorf("grader returned no verdict for rubric %d", i+1)
+		}
+	}
+	return results, nil
+}
+
+// LLMRubric grades output against a single rubric.
+func (e *Eval) LLMRubric(rubric, output string) (*RubricResult, error) {
+	results, err := e.LLMRubrics([]string{rubric}, output)
+	if err != nil {
+		return nil, err
+	}
+	return &results[0], nil
+}
+
+// LLMRubricsT grades output against every rubric in one grader request and
+// records a result for each rubric.
+func LLMRubricsT(e *EvalT, rubrics []string, output string) {
+	e.Helper()
+	if len(rubrics) == 0 {
+		return
+	}
+	results, err := e.LLMRubrics(rubrics, output)
+	require.NoError(e, err, "failed to grade rubrics %q", rubrics)
+	for i, rubric := range rubrics {
+		result := results[i]
+		RecordScore(e, &EvalResult{
+			Rubric:    rubric,
+			Output:    output,
+			Reasoning: result.Reasoning,
+			Score:     result.Score,
+			Pass:      result.Pass && result.Score >= minPassingScore,
+		})
+		// The verdict is already recorded above, so it bypasses EvalT's capture of
+		// assertion failures.
+		assert.True(e.T, result.Pass, "LLM Rubric Failed: %s", rubric)
+		assert.GreaterOrEqual(e.T, result.Score, minPassingScore, "LLM Rubric Score is too low: %s", rubric)
+	}
+}
+
+// LLMRubricT grades output against a single rubric and records the result.
 func LLMRubricT(e *EvalT, rubric, output string) {
 	e.Helper()
-	result, err := e.LLMRubric(rubric, output)
-	require.NoError(e, err, "failed to grade rubric %q", rubric)
-	RecordScore(e, &EvalResult{
-		Rubric:    rubric,
-		Output:    output,
-		Reasoning: result.Reasoning,
-		Score:     result.Score,
-		Pass:      result.Pass && result.Score >= minPassingScore,
-	})
-	// The verdict is already recorded above, so it bypasses EvalT's capture of
-	// assertion failures.
-	assert.True(e.T, result.Pass, "LLM Rubric Failed")
-	assert.GreaterOrEqual(e.T, result.Score, minPassingScore, "LLM Rubric Score is too low")
+	LLMRubricsT(e, []string{rubric}, output)
 }
 
 // minPassingScore is the grader score below which a rubric fails even when

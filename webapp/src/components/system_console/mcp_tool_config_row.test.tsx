@@ -23,11 +23,6 @@ jest.mock('@/license', () => ({
     requiredLevelFor: jest.fn(() => 2),
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 const testTool: MCPToolInfo = {
     name: 'get_issue',
     description: 'Upstream issue description',
@@ -54,7 +49,7 @@ describe('MCPToolConfigRow', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Show tool details'}));
 
         expect((screen.getByLabelText('Retrieval description override') as HTMLInputElement).value).toBe('Find incidents');
-        expect(screen.getByText('Optional. Used only by dynamic tool loading search to help the agent find this tool. It does not change the tool schema sent after loading.')).not.toBeNull();
+        expect(screen.getByText('Optional. Used only by dynamic tool search to find this tool; does not change its schema.')).not.toBeNull();
     });
 
     test('editing retrieval override updates tool config', () => {
