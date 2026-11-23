@@ -1,34 +1,149 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import ReactDOM from 'react-dom';
-import Tippy from '@tippyjs/react';
-import styled, {createGlobalStyle} from 'styled-components';
+import styled, {keyframes} from 'styled-components';
 
 import {TourPoint, TourPointPointerPosition} from '@mattermost/compass-ui/components/tour-point';
 
 import PulsatingDot from './pulsating_dot';
 import {useTourManager, useMeasurePunchouts, useShowTutorialStep} from './hooks';
 
-const rootPortal = document.getElementById('root-portal');
+const VIEWPORT_PADDING = 8;
 
-const TippyStyles = createGlobalStyle`
-    .tour-tip-tippy {
-        background: transparent;
-        box-shadow: none;
+const scaleIn = keyframes`
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
 
-        .tippy-content {
-            padding: 0;
-        }
+    to {
+        opacity: 1;
+        transform: scale(1);
     }
 `;
 
-type Placement =
+export type Placement =
     | 'top' | 'bottom' | 'left' | 'right'
     | 'top-start' | 'top-end' | 'bottom-start' | 'bottom-end'
     | 'left-start' | 'left-end' | 'right-start' | 'right-end';
+
+type RectLike = {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+};
+
+type SizeLike = {
+    width: number;
+    height: number;
+};
+
+type Side = 'top' | 'bottom' | 'left' | 'right';
+
+const OPPOSITE_SIDE: Record<Side, Side> = {
+    left: 'right',
+    right: 'left',
+    top: 'bottom',
+    bottom: 'top',
+};
+
+function fitsOnSide(
+    side: Side,
+    triggerRect: RectLike,
+    tipSize: SizeLike,
+    distance: number,
+    viewport: SizeLike,
+): boolean {
+    switch (side) {
+    case 'left':
+        return triggerRect.left - tipSize.width - distance >= VIEWPORT_PADDING;
+    case 'right':
+        return triggerRect.right + distance + tipSize.width <= viewport.width - VIEWPORT_PADDING;
+    case 'top':
+        return triggerRect.top - tipSize.height - distance >= VIEWPORT_PADDING;
+    default:
+        return triggerRect.bottom + distance + tipSize.height <= viewport.height - VIEWPORT_PADDING;
+    }
+}
+
+function resolvePlacement(
+    triggerRect: RectLike,
+    tipSize: SizeLike,
+    placement: Placement,
+    distance: number,
+    viewport: SizeLike,
+): Placement {
+    const [side, alignment] = placement.split('-') as [Side, string | undefined];
+    const withAlignment = (nextSide: Side): Placement => (alignment ? `${nextSide}-${alignment}` as Placement : nextSide);
+
+    if (fitsOnSide(side, triggerRect, tipSize, distance, viewport)) {
+        return placement;
+    }
+
+    const opposite = OPPOSITE_SIDE[side];
+    if (fitsOnSide(opposite, triggerRect, tipSize, distance, viewport)) {
+        return withAlignment(opposite);
+    }
+
+    const fallbacks: Side[] = side === 'left' || side === 'right' ? ['bottom', 'top'] : ['right', 'left'];
+    for (const candidate of fallbacks) {
+        if (fitsOnSide(candidate, triggerRect, tipSize, distance, viewport)) {
+            return candidate;
+        }
+    }
+
+    return placement;
+}
+
+export function computeAnchoredPosition(
+    triggerRect: RectLike,
+    tipSize: SizeLike,
+    placement: Placement,
+    offset: [number, number],
+    viewport: SizeLike,
+): {top: number; left: number; placement: Placement} {
+    const [skidding, distance] = offset;
+    const resolvedPlacement = resolvePlacement(triggerRect, tipSize, placement, distance, viewport);
+    const [side, alignment] = resolvedPlacement.split('-');
+
+    let top = 0;
+    let left = 0;
+
+    if (side === 'left' || side === 'right') {
+        left = side === 'left' ? triggerRect.left - tipSize.width - distance : triggerRect.right + distance;
+        if (alignment === 'start') {
+            top = triggerRect.top + skidding;
+        } else if (alignment === 'end') {
+            top = (triggerRect.bottom - tipSize.height) + skidding;
+        } else {
+            top = ((triggerRect.top + (triggerRect.height / 2)) - (tipSize.height / 2)) + skidding;
+        }
+    } else {
+        top = side === 'top' ? triggerRect.top - tipSize.height - distance : triggerRect.bottom + distance;
+        if (alignment === 'start') {
+            left = triggerRect.left + skidding;
+        } else if (alignment === 'end') {
+            left = (triggerRect.right - tipSize.width) + skidding;
+        } else {
+            left = ((triggerRect.left + (triggerRect.width / 2)) - (tipSize.width / 2)) + skidding;
+        }
+    }
+
+    const maxLeft = Math.max(VIEWPORT_PADDING, viewport.width - tipSize.width - VIEWPORT_PADDING);
+    const maxTop = Math.max(VIEWPORT_PADDING, viewport.height - tipSize.height - VIEWPORT_PADDING);
+
+    return {
+        top: Math.min(Math.max(VIEWPORT_PADDING, top), maxTop),
+        left: Math.min(Math.max(VIEWPORT_PADDING, left), maxLeft),
+        placement: resolvedPlacement,
+    };
+}
 
 const TourOverlay = styled.div`
     position: fixed;
@@ -48,6 +163,21 @@ const DotContainer = styled.button<{$placement: Placement; $translateX: number; 
     background: none;
     cursor: pointer;
     transform: translate(${(props) => props.$translateX}px, ${(props) => props.$translateY}px);
+`;
+
+const TipContainer = styled.div.attrs<{$top: number; $left: number; $maxWidth: number}>((props) => ({
+    style: {
+        top: `${props.$top}px`,
+        left: `${props.$left}px`,
+        maxWidth: `${props.$maxWidth}px`,
+    },
+}))<{$top: number; $left: number; $maxWidth: number}>`
+    position: fixed;
+    z-index: 9999;
+`;
+
+const TipContent = styled.div`
+    animation: ${scaleIn} 250ms ease-out;
 `;
 
 // TourPoint draws its pointer at a fixed spot on the card edge, so it only
@@ -96,28 +226,78 @@ const TutorialTourTip: React.FC<Props> = ({
     offset = [0, 12],
     onFinish,
 }) => {
-    // Held in state rather than a ref so Tippy re-renders once the dot mounts.
     const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
+    const tipRef = useRef<HTMLDivElement | null>(null);
+    const overlayRef = useRef<HTMLDivElement | null>(null);
+    const [position, setPosition] = useState<{top: number; left: number; placement: Placement}>({
+        top: 0,
+        left: 0,
+        placement,
+    });
     const intl = useIntl();
     const {show, handleOpen, handleDismiss} = useTourManager(
         tutorialCategory,
         onFinish,
     );
 
-    const content = (
-        <TourPoint
-            title={title}
-            pointerPosition={pointerPositionFor(placement)}
-            showPulsingDot={false}
-            onClose={handleDismiss}
-            closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
-            closeButtonProps={{'data-testid': 'agents-tour-close'}}
-        >
-            {screen}
-        </TourPoint>
-    );
+    const offsetSkidding = offset[0];
+    const offsetDistance = offset[1];
+
+    const updatePosition = useCallback(() => {
+        if (!triggerElement || !tipRef.current) {
+            return;
+        }
+        const triggerRect = triggerElement.getBoundingClientRect();
+        const tipRect = tipRef.current.getBoundingClientRect();
+        const next = computeAnchoredPosition(
+            triggerRect,
+            {width: tipRect.width || width, height: tipRect.height},
+            placement,
+            [offsetSkidding, offsetDistance],
+            {width: window.innerWidth, height: window.innerHeight},
+        );
+        setPosition((prev) => (
+            prev.top === next.top && prev.left === next.left && prev.placement === next.placement ? prev : next
+        ));
+    }, [triggerElement, placement, offsetSkidding, offsetDistance, width]);
+
+    // Re-measure after rerenders so parent-driven trigger moves (e.g. useMeasurePunchouts) update the portal.
+    useLayoutEffect(() => {
+        if (show) {
+            updatePosition();
+        }
+    });
+
+    useLayoutEffect(() => {
+        if (!show) {
+            return () => { /* empty */ };
+        }
+        window.addEventListener('resize', updatePosition);
+        window.addEventListener('scroll', updatePosition, true);
+
+        let observer: ResizeObserver | undefined;
+        if (typeof ResizeObserver !== 'undefined') {
+            observer = new ResizeObserver(updatePosition);
+            if (tipRef.current) {
+                observer.observe(tipRef.current);
+            }
+            if (triggerElement) {
+                observer.observe(triggerElement);
+            }
+        }
+
+        return () => {
+            window.removeEventListener('resize', updatePosition);
+            window.removeEventListener('scroll', updatePosition, true);
+            observer?.disconnect();
+        };
+    }, [show, triggerElement, updatePosition]);
 
     useEffect(() => {
+        if (!show) {
+            return () => { /* empty */ };
+        }
+
         const handleEscape = (event: KeyboardEvent) => {
             if (event.key !== 'Escape') {
                 return;
@@ -128,18 +308,30 @@ const TutorialTourTip: React.FC<Props> = ({
             handleDismiss();
         };
 
-        if (show) {
-            document.addEventListener('keydown', handleEscape, true);
-        }
+        const handleOutsideClick = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (!target) {
+                return;
+            }
+            if (tipRef.current?.contains(target) || triggerElement?.contains(target) || overlayRef.current?.contains(target)) {
+                return;
+            }
+            handleDismiss();
+        };
+
+        document.addEventListener('keydown', handleEscape, true);
+        document.addEventListener('click', handleOutsideClick);
 
         return () => {
             document.removeEventListener('keydown', handleEscape, true);
+            document.removeEventListener('click', handleOutsideClick);
         };
-    }, [show, handleDismiss]);
+    }, [show, handleDismiss, triggerElement]);
+
+    const rootPortal = document.getElementById('root-portal');
 
     return (
         <>
-            <TippyStyles/>
             <DotContainer
                 ref={setTriggerElement}
                 type='button'
@@ -156,31 +348,38 @@ const TutorialTourTip: React.FC<Props> = ({
             {show && rootPortal && ReactDOM.createPortal(
                 // eslint-disable-next-line agents/click-events-have-key-events, agents/no-static-element-interactions -- backdrop; Escape and the tip's Close button dismiss the tour
                 <TourOverlay
+                    ref={overlayRef}
                     data-testid='agents-tour-overlay'
-                    onClick={handleDismiss}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        handleDismiss();
+                    }}
                 />,
                 rootPortal,
             )}
 
-            {show && rootPortal && (
-                <Tippy
-                    visible={true}
-                    content={content}
-                    animation='scale-subtle'
-                    duration={[250, 150]}
-                    maxWidth={width}
-                    zIndex={9999}
-                    reference={triggerElement}
-                    interactive={true}
-                    appendTo={rootPortal}
-                    onClickOutside={() => {
-                        handleDismiss();
-                    }}
-                    offset={offset}
-                    placement={placement}
-                    arrow={false}
+            {show && rootPortal && ReactDOM.createPortal(
+                <TipContainer
+                    ref={tipRef}
                     className='tour-tip-tippy'
-                />
+                    $top={position.top}
+                    $left={position.left}
+                    $maxWidth={width}
+                >
+                    <TipContent>
+                        <TourPoint
+                            title={title}
+                            pointerPosition={pointerPositionFor(position.placement)}
+                            showPulsingDot={false}
+                            onClose={handleDismiss}
+                            closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                            closeButtonProps={{'data-testid': 'agents-tour-close'}}
+                        >
+                            {screen}
+                        </TourPoint>
+                    </TipContent>
+                </TipContainer>,
+                rootPortal,
             )}
         </>
     );

@@ -75,17 +75,9 @@ type Config struct {
 type WebSearchConfig struct {
 	Enabled        bool                   `json:"enabled"`
 	Provider       string                 `json:"provider"`
-	Google         WebSearchGoogleConfig  `json:"google"`
 	Brave          WebSearchBraveConfig   `json:"brave"`
 	SearXNG        WebSearchSearXNGConfig `json:"searxng"`
 	DomainDenylist []string               `json:"domainDenylist"`
-}
-
-type WebSearchGoogleConfig struct {
-	APIKey         string `json:"apiKey"`
-	SearchEngineID string `json:"searchEngineId"`
-	ResultLimit    int    `json:"resultLimit"`
-	APIURL         string `json:"apiURL"`
 }
 
 type WebSearchSearXNGConfig struct {

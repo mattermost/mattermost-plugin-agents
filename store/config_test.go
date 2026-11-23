@@ -76,11 +76,10 @@ func fullTestConfig() config.Config {
 		},
 		WebSearch: config.WebSearchConfig{
 			Enabled:  true,
-			Provider: "google",
-			Google: config.WebSearchGoogleConfig{
-				APIKey:         "google-api-key",
-				SearchEngineID: "cx-123",
-				ResultLimit:    5,
+			Provider: "brave",
+			Brave: config.WebSearchBraveConfig{
+				APIKey:      "brave-api-key",
+				ResultLimit: 5,
 			},
 		},
 	}
@@ -152,7 +151,7 @@ func TestConfigStore(t *testing.T) {
 				// WebSearch
 				assert.Equal(t, expected.WebSearch.Enabled, cfg.WebSearch.Enabled)
 				assert.Equal(t, expected.WebSearch.Provider, cfg.WebSearch.Provider)
-				assert.Equal(t, expected.WebSearch.Google.APIKey, cfg.WebSearch.Google.APIKey)
+				assert.Equal(t, expected.WebSearch.Brave.APIKey, cfg.WebSearch.Brave.APIKey)
 			},
 		},
 		{
@@ -205,10 +204,7 @@ func TestConfigStore(t *testing.T) {
 					},
 					WebSearch: config.WebSearchConfig{
 						Enabled:  true,
-						Provider: "google",
-						Google: config.WebSearchGoogleConfig{
-							APIKey: "AIzaSy-google-secret-key",
-						},
+						Provider: "brave",
 						Brave: config.WebSearchBraveConfig{
 							APIKey: "BSA-brave-secret-key",
 						},
@@ -223,7 +219,6 @@ func TestConfigStore(t *testing.T) {
 				require.NotNil(t, cfg)
 				require.Len(t, cfg.Services, 1)
 				assert.Equal(t, "sk-very-secret-key-that-must-not-be-lost", cfg.Services[0].APIKey)
-				assert.Equal(t, "AIzaSy-google-secret-key", cfg.WebSearch.Google.APIKey)
 				assert.Equal(t, "BSA-brave-secret-key", cfg.WebSearch.Brave.APIKey)
 			},
 		},

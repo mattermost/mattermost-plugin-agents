@@ -14,7 +14,7 @@ Turn on **Enable HTML artifacts** first. The library only holds HTML artifacts, 
 | Max artifacts per channel | `channelArtifactsMaxPerChannel` | 50 | Saving past the limit fails with "limit reached". |
 | Versions to keep per artifact | `channelArtifactVersionsToKeep` | 20 | Saving a new version removes the oldest version records beyond this number. The current version is never removed. |
 
-All three are under **System Console > Plugins > Agents > AI Functions**.
+All three are under **Agents > Settings > General**.
 
 ## Who can do what
 
