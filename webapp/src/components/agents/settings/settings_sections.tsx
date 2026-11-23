@@ -109,14 +109,8 @@ export const defaultConfig: PluginConfig = {
     },
     webSearch: {
         enabled: false,
-        provider: 'google',
+        provider: 'brave',
         domainDenylist: [],
-        google: {
-            apiKey: '',
-            searchEngineId: '',
-            resultLimit: 5,
-            apiURL: '',
-        },
         brave: {
             apiKey: '',
             resultLimit: 5,
@@ -176,7 +170,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
         return (
             <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Choose a default agent and how agents behave across the workspace.'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Default agent and workspace-wide agent behavior.'})}
             >
                 <ItemList>
                     {runtimeBotsError && (
@@ -188,7 +182,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
                         value={defaultBotID || hiddenDefaultID}
-                        error={runtimeBots.length > 0 && !defaultBotID ? intl.formatMessage({defaultMessage: 'The configured default agent is not available to you, and may not be available to anyone. If so, requests that do not choose an agent will fail until you select another one.'}) : ''}
+                        error={runtimeBots.length > 0 && !defaultBotID ? intl.formatMessage({defaultMessage: 'Configured default agent is unavailable to you. Requests without a specific agent may fail until you select another.'}) : ''}
                         onChange={(defaultBotUserID) => {
                             updateConfig({defaultBotUserID, defaultBotName: ''});
                         }}
@@ -198,7 +192,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}
                         value={value.allowedUpstreamHostnames}
                         onChange={(e) => updateConfig({allowedUpstreamHostnames: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Comma separated list of hostnames that LLMs are allowed to contact when using tools. Supports wildcards like *.mydomain.com. For instance to allow JIRA tool use to the Mattermost JIRA instance use mattermost.atlassian.net'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Comma-separated hostnames LLMs can contact via tools (e.g., *.mydomain.com).'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Render AI-generated links'/>}
@@ -206,7 +200,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({allowUnsafeLinks: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Makes links in AI responses clickable. Enable only if you trust LLM output or have mitigations against malicious links and exfiltration.'})}
                     />
                     {value.allowUnsafeLinks && (
                         <TextItem
@@ -214,7 +208,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             value={value.allowedLinkDomains}
                             onChange={(e) => updateConfig({allowedLinkDomains: e.target.value})}
                             error={linkDomainsError}
-                            helptext={intl.formatMessage({defaultMessage: 'Comma separated list of domains that AI-generated links may point to. Links to any other domain are shown as plain text. Supports wildcards like *.mydomain.com, which matches subdomains but not mydomain.com itself. Links to this Mattermost server are always allowed. Leave empty to allow links to any domain.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Domains allowed for clickable links; others render as plain text. Supports *.mydomain.com (subdomains only). This server is always allowed; leave empty to allow any.'})}
                             placeholder={'example.com, *.mydomain.com'}
                         />
                     )}
@@ -232,7 +226,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({enableHTMLArtifacts: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files that agents attach to their replies are rendered as sandboxed interactive artifacts that run only when a viewer clicks Run. Artifacts have no access to the user\'s Mattermost session, and they read the viewer\'s basic profile only after the viewer explicitly allows it. Network access is blocked, fully only in Chromium 152 or later; in other browsers an artifact can still send its content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC. An artifact can also place content on the clipboard that differs from what it displays, so treat anything copied from an artifact as untrusted. The Site URL must match the address users open Mattermost at, or artifacts fail to load. Enable only where these risks are acceptable.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Renders agent-attached HTML files as sandboxed artifacts when a viewer clicks Run.'})}
                     />
                     <BooleanItem
                         label={
@@ -248,7 +242,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({enableChannelMentionToolCalling: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Allows tool calling when @mentioning an agent in channels. When off, tools work only in DMs.'})}
                     />
                     <BooleanItem
                         label={
@@ -268,7 +262,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({enableAmbientAutoReply: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'Lets channel managers choose the ambient auto-reply modes, where the agent’s model reads each new message and decides whether the agent should reply. Every analyzed message costs an LLM call. When disabled, ambient modes cannot be saved and channels using them stop replying automatically; @mentions keep working.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Lets channel managers enable ambient auto-reply; each evaluated message costs an LLM call. Disabling stops ambient replies immediately while @mentions keep working.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
@@ -280,13 +274,13 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         onChange={(to) => {
                             updateConfig({allowNativeWebSearchInChannels: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Lets agents use provider-native web search (e.g., Anthropic, OpenAI) in channels, not only DMs. Does not affect custom tools or MCP.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Limit agent version history'/>}
                         value={(value.agentVersionsToKeep ?? 0) > 0}
                         onChange={(to) => updateConfig({agentVersionsToKeep: to ? DEFAULT_AGENT_VERSIONS_TO_KEEP : 0})}
-                        helpText={intl.formatMessage({defaultMessage: 'When false, every saved version of each agent is kept. When true, each agent keeps only its most recent versions and older ones are permanently deleted.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'True keeps only recent versions per agent and permanently deletes older ones. False keeps all versions.'})}
                     />
                     {(value.agentVersionsToKeep ?? 0) > 0 && (
                         <TextItem
@@ -298,7 +292,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                                 const parsed = parseInt(e.target.value, 10);
                                 updateConfig({agentVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed});
                             }}
-                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are deleted when this setting is saved and each time an agent is saved.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Includes the current version. Older versions are pruned on save.'})}
                         />
                     )}
                 </ItemList>
@@ -356,7 +350,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         label={intl.formatMessage({defaultMessage: 'Trace Output'})}
                         value={value.telemetryOutput || 'off'}
                         onChange={(telemetryOutput) => updateConfig({telemetryOutput: telemetryOutput as 'off' | 'logs' | 'otlp'})}
-                        helptext={intl.formatMessage({defaultMessage: 'Where to send distributed traces of LLM requests, tool execution, and search operations. "Server Logs" writes spans to the Mattermost server log and requires no extra infrastructure. "OTLP Endpoint" exports spans to a collector such as Grafana Tempo or Jaeger.'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Destination for LLM, tool, and search traces. Server Logs writes to the Mattermost log; OTLP Endpoint exports to a collector (e.g., Tempo, Jaeger).'})}
                         options={[
                             {value: 'off', label: intl.formatMessage({defaultMessage: 'Off'})},
                             {value: 'logs', label: intl.formatMessage({defaultMessage: 'Server Logs'})},
@@ -368,7 +362,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             label={intl.formatMessage({defaultMessage: 'OpenTelemetry Endpoint'})}
                             value={value.openTelemetryEndpoint}
                             onChange={(e) => updateConfig({openTelemetryEndpoint: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'OTLP gRPC endpoint for trace export (e.g. localhost:4317).'})}
+                            helptext={intl.formatMessage({defaultMessage: 'OTLP gRPC endpoint (e.g., localhost:4317).'})}
                             placeholder={'localhost:4317'}
                         />
                     )}
@@ -377,7 +371,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             label={intl.formatMessage({defaultMessage: 'Use TLS for OTLP Export'})}
                             value={Boolean(value.openTelemetryTLS)}
                             onChange={(to) => updateConfig({openTelemetryTLS: to})}
-                            helpText={intl.formatMessage({defaultMessage: 'Connect to the OTLP endpoint over TLS, verified against the system root certificates. Required by hosted collectors such as Grafana Cloud Tempo.'})}
+                            helpText={intl.formatMessage({defaultMessage: 'Connect over TLS using system root certificates. Required by hosted collectors (e.g., Grafana Cloud Tempo).'})}
                         />
                     )}
                     {value.telemetryOutput === 'otlp' && (
@@ -386,7 +380,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             type='password'
                             value={value.openTelemetryHeaders || ''}
                             onChange={(e) => updateConfig({openTelemetryHeaders: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'Headers sent with every trace export, as comma-separated key=value pairs (e.g. Authorization=Basic YOUR_CREDENTIALS). Use with TLS so credentials are not sent in plaintext.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Comma-separated key=value export headers (e.g., Authorization=Basic ...). Use TLS so credentials are not sent in plaintext.'})}
                         />
                     )}
                     <BooleanItem
@@ -397,7 +391,7 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                             <LicenseChip capability='token_accounting'/>
                         )}
                         onChange={(to) => updateConfig({enableTokenUsageLogging: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Log token usage for all LLM requests.'})}
                     />
                 </ItemList>
             </AdminPanel>

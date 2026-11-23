@@ -80,7 +80,7 @@ Bedrock gives access to Anthropic, Amazon, and other models through AWS. For IAM
 | **API Key** | Optional. A Bedrock console API key. |
 | **Default model** | A Bedrock model ID, such as `us.anthropic.claude-sonnet-4-6`. |
 
-With no credentials in the service, the plugin uses the AWS default credential chain, such as an EC2 instance profile. Environment variables `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` also work, but values in the System Console win.
+With no credentials in the service, the plugin uses the AWS default credential chain, such as an EC2 instance profile. Environment variables `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` also work, but values in **Agents > Settings** win.
 
 ## Google Gemini
 

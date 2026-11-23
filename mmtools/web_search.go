@@ -160,17 +160,8 @@ func (s *webSearchService) Tool() *llm.Tool {
 	// Initialize provider if not already done or if configuration changed
 	switch provider {
 	case "google":
-		if webCfg.Google.APIKey == "" || webCfg.Google.SearchEngineID == "" {
-			s.logWarn("web search misconfigured: missing Google API credentials")
-			return nil
-		}
-		s.provider = websearch.NewGoogleProvider(
-			webCfg.Google.APIKey,
-			webCfg.Google.SearchEngineID,
-			webCfg.Google.APIURL,
-			s.httpClient,
-			s.logger,
-		)
+		s.logWarn("web search disabled: Google Custom Search is no longer supported; choose another provider")
+		return nil
 	case "brave":
 		if webCfg.Brave.APIKey == "" {
 			s.logWarn("web search misconfigured: missing Brave API key")
@@ -229,10 +220,6 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 
 	// Check provider-specific credentials
 	switch provider {
-	case "google":
-		if webCfg.Google.APIKey == "" || webCfg.Google.SearchEngineID == "" {
-			return nil
-		}
 	case "brave":
 		if webCfg.Brave.APIKey == "" {
 			return nil
@@ -329,8 +316,6 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 	resultLimit := 5
 	providerName := strings.ToLower(strings.TrimSpace(webCfg.Provider))
 	switch providerName {
-	case "google":
-		resultLimit = webCfg.Google.ResultLimit
 	case "brave":
 		resultLimit = webCfg.Brave.ResultLimit
 	case "searxng":

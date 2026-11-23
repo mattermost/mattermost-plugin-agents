@@ -115,19 +115,35 @@ func TestChunkText(t *testing.T) {
 		content := "Word1 Word2 Word3 Word4 Word5 Word6 Word7 Word8 Word9 Word10"
 		opts := Options{
 			ChunkSize:        20,
-			ChunkOverlap:     5,
+			ChunkOverlap:     6,
 			ChunkingStrategy: "fixed",
 		}
 
 		chunks := ChunkText(content, opts)
 		require.Greater(t, len(chunks), 1, "Should create multiple chunks")
 
-		// With overlap, later chunks should contain some content from previous chunks
-		// This is handled by the underlying langchaingo library
 		for i, chunk := range chunks {
 			assert.True(t, chunk.IsChunk)
 			assert.Equal(t, i, chunk.ChunkIndex)
 			assert.Equal(t, len(chunks), chunk.TotalChunks)
+			assert.LessOrEqual(t, len(chunk.Content), opts.ChunkSize)
+		}
+		assert.Contains(t, chunks[1].Content, "Word3", "Second chunk should overlap with end of first chunk")
+	})
+
+	t.Run("multi-byte UTF-8 splits on rune boundaries", func(t *testing.T) {
+		content := "日本語のテキスト分割テストです"
+		opts := Options{
+			ChunkSize:        5,
+			ChunkOverlap:     1,
+			ChunkingStrategy: "fixed",
+		}
+
+		chunks := ChunkText(content, opts)
+		require.Greater(t, len(chunks), 1)
+		for _, chunk := range chunks {
+			assert.True(t, chunk.IsChunk)
+			assert.LessOrEqual(t, len([]rune(chunk.Content)), opts.ChunkSize)
 		}
 	})
 

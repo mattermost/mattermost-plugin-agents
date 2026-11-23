@@ -25,11 +25,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('../../client', () => ({
     fetchModels: jest.fn(),
 }));
@@ -430,7 +425,7 @@ describe('ServiceFields structured output policy selector', () => {
             'Native supported',
             'Prompt fallback',
         ]);
-        expect(screen.getByText(/combined across this service's fallback chain/)).not.toBeNull();
+        expect(screen.getByText(/Combined across the fallback chain/)).not.toBeNull();
     });
 
     const storedValueCases: {description: string; service: LLMService; selected: string}[] = [
@@ -481,9 +476,9 @@ describe('ServiceFields Cohere North', () => {
         renderFields(northService);
 
         expect(screen.getByText('North instance URL')).toBeTruthy();
-        expect(screen.getByText('The base URL of your Cohere North instance, for example https://north.example.com')).toBeTruthy();
+        expect(screen.getByText('Base URL of your Cohere North instance (e.g., https://north.example.com).')).toBeTruthy();
         expect(screen.getByText('Service token')).toBeTruthy();
-        expect(screen.getByText("A long-lived North service token. Generate one from your North instance's developer page.")).toBeTruthy();
+        expect(screen.getByText('Long-lived token from your North developer page.')).toBeTruthy();
         expect(screen.getByText('Streaming Timeout Seconds')).toBeTruthy();
         expect(screen.queryByText('Organization ID')).toBeNull();
         expect(screen.queryByText('Use Responses API')).toBeNull();
