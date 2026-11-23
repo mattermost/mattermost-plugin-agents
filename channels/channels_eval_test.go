@@ -99,9 +99,7 @@ func TestChannelSummarizationEval(t *testing.T) {
 			assert.NotEmpty(t, summary, "Expected a non-empty channel summary")
 
 			// Evaluate the summary against rubrics
-			for _, rubric := range config.expectedRubrics {
-				evals.LLMRubricT(t, rubric, summary)
-			}
+			evals.LLMRubricsT(t, config.expectedRubrics, summary)
 		})
 	}
 }
@@ -219,6 +217,30 @@ func (s *evalInMemoryStore) CompareAndSwapTurnContent(id string, expected, conte
 		return false, nil
 	}
 	t.Content = content
+	return true, nil
+}
+
+func (s *evalInMemoryStore) CompareAndSwapTurnContentAndStatus(id string, expectedContent json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || t.Status != expectedStatus || !bytes.Equal(t.Content, expectedContent) {
+		return false, nil
+	}
+	t.Content = content
+	t.Status = status
+	return true, nil
+}
+
+func (s *evalInMemoryStore) TouchStreamingTurn(id string) (bool, error) {
+	t, ok := s.turns[id]
+	return ok && t.Status == store.TurnStatusStreaming, nil
+}
+
+func (s *evalInMemoryStore) TransitionTurnStatus(id, from, to string) (bool, error) {
+	t, ok := s.turns[id]
+	if !ok || t.Status != from {
+		return false, nil
+	}
+	t.Status = to
 	return true, nil
 }
 

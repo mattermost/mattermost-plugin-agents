@@ -96,7 +96,7 @@ aws ec2 associate-iam-instance-profile \
 
 ## Add the service and an agent
 
-1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**.
+1. Go to **Agents > Settings > AI services** and select **Add an AI Service**.
 2. Set **Service type** to **AWS Bedrock**, **AWS Region** to a region where Bedrock is available, and **Default model** to the model or inference profile ID.
 3. Leave **AWS Access Key ID**, **AWS Secret Access Key**, and **API Key** empty so the plugin uses the instance profile. Select **Save**.
 4. Create an agent that uses this service. See [Create and manage agents](managing_agents.md).

@@ -422,6 +422,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             await expect(latestBotPost.getByText('blocked-image').first()).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
 
+            // eslint-disable-next-line e2e/no-arbitrary-wait -- waits for any blocked image requests to settle before asserting zero trap hits
             await page.waitForLoadState('networkidle');
             expect(imageTrap.getRequestCount() - baselineRequestCount).toBe(0);
         } finally {

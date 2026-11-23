@@ -52,11 +52,6 @@ jest.mock('../access_control/console_policy_section', () => ({
     default: () => null,
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 /* eslint-disable import/first, import/order */
 import {IntlProvider} from 'react-intl';
 
@@ -463,4 +458,87 @@ describe('MCPToolsViewer — tools list owned by the MCP page', () => {
         expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
         expect(screen.queryByText('Failed to load MCP tools')).toBeNull();
     });
+});
+
+test('lists servers in a duplicate-endpoint conflict, which share a URL, as separate rows', () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => null);
+    try {
+        renderViewer({
+            servers: ['Tracker', 'Wiki'].map((name) => ({
+                name,
+                url: 'https://mcp.example.com',
+                serverType: 'remote',
+                enabled: true,
+                tools: [],
+                needsOAuth: false,
+                error: null,
+            })),
+        });
+
+        expect(screen.getByText('Tracker')).toBeTruthy();
+        expect(screen.getByText('Wiki')).toBeTruthy();
+        expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    } finally {
+        consoleError.mockRestore();
+    }
+});
+
+test('maps each server on a shared URL to its own configuration by name', () => {
+    const shared = 'https://mcp.example.com';
+    const servers = ['Tracker', 'Wiki'].map((name) => ({
+        name,
+        url: shared,
+        serverType: 'remote',
+        enabled: true,
+        tools: [],
+        needsOAuth: false,
+        error: null,
+    }));
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+            {name: 'Wiki', enabled: false, baseURL: shared, headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('true');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggles[1]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+        {name: 'Wiki', enabled: true, baseURL: shared, headers: {}},
+    ]);
+});
+
+test('maps servers to their configuration by ID when names were swapped by renames', () => {
+    const servers = [
+        {id: 'id-a', name: 'A', url: 'https://a.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+        {id: 'id-x', name: 'X', url: 'https://x.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+    ];
+
+    // The tools payload still carries the names from before A->B and X->A.
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {id: 'id-a', name: 'B', enabled: false, baseURL: 'https://a.example.com', headers: {}},
+            {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('false');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(toggles[0]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {id: 'id-a', name: 'B', enabled: true, baseURL: 'https://a.example.com', headers: {}},
+        {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+    ]);
 });

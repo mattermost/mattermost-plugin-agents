@@ -7,6 +7,7 @@ import {containerTest, type Own} from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
+import {SECRET_PLACEHOLDER} from 'helpers/bot-config';
 import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
 import RunSystemConsoleContainer, {adminUsername, adminPassword, type MCPServerConfig} from 'helpers/system-console-container';
 import {
@@ -77,7 +78,7 @@ async function openAddServerWizard(page: Page, baseURL: string): Promise<Locator
     const mmPage = new MattermostPage(page);
     const systemConsole = new SystemConsoleHelper(page);
     await mmPage.login(baseURL, adminUsername, adminPassword);
-    await systemConsole.navigateToPluginConfig(baseURL);
+    await systemConsole.navigateToAgentsSettings(baseURL, 'mcp');
 
     await page.getByRole('button', {name: 'Add Remote MCP Server'}).click();
     const dialog = page.getByRole('dialog', {name: 'Add remote MCP server'});
@@ -202,7 +203,7 @@ test.describe('MCP add server wizard', () => {
         await dialog.getByRole('button', {name: 'Skip connecting'}).click();
 
         await expect(dialog.getByText('Save without reviewing tools?')).toBeVisible();
-        await expect(dialog.getByText(/ask for approval before every run/)).toBeVisible();
+        await expect(dialog.getByText(/Unreviewed tools default to Ask Every Time/)).toBeVisible();
         await shot(dialog, 'add4');
 
         await dialog.getByRole('button', {name: 'Save without connecting'}).click();
@@ -267,7 +268,7 @@ editTest.describe('MCP server editing', () => {
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
         await mmPage.login(containers.mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(containers.mattermost.url());
+        await systemConsole.navigateToAgentsSettings(containers.mattermost.url(), 'mcp');
 
         // Remote servers are a compact list; editing happens in the dialog.
         const list = page.getByRole('list', {name: 'Remote MCP servers'});
@@ -292,7 +293,8 @@ editTest.describe('MCP server editing', () => {
 
         await expect.poll(async () => (await savedServer(page, PLAIN_SERVER_NAME))?.description).toBe('Search the product documentation.');
         const saved = await savedServer(page, PLAIN_SERVER_NAME);
-        expect(saved?.serviceAccountHeaders).toEqual({Authorization: 'Bearer service-token'});
+        // GET /admin/config returns the mask, never the stored header value.
+        expect(saved?.serviceAccountHeaders).toEqual({Authorization: SECRET_PLACEHOLDER});
         expect(await savedToolConfigs(page, PLAIN_SERVER_NAME)).toEqual(reviewedTools);
 
         // Renaming ends users' sign-ins: the admin is warned, then signs in
@@ -303,7 +305,7 @@ editTest.describe('MCP server editing', () => {
         await dialog.getByRole('button', {name: 'Save', exact: true}).click();
         await expect(dialog.getByText(`Users will have to sign in to ${renamed} again`)).toBeVisible();
         await expect(page.getByRole('dialog', {name: `Edit ${PLAIN_SERVER_NAME}`})).toBeVisible();
-        await expect(dialog.getByText(/Renaming the server/)).toBeVisible();
+        await expect(dialog.getByText(/Renaming removes saved sign-ins/)).toBeVisible();
         await shot(dialog, 'shot3');
 
         await dialog.getByRole('button', {name: 'Save and sign in again'}).click();

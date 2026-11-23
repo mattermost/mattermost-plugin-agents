@@ -43,6 +43,14 @@ var PostgresTestConnStr string
 
 func newPostgresTestStore(t *testing.T) *store.Store {
 	t.Helper()
+	s, _ := newPostgresTestStoreWithDB(t)
+	return s
+}
+
+// newPostgresTestStoreWithDB also returns the store's database, for tests
+// that must set state the store API cannot, such as an old heartbeat.
+func newPostgresTestStoreWithDB(t *testing.T) (*store.Store, *sqlx.DB) {
+	t.Helper()
 	if PostgresTestConnStr == "" {
 		t.Skip("postgres testcontainer not available")
 	}
@@ -65,7 +73,7 @@ func newPostgresTestStore(t *testing.T) *store.Store {
 
 	s := store.New(db)
 	require.NoError(t, s.RunMigrations())
-	return s
+	return s, db
 }
 
 // fakeAnthropic is an Anthropic Messages endpoint that answers 400
@@ -345,6 +353,7 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 	}
 
 	channel := &model.Channel{Id: channelID, TeamId: "team-id", Type: model.ChannelTypeOpen}
+	approvals := 0
 	approveAndShare := func(post *model.Post, toolIDs ...string) {
 		anchor, anchorErr := s.GetTurnByPostID(post.Id)
 		require.NoError(t, anchorErr)
@@ -354,6 +363,13 @@ func TestChannelApprovalsOutOfOrderKeepThreadReplayable(t *testing.T) {
 			current, lookupErr := s.GetTurnByPostID(post.Id)
 			return lookupErr == nil && current != nil && current.ID != anchor.ID
 		}, 10*time.Second, 20*time.Millisecond, "follow-up stream for %s must finalize", post.Id)
+
+		// The follow-up turn exists before its request reaches the server, so
+		// wait for the request too or the next approval's request can overtake it.
+		approvals++
+		require.Eventually(t, func() bool {
+			return len(anthropic.requests()) >= approvals
+		}, 10*time.Second, 20*time.Millisecond, "follow-up request for %s must reach Anthropic", post.Id)
 	}
 
 	conv := userMessage(rootID, "@matty what is the status of MM-1?")

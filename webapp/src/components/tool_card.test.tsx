@@ -8,11 +8,6 @@ import {IntlProvider} from 'react-intl';
 import ToolCard from './tool_card';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     return {
         id: 'tool_1',
@@ -157,5 +152,15 @@ describe('ToolCard awaiting the requester', () => {
 
         expect(screen.getByText('Awaiting approval')).not.toBeNull();
         expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('success');
+    });
+});
+
+describe('ToolCard interrupted call', () => {
+    test('shows an interrupted call as an interrupted error, with no spinner or decision buttons', () => {
+        renderComponent(makeTool({status: ToolCallStatus.Error, interrupted: true}), {onApprove: jest.fn(), onReject: jest.fn(), approvalStage: 'done'});
+
+        expect(screen.getByTestId('llm-bot-tool-interrupted').textContent).toBe('Interrupted');
+        expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('error');
+        expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
     });
 });
