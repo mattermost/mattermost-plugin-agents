@@ -93,7 +93,7 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 		nil,
 	)
 
-	result, err := s.HandleSummarizeTranscription(userID, bot, post, &model.Channel{Id: "channel-id"}, sessionID)
+	result, err := s.HandleSummarizeTranscription(t.Context(), userID, bot, post, &model.Channel{Id: "channel-id"}, sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, createdPostID, result["postid"], "the caller's result must not be affected by the worker rewriting its own post")
 	assert.Equal(t, dmID, result["channelid"])

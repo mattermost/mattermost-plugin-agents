@@ -541,19 +541,18 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	}
 	ctx, releaseRun, err := c.claimResponsePost(ctx, wakePost, conv.ID)
 	if err != nil {
-		c.failResponsePlaceholder(wakePost, user.Locale)
+		c.failResponsePlaceholder(ctx, wakePost, user)
 		return err
 	}
 
 	if err = c.convService.AppendSyntheticUserTurn(conv.ID, conversation.SyntheticKindWake, mmtools.WakeUserMessage); err != nil {
 		releaseRun()
-		c.failResponsePlaceholder(wakePost, user.Locale)
+		c.failResponsePlaceholder(ctx, wakePost, user)
 		return err
 	}
 
-	if err = c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true, OnRunEnd: releaseRun}); err != nil {
+	if err = c.streamToolFollowUp(ctx, policy, wakePost, conv, followUpOptions{Unattended: true, OnRunEnd: releaseRun, FailureUser: user}); err != nil {
 		releaseRun()
-		c.failResponsePlaceholder(wakePost, user.Locale)
 		return err
 	}
 	return nil

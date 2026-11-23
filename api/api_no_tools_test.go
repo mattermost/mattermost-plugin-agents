@@ -64,7 +64,7 @@ func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, strin
 	return nil
 }
 
-func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string) error {
+func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string, _ func()) error {
 	s.newDMCalls++
 	s.dmPosts = append(s.dmPosts, post)
 	post.Id = "response-post-id"
@@ -91,6 +91,9 @@ func (s *noToolsStreamingService) FinishStreaming(string) {}
 type mockConvServiceStore struct {
 	conversations map[string]*store.Conversation
 	turns         map[string][]store.Turn
+
+	// createTurnErr, when set, decides whether a turn write fails.
+	createTurnErr func(*store.Turn) error
 }
 
 func newMockConvServiceStore() *mockConvServiceStore {
@@ -160,6 +163,11 @@ func (m *mockConvServiceStore) CreateTurn(turn *store.Turn) error {
 }
 
 func (m *mockConvServiceStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	if m.createTurnErr != nil {
+		if err := m.createTurnErr(turn); err != nil {
+			return err
+		}
+	}
 	turn.Sequence = len(m.turns[turn.ConversationID]) + 1
 	return m.CreateTurn(turn)
 }
@@ -188,8 +196,21 @@ func (m *mockConvServiceStore) CompareAndSwapTurnContent(id string, expected, co
 	return false, nil
 }
 
-func (m *mockConvServiceStore) CompareAndSwapTurnContentAndStatus(_ string, _ json.RawMessage, _ string, _ json.RawMessage, _ string) (bool, error) {
-	return true, nil
+func (m *mockConvServiceStore) CompareAndSwapTurnContentAndStatus(id string, expected json.RawMessage, expectedStatus string, content json.RawMessage, status string) (bool, error) {
+	for convID, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID != id {
+				continue
+			}
+			if !bytes.Equal(turns[i].Content, expected) || turns[i].Status != expectedStatus {
+				return false, nil
+			}
+			m.turns[convID][i].Content = content
+			m.turns[convID][i].Status = status
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *mockConvServiceStore) TouchStreamingTurn(_ string) (bool, error) {

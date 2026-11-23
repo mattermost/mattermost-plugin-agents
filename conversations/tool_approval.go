@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -214,7 +215,8 @@ func (d *toolDecision) activate(c *Conversations) error {
 // toolAnswers carries the user's answers for accepted user-interaction tool
 // calls (e.g. AskUserQuestion), keyed by tool_use block ID. Those blocks are
 // not executed; the validated answer becomes the tool result.
-func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) error {
+func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) (err error) {
+	callerCtx := ctx
 	d, err := c.beginToolDecision(ctx, "handle tool call", "HandleToolCall", userID, post, channel, len(acceptedToolIDs))
 	if err != nil {
 		return err
@@ -297,6 +299,20 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	}
 	run := c.startToolRun(ctx, pendingTurn.ID, post)
 	defer c.endToolRun(run)
+
+	// The tools run from here on and the claim cannot be retried (a repeat
+	// click is stale), so a failure before the follow-up takes over ends the
+	// run for the requester instead of leaving the post silent. The follow-up
+	// reports its own failures.
+	followUpAttempted := false
+	defer func() {
+		// A run that stream recovery declared lost was already ended for the
+		// requester by the sweep.
+		recoveredElsewhere := errors.Is(err, ErrToolRunInterrupted) && !run.shuttingDown()
+		if err != nil && !followUpAttempted && !recoveredElsewhere {
+			c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), ctx, post, policy.user, nil)
+		}
+	}()
 
 	// Execute approved tools and build results. Blocks resolved in a prior
 	// call keep their status and are not part of this decision, so they enter
@@ -516,9 +532,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// rejected, a user-interaction answer, or otherwise terminal),
 	// HandleToolResult will never fire, so stream the follow-up now.
 	if !policy.isDM && needsShareDecision {
+		c.notifyRunEnd(ctx, post, userID, notifications.StreamEnd{
+			Outcome:            notifications.OutcomeCompleted,
+			PausedForRequester: true,
+		})
 		return nil
 	}
 
+	followUpAttempted = true
 	err = c.streamToolFollowUp(ctx, policy, post, d.conv, followUpOptions{UserRejected: userRejected, ApprovalContext: llmContext, OnRunEnd: d.release, Stream: followUp})
 	followUpStarted = err == nil
 	return err
@@ -782,6 +803,25 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	return err
 }
 
+// notifyFailedFollowUp ends a tool-approval run that failed before any stream
+// took it over. With failureUser the post's text is replaced by an error
+// message (a wake-up placeholder has no content); otherwise the post keeps its
+// answer. runCtx is the run's context, whose cancellation marks the end as a
+// cancel instead of an error.
+func (c *Conversations) notifyFailedFollowUp(notifyCtx, runCtx context.Context, post *model.Post, requester, failureUser *model.User) {
+	if failureUser != nil {
+		c.failResponsePlaceholder(notifyCtx, post, failureUser)
+		return
+	}
+	outcome := telemetry.StreamOutcomeErrored
+	if runCtx.Err() != nil {
+		outcome = telemetry.StreamOutcomeCancelled
+	}
+	c.notifyRunEnd(notifyCtx, post, requester.Id, notifications.StreamEnd{
+		Outcome: streaming.NotificationOutcome(outcome, streaming.StoppedByUser(runCtx)),
+	})
+}
+
 // followUpOptions are the per-caller knobs of streamToolFollowUp.
 type followUpOptions struct {
 	// Unattended marks a scheduler resume: no interactive user is present.
@@ -796,6 +836,11 @@ type followUpOptions struct {
 	// Stream is the post's streaming context when the caller already holds
 	// it; streamToolFollowUp acquires it otherwise.
 	Stream *followUpStream
+	// FailureUser, when set, has the post's text replaced with an error
+	// message if the follow-up fails before streaming. Callers whose post has
+	// no content yet (a wake-up placeholder) set it; the others keep the
+	// post's existing answer.
+	FailureUser *model.User
 }
 
 // followUpStream is a held streaming context for a post. The holder releases
@@ -833,15 +878,35 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	opts followUpOptions,
-) error {
+) (err error) {
+	callerCtx := ctx
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
 
 	// Stop must reach the tool loop, not only the stream that follows it.
 	followUp := opts.Stream
+	// A follow-up that fails before streaming ends the run here, so every
+	// entry point (approve, share decision, wake-up) notifies the requester
+	// through this one place. The streaming service notifies once it has the
+	// stream. Failing to acquire the stream means another run owns the post,
+	// which notifies for itself, unless the post is a placeholder this run
+	// created (FailureUser).
+	defer func() {
+		if err == nil || (followUp != nil && followUp.handedOff) {
+			return
+		}
+		if followUp == nil && opts.FailureUser == nil {
+			return
+		}
+		runCtx := ctx
+		if followUp != nil {
+			runCtx = followUp.ctx
+		}
+		c.notifyFailedFollowUp(telemetry.DetachContext(callerCtx), runCtx, post, policy.user, opts.FailureUser)
+	}()
 	if followUp == nil {
-		var err error
 		if followUp, err = c.acquireFollowUpStream(ctx, post.Id); err != nil {
+			followUp = nil
 			return err
 		}
 		defer followUp.release()

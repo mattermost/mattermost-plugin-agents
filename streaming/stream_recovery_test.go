@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -510,6 +511,16 @@ type fakeRecoveryStore struct {
 	stale   []store.Turn
 	claimed map[string]bool
 	listErr error
+	// requesterID owns every conversation; convErr fails the lookup.
+	requesterID string
+	convErr     error
+}
+
+func (f *fakeRecoveryStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
+	if f.convErr != nil {
+		return nil, f.convErr
+	}
+	return &store.Conversation{ID: id, UserID: f.requesterID}, nil
 }
 
 func (f *fakeRecoveryStore) GetStaleStreamingTurns(_ int64, limit uint64) ([]store.Turn, error) {
@@ -587,7 +598,7 @@ func TestRecoverAbandonedStreams(t *testing.T) {
 			}
 			client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": {Id: "post-1", ChannelId: "ch", Message: tc.postMessage}}}
 
-			recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, 10)
+			recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, nil, 10)
 			require.NoError(t, err)
 			require.Len(t, recovered, tc.wantRecovered)
 
@@ -610,7 +621,7 @@ func TestRecoverAbandonedStreams(t *testing.T) {
 		}
 		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": {Id: "post-1"}}, updateErr: errors.New("api down")}
 
-		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, 10)
+		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, nil, 10)
 		require.NoError(t, err)
 		require.Empty(t, recovered)
 		require.False(t, rs.claimed["turn-1"], "the turn must stay retryable")
@@ -625,7 +636,7 @@ func TestRecoverAbandonedStreams(t *testing.T) {
 			client.posts[id] = &model.Post{Id: id}
 		}
 
-		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, 2)
+		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, nil, 2)
 		require.NoError(t, err)
 		require.Len(t, recovered, 5)
 	})
@@ -640,7 +651,7 @@ func TestRecoverAbandonedStreams(t *testing.T) {
 		rs.stale = append(rs.stale, store.Turn{ID: "turn-live", PostID: strp("post-live"), Role: "assistant", Content: textContent("x")})
 		client.posts["post-live"] = &model.Post{Id: "post-live"}
 
-		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, 2)
+		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, nil, 2)
 		require.NoError(t, err)
 		require.Len(t, recovered, 1)
 		assert.Equal(t, "post-live", recovered[0].PostID)
@@ -651,7 +662,7 @@ func TestRecoverAbandonedStreams(t *testing.T) {
 
 	t.Run("list error is returned", func(t *testing.T) {
 		rs := &fakeRecoveryStore{listErr: errors.New("db down"), claimed: map[string]bool{}}
-		_, err := RecoverAbandonedStreams(context.Background(), rs, &fakeRecoveryClient{posts: map[string]*model.Post{}}, 10)
+		_, err := RecoverAbandonedStreams(context.Background(), rs, &fakeRecoveryClient{posts: map[string]*model.Post{}}, nil, 10)
 		require.Error(t, err)
 	})
 }
@@ -674,4 +685,82 @@ func TestStopStreamingTimeoutKeepsPostReserved(t *testing.T) {
 	nextCtx, err := service.GetStreamingContext(context.Background(), postID)
 	require.NoError(t, err)
 	require.NoError(t, nextCtx.Err())
+}
+
+type recoveryNotifier struct {
+	ends []notifications.StreamEnd
+}
+
+func (r *recoveryNotifier) MarkDeferred(*model.Post) {}
+
+func (r *recoveryNotifier) Notify(_ context.Context, end notifications.StreamEnd) {
+	r.ends = append(r.ends, end)
+}
+
+func TestRecoverAbandonedStreamsNotifiesTheRequester(t *testing.T) {
+	post := func() *model.Post {
+		p := &model.Post{Id: "post-1", ChannelId: "ch", Message: "Hel"}
+		p.AddProp(model.PostPropsDeferredNotification, true)
+		return p
+	}
+	newStore := func(convErr error) *fakeRecoveryStore {
+		postID := "post-1"
+		return &fakeRecoveryStore{
+			stale:       []store.Turn{{ID: "turn-1", ConversationID: "conv-1", PostID: &postID, Role: "assistant", Status: store.TurnStatusStreaming}},
+			claimed:     map[string]bool{},
+			requesterID: "requester-id",
+			convErr:     convErr,
+		}
+	}
+
+	t.Run("the repaired post's requester is notified once", func(t *testing.T) {
+		notifier := &recoveryNotifier{}
+		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": post()}}
+
+		recovered, err := RecoverAbandonedStreams(context.Background(), newStore(nil), client, notifier, 10)
+		require.NoError(t, err)
+		require.Len(t, recovered, 1)
+		require.Len(t, notifier.ends, 1)
+		assert.Equal(t, notifications.StreamEnd{
+			PostID:       "post-1",
+			ChannelID:    "ch",
+			RequesterID:  "requester-id",
+			Outcome:      notifications.OutcomeCancelled,
+			PostDeferred: true,
+		}, notifier.ends[0])
+		assert.Equal(t, notifications.DeliveryRequesterOnly, notifications.Decide(notifier.ends[0]))
+	})
+
+	t.Run("a conversation that no longer exists still has its post repaired, without a notification", func(t *testing.T) {
+		notifier := &recoveryNotifier{}
+		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": post()}}
+
+		recovered, err := RecoverAbandonedStreams(context.Background(), newStore(store.ErrConversationNotFound), client, notifier, 10)
+		require.NoError(t, err)
+		require.Len(t, recovered, 1)
+		assert.Equal(t, InterruptedReasonLost, client.posts["post-1"].GetProp(InterruptedProp))
+		assert.Empty(t, notifier.ends)
+	})
+
+	t.Run("a requester lookup failure keeps the turn retryable and the post untouched", func(t *testing.T) {
+		notifier := &recoveryNotifier{}
+		rs := newStore(errors.New("db down"))
+		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": post()}}
+
+		recovered, err := RecoverAbandonedStreams(context.Background(), rs, client, notifier, 10)
+		require.NoError(t, err)
+		assert.Empty(t, recovered)
+		assert.Empty(t, notifier.ends)
+		assert.Empty(t, client.updated)
+		assert.False(t, rs.claimed["turn-1"], "the claim is released for a later sweep")
+	})
+
+	t.Run("a post that cannot be updated notifies nobody", func(t *testing.T) {
+		notifier := &recoveryNotifier{}
+		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": post()}, updateErr: errors.New("boom")}
+
+		_, err := RecoverAbandonedStreams(context.Background(), newStore(nil), client, notifier, 2)
+		require.NoError(t, err)
+		assert.Empty(t, notifier.ends)
+	})
 }

@@ -38,6 +38,7 @@ type Client interface {
 	GetPostsBefore(channelID, postID string, page, perPage int) (*model.PostList, error)
 	CreatePost(post *model.Post) error
 	UpdatePost(post *model.Post) error
+	DeliverPostNotifications(postID string, options *model.DeliverPostNotificationsOptions) error
 	DM(senderID, receiverID string, post *model.Post) error
 	GetTeam(teamID string) (*model.Team, error)
 	GetChannel(channelID string) (*model.Channel, error)

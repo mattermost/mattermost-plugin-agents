@@ -224,7 +224,7 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 	_, err = db.Exec(`UPDATE LLM_Turns SET UpdatedAt = UpdatedAt - $1 WHERE ID = $2`, 2*streaming.StaleStreamThreshold.Milliseconds(), anchorID)
 	require.NoError(t, err)
 
-	recovered, err := streaming.RecoverAbandonedStreams(ctx, s, sweepClient{mmClient}, streaming.DefaultRecoveryBatchSize)
+	recovered, err := streaming.RecoverAbandonedStreams(ctx, s, sweepClient{mmClient}, nil, streaming.DefaultRecoveryBatchSize)
 	require.NoError(t, err)
 	require.Len(t, recovered, 1)
 	assert.Equal(t, botPostID, recovered[0].PostID)

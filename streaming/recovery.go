@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -21,6 +22,9 @@ type RecoveryStore interface {
 	GetStaleStreamingTurns(staleAfterMillis int64, limit uint64) ([]store.Turn, error)
 	ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error)
 	ReleaseStreamingTurnClaim(id string) error
+	// GetConversationIncludingArchived finds who requested the run, so they can
+	// be notified; archiving a conversation must not block repairing its post.
+	GetConversationIncludingArchived(id string) (*store.Conversation, error)
 }
 
 // ErrPostNotFound is returned by RecoveryClient.GetPost when the post no
@@ -51,7 +55,11 @@ const DefaultRecoveryBatchSize = 200
 // marks its post as interrupted with the last flushed partial content.
 // Concurrent sweeps on several nodes are safe: only the node whose claim
 // update wins repairs a given post.
-func RecoverAbandonedStreams(ctx context.Context, rs RecoveryStore, client RecoveryClient, limit uint64) ([]RecoveredStream, error) {
+//
+// The dead run never notified its requester, and a post it created is still
+// deferred, so the node that repairs the post ends the run for the requester
+// through notifier (nil skips this, for servers without notifications).
+func RecoverAbandonedStreams(ctx context.Context, rs RecoveryStore, client RecoveryClient, notifier notifications.Notifier, limit uint64) ([]RecoveredStream, error) {
 	_, span := telemetry.Tracer().Start(ctx, "recover abandoned streams")
 	defer span.End()
 
@@ -69,7 +77,7 @@ func RecoverAbandonedStreams(ctx context.Context, rs RecoveryStore, client Recov
 
 		resolvedInBatch := 0
 		for _, turn := range turns {
-			r, outcome := recoverTurn(rs, client, turn, staleMillis)
+			r, outcome := recoverTurn(ctx, rs, client, notifier, turn, staleMillis)
 			if outcome == recoveryRepaired {
 				recovered = append(recovered, r)
 			}
@@ -102,7 +110,7 @@ const (
 
 // recoverTurn claims one stale turn and marks its post interrupted. When the
 // post cannot be updated the claim is released so a later sweep retries it.
-func recoverTurn(rs RecoveryStore, client RecoveryClient, turn store.Turn, staleMillis int64) (RecoveredStream, recoveryOutcome) {
+func recoverTurn(ctx context.Context, rs RecoveryStore, client RecoveryClient, notifier notifications.Notifier, turn store.Turn, staleMillis int64) (RecoveredStream, recoveryOutcome) {
 	claimed, claimErr := rs.ClaimStaleStreamingTurn(turn.ID, staleMillis)
 	if claimErr != nil {
 		client.LogWarn("Failed to claim abandoned streaming turn", "error", claimErr, "turn_id", turn.ID)
@@ -129,14 +137,39 @@ func recoverTurn(rs RecoveryStore, client RecoveryClient, turn store.Turn, stale
 		release()
 		return RecoveredStream{}, recoveryRetry
 	}
+	var requesterID string
+	if notifier != nil {
+		conv, convErr := rs.GetConversationIncludingArchived(turn.ConversationID)
+		switch {
+		case errors.Is(convErr, store.ErrConversationNotFound):
+			// Nobody left to notify; the post is still repaired.
+			notifier = nil
+		case convErr != nil:
+			client.LogWarn("Failed to load conversation for abandoned stream", "error", convErr, "turn_id", turn.ID)
+			release()
+			return RecoveredStream{}, recoveryRetry
+		default:
+			requesterID = conv.UserID
+		}
+	}
 	if partial := PartialTextFromTurn(turn); len(partial) > len(post.Message) {
 		post.Message = partial
 	}
+	deferred := post.HasDeferredNotification()
 	MarkInterrupted(post, InterruptedReasonLost, model.GetMillis())
 	if updErr := client.UpdatePost(post); updErr != nil {
 		client.LogWarn("Failed to mark abandoned stream post interrupted", "error", updErr, "post_id", post.Id)
 		release()
 		return RecoveredStream{}, recoveryRetry
+	}
+	if notifier != nil {
+		notifier.Notify(telemetry.DetachContext(ctx), notifications.StreamEnd{
+			PostID:       post.Id,
+			ChannelID:    post.ChannelId,
+			RequesterID:  requesterID,
+			Outcome:      notifications.OutcomeCancelled,
+			PostDeferred: deferred,
+		})
 	}
 	return RecoveredStream{PostID: post.Id, ChannelID: post.ChannelId, TurnID: turn.ID}, recoveryRepaired
 }

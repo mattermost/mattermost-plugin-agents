@@ -23,12 +23,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -300,6 +302,43 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	require.Len(t, env.lm.requests, 1)
 	// Nobody is present to answer user-interaction tools on a wake.
 	require.False(t, env.lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
+}
+
+type wakeRunEnds struct {
+	mu   sync.Mutex
+	ends []notifications.StreamEnd
+}
+
+func (r *wakeRunEnds) MarkDeferred(*model.Post) {}
+
+func (r *wakeRunEnds) Notify(_ context.Context, end notifications.StreamEnd) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ends = append(r.ends, end)
+}
+
+func TestResumeConversationFailingToTakeTheStreamEndsTheWakePost(t *testing.T) {
+	env := newWakeEnv(t, nil)
+	env.seedTurn(t, "user-1", "user", "please watch the job", nil, 1, 0)
+	env.streaming.contextErr = streaming.ErrAlreadyStreamingToPost
+	notifier := &wakeRunEnds{}
+	env.c.SetNotifier(notifier)
+
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: channel.Id, RootId: "root-post-id"}
+	env.expectLiveWake(post, channel, wakeUserID)
+
+	job := newWakeJob(post.Id, env.conv.ID, wakeUserID, wakeScheduledAt)
+	env.setMarker(t, post, job)
+	require.ErrorIs(t, env.c.ResumeConversation(context.Background(), job), streaming.ErrAlreadyStreamingToPost)
+
+	require.NotNil(t, env.wakePost)
+	assert.NotEmpty(t, env.wakePost.Message, "the empty wake placeholder is replaced with an explanation")
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	require.Len(t, notifier.ends, 1)
+	assert.Equal(t, env.wakePost.Id, notifier.ends[0].PostID)
+	assert.Equal(t, notifications.OutcomeErrored, notifier.ends[0].Outcome)
 }
 
 func TestResumeConversationInChannelOnlySeesPostsVettedBeforeSleeping(t *testing.T) {
