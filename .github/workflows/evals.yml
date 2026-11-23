@@ -10,6 +10,10 @@ on:
         description: Runs per eval, combined by majority vote in the report.
         type: string
         default: '1'
+      packages:
+        description: Space-separated eval packages to run; empty runs them all.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -47,11 +51,16 @@ jobs:
         env:
           LLM_PROVIDER: ${{ matrix.provider.name }}
           EVAL_TEST_PARALLEL: ${{ matrix.provider.parallel }}
+          EVAL_PACKAGES: ${{ inputs.packages }}
+          # A subset of packages must not mark its results complete.
+          EVALS_PARTIAL: ${{ inputs.packages != '' && '1' || '' }}
           # Runs per eval, combined by majority vote in the report.
           GOEVALS: ${{ inputs.runs }}
           # OpenAI
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          # Flex processing costs half as much; evals tolerate its latency.
+          OPENAI_SERVICE_TIER: ${{ vars.OPENAI_SERVICE_TIER || 'flex' }}
           # Anthropic
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
