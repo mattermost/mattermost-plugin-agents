@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -148,14 +147,6 @@ func NewPluginMCPHandlers(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create default logger: %w", err)
 		}
-	}
-
-	if channelArtifactsService == nil {
-		base := internalURL
-		if base == "" {
-			base = siteURL
-		}
-		channelArtifactsService = tools.NewHTTPChannelArtifactsService(strings.TrimRight(base, "/") + "/plugins/mattermost-ai")
 	}
 
 	h := &PluginMCPHandlers{
