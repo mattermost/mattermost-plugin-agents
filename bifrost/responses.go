@@ -304,6 +304,9 @@ func (b *LLM) responsesReasoningFor(name schemas.ModelProvider, cfg llm.Language
 	// and keeps reasoning_effort, so it gets the chat path's reasoning below.
 	if (provider == schemas.OpenAI || provider == schemas.Azure) && (entry == nil || !entry.chatOnly) {
 		if b.thinkingOff(cfg) {
+			if params, ok := openAIThinkingOff(cfg.Model); ok {
+				return &schemas.ResponsesParametersReasoning{Effort: params.effort}
+			}
 			return nil
 		}
 		// Enable reasoning summaries so the provider returns reasoning text in

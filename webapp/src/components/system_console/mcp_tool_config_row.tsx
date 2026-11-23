@@ -144,7 +144,7 @@ const MCPToolConfigRow = ({
                 placeholder={intl.formatMessage({defaultMessage: 'Describe when the agent should use this tool...'})}
             />
             <OverrideHelp>
-                {intl.formatMessage({defaultMessage: 'Optional. Used only by dynamic tool loading search to help the agent find this tool. It does not change the tool schema sent after loading.'})}
+                {intl.formatMessage({defaultMessage: 'Optional. Used only by dynamic tool search to find this tool; does not change its schema.'})}
             </OverrideHelp>
         </OverrideField>
     );

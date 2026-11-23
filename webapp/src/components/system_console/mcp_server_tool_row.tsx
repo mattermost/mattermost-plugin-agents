@@ -344,7 +344,7 @@ const MCPServerToolRow = ({
                 <RowNotice
                     type='info'
                     title={<FormattedMessage defaultMessage='OAuth Required'/>}
-                    description={<FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>}
+                    description={<FormattedMessage defaultMessage='Sign in to fetch tools and configure policies. Connects only your account; each user signs in separately.'/>}
                     primaryButtonLabel={remoteMcpLicensed ? <FormattedMessage defaultMessage='Connect Account'/> : null}
                     onPrimaryAction={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
                 />
@@ -363,7 +363,7 @@ const MCPServerToolRow = ({
                             values={{count: unreviewedCount}}
                         />
                     )}
-                    description={<FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>}
+                    description={<FormattedMessage defaultMessage='Suggested policies apply once you mark tools reviewed or pick a policy and save. Until then, they use their default (usually Ask Every Time).'/>}
                 />
             )}
         </>

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -525,11 +526,15 @@ func (s *ToolStore) ResolveToolCall(ctx context.Context, name string, info ToolC
 	return result, err
 }
 
+// GetTools returns the tools sorted by name. Requests list tools in this
+// order, and the order must not change between requests: tools lead the
+// prompt prefix, so any change defeats provider prompt caching.
 func (s *ToolStore) GetTools() []Tool {
 	result := make([]Tool, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, tool)
 	}
+	slices.SortFunc(result, func(a, b Tool) int { return strings.Compare(a.Name, b.Name) })
 	return result
 }
 

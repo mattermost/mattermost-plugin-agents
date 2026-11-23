@@ -52,11 +52,6 @@ jest.mock('../access_control/console_policy_section', () => ({
     default: () => null,
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 /* eslint-disable import/first, import/order */
 import {IntlProvider} from 'react-intl';
 

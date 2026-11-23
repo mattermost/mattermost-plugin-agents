@@ -76,13 +76,13 @@ function MCPServerAccordion<TTool extends {name: string; readOnlyHint?: boolean}
             key: 'read' as const,
             tools: readOnlyTools,
             title: intl.formatMessage({defaultMessage: 'Read-only tools'}),
-            description: intl.formatMessage({defaultMessage: 'The server reports that these tools only read data.'}),
+            description: intl.formatMessage({defaultMessage: 'Reported by the server as read-only.'}),
         },
         {
             key: 'write' as const,
             tools: writeTools,
             title: intl.formatMessage({defaultMessage: 'Write tools'}),
-            description: intl.formatMessage({defaultMessage: 'Tools the server does not mark as read-only. They may create, change, or delete data.'}),
+            description: intl.formatMessage({defaultMessage: 'Not marked read-only; may create, change, or delete data.'}),
         },
     ].filter((group) => group.tools.length > 0) : [];
 
