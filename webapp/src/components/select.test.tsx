@@ -4,7 +4,7 @@
 import React, {useState} from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
-import {SelectChannel, SelectUser} from './select';
+import {SelectChannel, SelectUser, SelectUsers} from './select';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -181,5 +181,50 @@ describe('SelectChannel', () => {
         fireEvent.click(await screen.findByRole('option', {name: /Random/}));
 
         expect(onChangeChannelIDs).toHaveBeenLastCalledWith(['c0', 'c2']);
+    });
+});
+
+describe('SelectUsers', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        client.getAutocompleteAllUsers.mockResolvedValue({users: [user('u2', 'bob')]});
+    });
+
+    it('keeps the stored IDs it could not load when someone is added', async () => {
+        client.getProfilesByIds.mockRejectedValue(new Error('500'));
+        const onChangeUserIDs = jest.fn();
+        render(
+            <SelectUsers
+                userIDs={['u1', 'u9']}
+                onChangeUserIDs={onChangeUserIDs}
+                placeholder='Search for people'
+            />,
+        );
+
+        await waitFor(() => expect(client.getProfilesByIds).toHaveBeenCalled());
+        fireEvent.focus(screen.getByRole('combobox'));
+        fireEvent.click(await screen.findByRole('option', {name: /bob/}));
+
+        expect(onChangeUserIDs).toHaveBeenLastCalledWith(['u2', 'u1', 'u9']);
+    });
+
+    it('drops a loaded person the administrator removes', async () => {
+        client.getProfilesByIds.mockResolvedValue([user('u1', 'alice')]);
+        const onChangeUserIDs = jest.fn();
+        render(
+            <SelectUsers
+                userIDs={['u1']}
+                onChangeUserIDs={onChangeUserIDs}
+                placeholder='Search for people'
+            />,
+        );
+
+        await screen.findByText('alice');
+        const chip = screen.getByRole('button', {name: /alice/});
+        chip.focus();
+        fireEvent.keyDown(chip, {key: 'Delete', code: 'Delete', keyCode: 46});
+        fireEvent.keyUp(chip, {key: 'Delete', code: 'Delete', keyCode: 46});
+
+        expect(onChangeUserIDs).toHaveBeenLastCalledWith([]);
     });
 });

@@ -44,13 +44,6 @@ jest.mock('@/mm_webapp', () => ({
     useWebSocketClient: () => null,
 }));
 
-// react-bootstrap is a webpack external provided by the host at runtime; the
-// picker import chain reaches it but never renders it here.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: () => null,
-    Tooltip: () => null,
-}), {virtual: true});
-
 // @/client is the real HTTP boundary.
 jest.mock('@/client', () => ({
     getAIBots: jest.fn(),

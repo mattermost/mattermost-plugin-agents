@@ -1,6 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import type React from 'react';
 import type {UnknownAction} from 'redux';
 
 export interface PluginRegistry {
@@ -12,9 +13,6 @@ export interface PluginRegistry {
 // Global type definitions
 declare global {
     interface Window {
-        PostUtils: {
-            formatText: (text: string, options?: unknown) => string;
-        };
         WebappUtils?: {
             sendWebSocketMessage: (msg: {
                 action: string;
@@ -41,6 +39,10 @@ declare global {
             popouts?: {
                 isPopoutWindow?: () => boolean;
             };
+        };
+        PostUtils?: {
+            formatText: (text: string, options?: unknown) => string;
+            messageHtmlToComponent: (html: string, options?: unknown) => React.ReactNode;
         };
     }
 }

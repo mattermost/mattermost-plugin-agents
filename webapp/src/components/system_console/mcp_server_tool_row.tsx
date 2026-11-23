@@ -22,6 +22,7 @@ import {SelectField} from './item';
 import {MCPServerConfig, MCPServerInfo, MCPToolConfig, MCPToolInfo} from './mcp_types';
 import MCPToolConfigRow, {useToolPolicyOptions} from './mcp_tool_config_row';
 import {reviewToolConfigs} from './mcp_tool_review';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type MCPServerToolRowProps = {
     server: MCPServerInfo;
@@ -34,6 +35,7 @@ type MCPServerToolRowProps = {
 };
 
 const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing = false}: MCPServerToolRowProps) => {
+    const readOnly = useSettingsReadOnly();
     const [expanded, setExpanded] = useState(reviewing);
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
@@ -130,7 +132,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
         return policies.size === 1 ? [...policies][0] : '';
     };
 
-    const bulkDisabled = !serverConfig || !serverEnabled || !approvalPoliciesLicensed;
+    const bulkDisabled = readOnly || !serverConfig || !serverEnabled || !approvalPoliciesLicensed;
 
     const renderBulkPolicyControl = (tools: MCPToolInfo[], ariaLabel: string) => (
         <BulkPolicySelect>
@@ -175,14 +177,14 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
             key: 'read',
             tools: readOnlyTools,
             title: intl.formatMessage({defaultMessage: 'Read-only tools'}),
-            description: intl.formatMessage({defaultMessage: 'The server reports that these tools only read data.'}),
+            description: intl.formatMessage({defaultMessage: 'Reported by the server as read-only.'}),
             ariaLabel: intl.formatMessage({defaultMessage: 'Approval policy for all read-only tools on {serverName}'}, {serverName: server.name}),
         },
         {
             key: 'write',
             tools: writeTools,
             title: intl.formatMessage({defaultMessage: 'Write tools'}),
-            description: intl.formatMessage({defaultMessage: 'Tools the server does not mark as read-only. They may create, change, or delete data.'}),
+            description: intl.formatMessage({defaultMessage: 'Not marked read-only; may create, change, or delete data.'}),
             ariaLabel: intl.formatMessage({defaultMessage: 'Approval policy for all write tools on {serverName}'}, {serverName: server.name}),
         },
     ].filter((group) => group.tools.length > 0) : [];
@@ -192,7 +194,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
             emphasis='secondary'
             size='small'
             onClick={handleMarkReviewed}
-            disabled={!serverEnabled || !expanded}
+            disabled={readOnly || !serverEnabled || !expanded}
             aria-label={intl.formatMessage({defaultMessage: 'Mark tools on {serverName} as reviewed'}, {serverName: server.name})}
         >
             <FormattedMessage defaultMessage='Mark tools as reviewed'/>
@@ -273,7 +275,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                                 }
                                 handleServerToggle(enabled);
                             }}
-                            disabled={enableRemoteBlocked && !serverEnabled}
+                            disabled={readOnly || (enableRemoteBlocked && !serverEnabled)}
                             size='medium'
                             ariaLabel={intl.formatMessage(
                                 {defaultMessage: 'Enable {serverName}'},
@@ -297,7 +299,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                         <RowNotice
                             type='info'
                             title={<FormattedMessage defaultMessage='OAuth Required'/>}
-                            description={<FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>}
+                            description={<FormattedMessage defaultMessage='Sign in to fetch tools and configure policies. Connects only your account; each user signs in separately.'/>}
                             primaryButtonLabel={remoteMcpLicensed ? <FormattedMessage defaultMessage='Connect Account'/> : null}
                             onPrimaryAction={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
                         />
@@ -318,7 +320,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                                             values={{count: unreviewedCount}}
                                         />
                                     )}
-                                    description={<FormattedMessage defaultMessage='Tools marked Not reviewed show the policy suggested from what the server reports about them. It applies once you mark the tools as reviewed, or choose a policy, and save. Until then they keep their default policy, usually Ask Every Time.'/>}
+                                    description={<FormattedMessage defaultMessage='Suggested policies apply once you mark tools reviewed or pick a policy and save. Until then, they use their default (usually Ask Every Time).'/>}
                                 />
                             )}
                             <BulkRow>
@@ -327,7 +329,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange, reviewing
                                         <FormattedMessage defaultMessage='All tools'/>
                                     </BulkTitle>
                                     <BulkDescription>
-                                        <FormattedMessage defaultMessage='Set the approval policy for every tool on this server.'/>
+                                        <FormattedMessage defaultMessage='Apply one policy to every tool on this server.'/>
                                     </BulkDescription>
                                 </BulkLabel>
                                 {renderBulkPolicyControl(

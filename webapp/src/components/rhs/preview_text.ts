@@ -11,7 +11,7 @@ export function previewText(source: string): string {
         return '';
     }
 
-    const html = window.PostUtils.formatText(source, {singleline: true});
+    const html = window.PostUtils!.formatText(source, {singleline: true});
     const doc = new DOMParser().parseFromString(html.replace(BLOCK_END, '$& '), 'text/html');
 
     // The host renders fenced code as an empty element that carries the code in an attribute.

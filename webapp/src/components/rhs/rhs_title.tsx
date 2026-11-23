@@ -50,6 +50,11 @@ const RHSTitle = () => {
     }, [activeBot, setActiveBot, dispatch]);
 
     const backLabel = intl.formatMessage({defaultMessage: 'Back to chat history'});
+
+    // Back and the chat menu's "All agent chats" open the same history.
+    const openChatHistory = useCallback(() => {
+        dispatch(showRHSList('threads'));
+    }, [dispatch]);
     const back = onHistory ? null : (
         <WithTooltip title={backLabel}>
             <TooltipTrigger>
@@ -59,7 +64,7 @@ const RHSTitle = () => {
                     icon={<Icon glyph={<ArrowLeftIcon/>}/>}
                     aria-label={backLabel}
                     data-testid='chat-history'
-                    onClick={() => dispatch(showRHSList('threads'))}
+                    onClick={openChatHistory}
                 />
             </TooltipTrigger>
         </WithTooltip>
@@ -107,6 +112,7 @@ const RHSTitle = () => {
             onSelectChat={(rootId) => dispatch(selectPost(rootId))}
             onNewChat={() => newChatWith(titleBot)}
             onViewAll={toAll}
+            onShowAllChats={openChatHistory}
         />
     );
 };

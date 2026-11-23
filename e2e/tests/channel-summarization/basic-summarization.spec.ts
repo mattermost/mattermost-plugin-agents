@@ -74,6 +74,7 @@ test.describe('Channel Summarization - Basic Functionality', () => {
 
         // Navigate to town-square channel
         await page.goto(mattermost.url() + '/test/channels/town-square');
+        // eslint-disable-next-line e2e/no-arbitrary-wait -- legacy wait; replace with an observable condition when touching this spec
         await page.waitForLoadState('networkidle');
 
         // Open RHS

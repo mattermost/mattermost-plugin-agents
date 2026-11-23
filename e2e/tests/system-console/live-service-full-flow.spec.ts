@@ -199,7 +199,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
         const adminToken = adminClient.getToken();
 
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'services');
 
         await systemConsole.clickAddService();
 
@@ -229,15 +229,11 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
         }
 
         await systemConsole.clickSave();
-        await page.reload();
-        await page.waitForLoadState('domcontentloaded');
-        await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.navigateToAgentsSettings(mattermost.url(), 'services');
 
         await expect(page.getByText(serviceName).first()).toBeVisible();
         const reloadedServiceCard = page.locator('[class*="ServiceContainer"]').filter({hasText: serviceName}).first();
         await expect(reloadedServiceCard).toContainText(selectedServiceModel);
-
-        await systemConsole.waitForBotsPanel();
 
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`);
         await page.waitForLoadState('domcontentloaded');

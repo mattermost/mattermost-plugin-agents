@@ -69,6 +69,10 @@ const AsyncMultiPicker = (props: AsyncMultiPickerProps) => {
         <Combobox
             multiple={true}
             filter={false}
+
+            // Compass Combobox no longer opens from focus alone. These pickers already search on an
+            // empty term, and focusing the field is how a result is chosen before any typing.
+            openOnFocus={true}
             value={props.selected.map((option) => option.value)}
             selectedOptions={props.selected}
             options={results}
@@ -169,6 +173,65 @@ export const SelectUser = (props: SelectUserProps) => {
             search={search}
             onChange={handleChange}
             placeholder={intl.formatMessage({defaultMessage: 'Search for people or teams'})}
+            disabled={props.disabled}
+        />
+    );
+};
+
+type SelectUsersProps = {
+    userIDs: string[];
+    onChangeUserIDs: (userIds: string[]) => void;
+
+    // Also the picker's accessible name, so it must tell pickers on one page apart.
+    placeholder: string;
+    disabled?: boolean;
+};
+
+// SelectUsers picks people only, no teams or bots.
+export const SelectUsers = (props: SelectUsersProps) => {
+    const [selected, setSelected] = useState<ComboboxOption[]>([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadSelected = async () => {
+            try {
+                const users = await getProfilesByIds(props.userIDs);
+                if (!cancelled) {
+                    setSelected(users.map(userOption));
+                }
+            } catch {
+                // Leave the selection as it was; the IDs are unchanged until the picker changes them.
+            }
+        };
+
+        loadSelected();
+        return () => {
+            cancelled = true;
+        };
+    }, [props.userIDs]);
+
+    const search = async (term: string) => {
+        const users = await getAutocompleteAllUsers(term);
+        return users.users.filter((user: UserProfile) => !user.is_bot).map(userOption);
+    };
+
+    const handleChange = (options: ComboboxOption[]) => {
+        const pickedIDs = options.map((option) => option.value);
+        const shownIDs = selected.map((option) => option.value);
+
+        // IDs without a loaded profile cannot be shown or removed here, so keep them.
+        const unloadedIDs = props.userIDs.filter((id) => !shownIDs.includes(id) && !pickedIDs.includes(id));
+
+        setSelected(options);
+        props.onChangeUserIDs([...pickedIDs, ...unloadedIDs]);
+    };
+
+    return (
+        <AsyncMultiPicker
+            selected={selected}
+            search={search}
+            onChange={handleChange}
+            placeholder={props.placeholder}
             disabled={props.disabled}
         />
     );

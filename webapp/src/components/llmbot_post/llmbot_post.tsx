@@ -943,6 +943,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     useEffect(() => {
         staleRefetchedRef.current = false;
     }, [streamEventCount]);
+
+    // A post that mounts after its end event was already sent never hears it,
+    // so a cached turn still marked streaming may predate the finish. Refetch
+    // once on mount instead of waiting out the stale timer.
+    const mountRefetchedRef = useRef(false);
+    useEffect(() => {
+        if (mountRefetchedRef.current || !turnStillStreaming || isGenerationInProgress || !conversationId) {
+            return;
+        }
+        mountRefetchedRef.current = true;
+        invalidateConversation(conversationId);
+    }, [turnStillStreaming, isGenerationInProgress, conversationId]);
     const believesGenerating = !interrupted && (isGenerationInProgress || turnStillStreaming || (precontent && message === '' && renderedRounds.length === 0));
     const awaitingUserDecision = awaitingDecision;
     useEffect(() => {

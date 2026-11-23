@@ -48,7 +48,6 @@ func RedactSecrets(cfg Config) Config {
 		redactHeaderMap(server.ServiceAccountHeaders)
 	}
 
-	out.WebSearch.Google.APIKey = maskSecret(out.WebSearch.Google.APIKey)
 	out.WebSearch.Brave.APIKey = maskSecret(out.WebSearch.Brave.APIKey)
 	out.OpenTelemetryHeaders = maskSecret(out.OpenTelemetryHeaders)
 
@@ -101,7 +100,6 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 		server.ServiceAccountHeaders = restoreHeaderSecrets(server.ServiceAccountHeaders, storedServiceAccountHeaders)
 	}
 
-	out.WebSearch.Google.APIKey = resolveSecret(out.WebSearch.Google.APIKey, stored.WebSearch.Google.APIKey)
 	out.WebSearch.Brave.APIKey = resolveSecret(out.WebSearch.Brave.APIKey, stored.WebSearch.Brave.APIKey)
 	out.OpenTelemetryHeaders = resolveSecret(out.OpenTelemetryHeaders, stored.OpenTelemetryHeaders)
 
@@ -375,7 +373,6 @@ func MaskedCredentialFields(cfg Config) []string {
 			add(prefix+".serviceAccountHeaders["+name+"]", value)
 		}
 	}
-	add("webSearch.google.apiKey", cfg.WebSearch.Google.APIKey)
 	add("webSearch.brave.apiKey", cfg.WebSearch.Brave.APIKey)
 	add("openTelemetryHeaders", cfg.OpenTelemetryHeaders)
 	if params, ok := decodeParameters(cfg.EmbeddingSearchConfig.EmbeddingProvider.Parameters); ok {
