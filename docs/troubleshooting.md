@@ -45,7 +45,7 @@ Fix common Agents problems by symptom. Start with the Mattermost Server log, fil
 | Symptom | Cause and fix |
 |---|---|
 | A tool call fails repeatedly | After three failures in a row the agent stops using tools and describes the error. Check API keys and endpoints, MCP connectivity and third-party authorization, and that the user can access the target. Trace output shows tool errors. |
-| Agents have no Mattermost tools after an upgrade from v1, or channel questions fail with "read_channel tool not available" | The embedded Mattermost MCP server stays off for a configuration migrated from v1 until it's saved. Open **System Console > Plugins > Agents** and select **Save** once. See [Upgrade steps](upgrading_to_2.0.md#upgrade-steps). |
+| Agents have no Mattermost tools after an upgrade from v1, or channel questions fail with "read_channel tool not available" | The embedded Mattermost MCP server stays off for a configuration migrated from v1 until it's saved. Open **Agents > Settings** and select **Save** once. See [Upgrade steps](upgrading_to_2.0.md#upgrade-steps). |
 | An agent has no tools | **Enable Tools** is off, or the MCP grants on its **MCPs** tab don't include the tool, or an access policy or the user's **Tools** menu choices removed the server. |
 | A remote server's tool list is empty | For per-user OAuth servers, the user must connect first. For a service account agent, **No service account credentials** means the server has no service account headers. **Couldn't connect** means the headers were rejected. Check that the header value doesn't repeat the header name. |
 | An OAuth authorization fails with a redirect error | Register the **MCP OAuth Callback URL** from the **Configuration** tab in the remote server's OAuth app. |

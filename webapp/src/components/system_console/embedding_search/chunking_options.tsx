@@ -36,7 +36,7 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
                         chunkingStrategy,
                     } as ChunkingOptions,
                 })}
-                helptext={intl.formatMessage({defaultMessage: 'The strategy to use for splitting text into chunks.'})}
+                helptext={intl.formatMessage({defaultMessage: 'How text is split into chunks.'})}
                 options={[
                     {value: 'sentences', label: 'Sentences'},
                     {value: 'paragraphs', label: 'Paragraphs'},
@@ -58,7 +58,7 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
                     });
                 }}
                 min={1}
-                helptext={intl.formatMessage({defaultMessage: 'Maximum size of each chunk in characters.'})}
+                helptext={intl.formatMessage({defaultMessage: 'Max characters per chunk.'})}
             />
 
             <IntItem
@@ -75,7 +75,7 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
                     });
                 }}
                 min={0}
-                helptext={intl.formatMessage({defaultMessage: 'Number of characters to overlap between chunks.'})}
+                helptext={intl.formatMessage({defaultMessage: 'Overlapping characters between chunks.'})}
             />
         </>
     );

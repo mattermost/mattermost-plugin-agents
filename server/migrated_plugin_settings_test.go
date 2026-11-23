@@ -50,7 +50,6 @@ func credentialSentinels() []credentialSentinel {
 		{"config.mcp.servers[0].headers", "sentinel-mcp-header-value"},
 		{"config.mcp.servers[0].serviceAccountHeaders", "sentinel-mcp-service-account-header-value"},
 		{"config.mcp.servers[1].serviceAccountHeaders", "sentinel-second-mcp-service-account-header-value"},
-		{"config.webSearch.google.apiKey", "sentinel-websearch-google-api-key"},
 		{"config.webSearch.brave.apiKey", "sentinel-websearch-brave-api-key"},
 		{"config.embeddingSearchConfig.embeddingProvider.parameters.apiKey", "sentinel-embedding-provider-api-key"},
 	}
@@ -140,11 +139,7 @@ func credentialSentinelConfig() *config.Config {
 		},
 		WebSearch: config.WebSearchConfig{
 			Enabled:  true,
-			Provider: "google",
-			Google: config.WebSearchGoogleConfig{
-				APIKey:         "sentinel-websearch-google-api-key",
-				SearchEngineID: "engine-id",
-			},
+			Provider: "brave",
 			Brave: config.WebSearchBraveConfig{
 				APIKey: "sentinel-websearch-brave-api-key",
 			},

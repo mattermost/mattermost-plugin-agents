@@ -25,7 +25,7 @@ Everything is under **Agents > Settings > MCP servers**. It has a **Configuratio
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
       | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
    | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. Once the server is saved, **Auto-fill from server** copies the server's own description or instructions, connecting as you with the saved settings. You may need to connect your account first. Review the text and save. |
-   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in the System Console; leave one untouched to keep it, or type a new value to replace it. |
+   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in **Agents > Settings**; leave one untouched to keep it, or type a new value to replace it. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
 
@@ -81,7 +81,7 @@ GitHub's MCP server needs a pre-registered OAuth app. GitHub's interface changes
    - **OAuth client ID** and **OAuth client secret** to the values from step 1.
 3. Select **Save and connect**, then **Sign in** to authorize your own account. Each user still connects their own account.
 4. In **Review tools**, check the policies and select **Accept and save**. Tools the server marks read-only are suggested as **Auto Run (DM)**, and tools that change something, such as creating an issue, start at **Ask Every Time**. See [Enable and approve tools](#enable-and-approve-tools).
-6. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
+5. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
 
 A user who asks "Open an issue for the bug in this thread" now sees a **Connect** card the first time. After they connect, the agent finds the issue tool with dynamic tool loading, and the user accepts the call.
 

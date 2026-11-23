@@ -37,4 +37,6 @@ A bot account or a plugin can start an agent turn by creating a post with the `a
 
 A plugin can expose its own tools to Agents by calling `POST /bridge/v1/mcp/register` with `name`, `path`, `enabled`, `expose_external`, and optional `tool_configs`. The plugin ID comes from the trusted header, not the body. Registering needs an Enterprise license.
 
+For Go plugins, use the [`external/pluginmcp`](https://github.com/mattermost/mattermost-plugin-agents/blob/master/external/pluginmcp/README.md) helper package (`github.com/mattermost/mattermost-plugin-agents/v2/external/pluginmcp`). It wraps the Go MCP SDK with tool-name sanitization, inter-plugin authentication, user ID propagation, and automatic registration retries.
+
 An admin then enables the server and sets per-tool approval on the **Tools** tab. Setting `expose_external` lets an admin offer the plugin's tools on the HTTP endpoint for external clients. Tool calls carry the requesting user's identity, so your plugin enforces its own permissions. See [Connect agents to MCP servers](mcp_integrations.md#plugin-registered-mcp-servers).

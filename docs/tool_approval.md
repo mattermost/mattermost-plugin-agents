@@ -25,7 +25,7 @@ An agent runs tools in one of two modes. The mode is a setting on the agent, not
 
 Admins set a policy for each tool on the **Tools** tab of the MCP settings. The agent's tool grants decide what the agent may use. They never change the policy.
 
-| Policy (System Console label) | Stored value | Behavior |
+| Policy (Agents settings label) | Stored value | Behavior |
 |---|---|---|
 | **Ask Every Time** | `ask` | The initiator must accept every call, in direct messages and channels. |
 | **Auto Run (DM)** | `auto_run_in_dm` | Runs without a prompt in a direct message with the agent. In channels it asks. |
@@ -43,7 +43,7 @@ Some tools have no policy:
 - `search_tools` and `load_tool`, the dynamic loading helpers, always run without approval.
 - The built-in `CreateFile` tool always runs without approval, because it only attaches a file to the agent's own reply. `wait_for_async_work`, which schedules the agent's own follow-up, does too.
 - `AskUserQuestion` always waits for the user's answer.
-- The built-in web search tool (Brave, Google, or SearXNG) always asks. Native provider web search runs inside the provider, so it has no approval card.
+- The built-in web search tool (Brave or SearXNG) always asks. Native provider web search runs inside the provider, so it has no approval card.
 
 ### Choose a policy
 

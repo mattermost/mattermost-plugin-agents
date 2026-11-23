@@ -4,9 +4,8 @@
 package config
 
 import (
+	"crypto/rand"
 	"fmt"
-
-	"github.com/google/uuid"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -90,7 +89,7 @@ func MigrateServicesToBots(cfg Config, loadLegacyConfig func() (LegacyServiceCon
 	// Create bots that reference the services
 	existingConfig.Bots = make([]llm.BotConfig, 0, len(existingConfig.Services))
 	for i, service := range existingConfig.Services {
-		botID := uuid.New().String()
+		botID := newUUIDv4()
 		botName := fmt.Sprintf("ai%d", i+1)
 		displayName := service.Name
 		existingConfig.Bots = append(existingConfig.Bots, llm.BotConfig{
@@ -216,6 +215,14 @@ func RunAllLegacyMigrations(cfg Config, loadLegacyConfig func() (LegacyServiceCo
 // are ABAC policy identities; config-bot IDs (below) intentionally stay UUIDs.
 func generateServiceID() string {
 	return model.NewId()
+}
+
+func newUUIDv4() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // findIdenticalService checks if a service with identical configuration already exists.

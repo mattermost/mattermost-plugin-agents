@@ -54,13 +54,6 @@ func TestSearchTransportErrorsDoNotLeakIntoSpansOrLogs(t *testing.T) {
 		search func(l Logger) (*SearchResponse, error)
 	}{
 		{
-			name: "google",
-			search: func(l Logger) (*SearchResponse, error) {
-				return NewGoogleProvider(sentinelKey, "cx", "https://example.invalid/customsearch", failingClient, l).
-					Search(context.Background(), sentinelQuery, 5)
-			},
-		},
-		{
 			name: "brave",
 			search: func(l Logger) (*SearchResponse, error) {
 				return NewBraveProvider(sentinelKey, "https://example.invalid", 1, 1, failingClient, l).

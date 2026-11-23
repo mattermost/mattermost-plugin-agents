@@ -425,7 +425,7 @@ describe('AgentsSettingsPage default agent selector', () => {
         (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotUserID: 'gone0000000000000000000000'});
         renderPage();
 
-        await screen.findByText(/The configured default agent is not available to you/);
+        await screen.findByText(/Configured default agent is unavailable to you/);
         expect(screen.getByText('Current default agent (not available to you)')).toBeTruthy();
 
         changeSomethingElse();

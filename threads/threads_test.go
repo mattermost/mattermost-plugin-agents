@@ -82,9 +82,7 @@ func TestThreadsSummarizeFromExportedDataEval(t *testing.T) {
 			summary := runThreadAnalysisEval(t, threadData, prompts.PromptSummarizeThreadSystem)
 
 			// Evaluate the summary against the rubric
-			for _, rubric := range config.rubrics {
-				evals.LLMRubricT(t, rubric, summary)
-			}
+			evals.LLMRubricsT(t, config.rubrics, summary)
 		})
 	}
 }
@@ -122,9 +120,7 @@ func TestThreadsActionItemsFromExportedDataEval(t *testing.T) {
 			actionItems := runThreadAnalysisEval(t, threadData, prompts.PromptFindActionItemsSystem)
 
 			// Evaluate the action items against the rubric
-			for _, rubric := range config.rubrics {
-				evals.LLMRubricT(t, rubric, actionItems)
-			}
+			evals.LLMRubricsT(t, config.rubrics, actionItems)
 		})
 	}
 }
@@ -160,9 +156,7 @@ func TestThreadsOpenQuestionsFromExportedDataEval(t *testing.T) {
 			openQuestions := runThreadAnalysisEval(t, threadData, prompts.PromptFindOpenQuestionsSystem)
 
 			// Evaluate the open questions against the rubric
-			for _, rubric := range config.rubrics {
-				evals.LLMRubricT(t, rubric, openQuestions)
-			}
+			evals.LLMRubricsT(t, config.rubrics, openQuestions)
 		})
 	}
 }
