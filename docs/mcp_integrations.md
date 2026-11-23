@@ -99,7 +99,7 @@ Approval policy details, including how they behave in channels and below Enterpr
 
 ## Limit a server to direct messages
 
-Some servers return data that not everyone in a channel may see, such as a CRM where each user's connection reaches different records. In a channel, the safeguard is the requester reviewing each tool call and its results before approving or sharing them. A tool set to **Auto Run (Everywhere)** skips that review and shares its results at once. Turn on **Direct Messages Only** on such a server when its results must never reach a channel.
+Some servers return data that not everyone in a channel may see, such as a CRM where each user's connection reaches different records. In a channel, the safeguard is the requester reviewing each tool call and its results before approving or sharing them. A remote tool set to **Auto Run (Everywhere)** runs without asking, but its results still wait for the requester's share decision. See [Share or keep private](tool_approval.md#share-or-keep-private). Turn on **Direct Messages Only** on such a server when its results must never reach a channel.
 
 A server limited to direct messages:
 

@@ -237,6 +237,60 @@ describe('ToolApprovalSet', () => {
         expect(undecidedTool.onReject).toEqual(expect.any(Function));
     });
 
+    describe('share review notice', () => {
+        const sales = {id: 'ch_sales', name: 'sales', display_name: 'Sales Leadership'};
+        const hr = {id: 'ch_hr', name: 'hr-private'};
+
+        test.each([
+            {
+                name: 'names every reviewed source once for the requester',
+                tools: [
+                    makeTool({id: 'a', status: ToolCallStatus.AutoApproved, audience_review: true, source_channels: [sales, hr]}),
+                    makeTool({id: 'b', status: ToolCallStatus.AutoApproved, audience_review: true, source_channels: [sales]}),
+                ],
+                stage: 'result' as ToolApprovalStage,
+                canApprove: true,
+                want: 'These results include content from Sales Leadership, hr-private. Members of this channel may not have access. Review them before you share.',
+            },
+            {
+                name: 'falls back to neutral text when no source is known',
+                tools: [makeTool({id: 'a', status: ToolCallStatus.AutoApproved, audience_review: true})],
+                stage: 'result' as ToolApprovalStage,
+                canApprove: true,
+                want: 'The agent could not confirm that members of this channel can read every source of these results. Review them before you share.',
+            },
+            {
+                name: 'is not shown to an onlooker',
+                tools: [makeTool({id: 'a', status: ToolCallStatus.AutoApproved, audience_review: true, source_channels: [sales]})],
+                stage: 'result' as ToolApprovalStage,
+                canApprove: false,
+                want: null,
+            },
+            {
+                name: 'is not shown once the result is decided',
+                tools: [makeTool({id: 'a', status: ToolCallStatus.AutoApproved, audience_review: true, source_channels: [sales], decided: true})],
+                stage: 'result' as ToolApprovalStage,
+                canApprove: true,
+                want: null,
+            },
+            {
+                name: 'is not shown for results without a review',
+                tools: [makeTool({id: 'a', status: ToolCallStatus.Success})],
+                stage: 'result' as ToolApprovalStage,
+                canApprove: true,
+                want: null,
+            },
+        ])('$name', ({tools, stage, canApprove, want}) => {
+            const {queryByTestId} = renderComponent(tools, stage, canApprove);
+            const notice = queryByTestId('share-review-notice');
+            if (want === null) {
+                expect(notice).toBeNull();
+            } else {
+                expect(notice?.textContent).toBe(want);
+            }
+        });
+    });
+
     test('status bar counts only approval-type decisions, not questions', () => {
         // The question has no arguments (redacted shape), so it falls back to
         // the mocked tool card; only the count behavior is under test.

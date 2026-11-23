@@ -415,9 +415,19 @@ func (p *turnPolicy) sharedForTurns(turns []toolrunner.ToolTurn, llmCtx *llm.Con
 // runToolLoop runs the ToolRunner over req with the agent's round cap and the
 // turn's auto-execute decision, persisting each intermediate tool round to
 // convID as it completes. writeFailMsg (plus writeFailArgs) is logged when
-// persisting a round fails.
+// persisting a round fails. Outside a DM, a round whose results the
+// channel's members may not be able to read ends the run for a share
+// decision.
 func (p *turnPolicy) runToolLoop(ctx context.Context, llmCtx *llm.Context, convID string, req llm.CompletionRequest, writeFailMsg string, writeFailArgs ...any) (*toolrunner.ToolRunResult, error) {
 	opts := p.c.withProviderWebSearchLicense(p.c.toolsDisabledLLMOptions(p.bot, !p.toolsEnabled))
+	if req.Context == nil {
+		req.Context = llmCtx
+	}
+	if reviewCtx := req.Context; !p.isDM && reviewCtx != nil {
+		reviewCtx.ReviewToolRound = func(calls []llm.ToolCall) *llm.ShareReview {
+			return shareReview(reviewCtx, calls)
+		}
+	}
 	runner := toolrunner.New(p.bot.LLM(), toolrunner.WithMaxRounds(p.bot.GetConfig().EffectiveMaxToolTurns()), toolrunner.WithToolErrorResult(llmcontext.MCPToolErrorResult))
 	return runner.Run(ctx, req, p.autoExecute(llmCtx), func(turns []toolrunner.ToolTurn) {
 		if writeErr := p.c.convService.WriteToolTurns(convID, turns, p.sharedForTurns(turns, llmCtx), llmCtx.ResponsePostID); writeErr != nil {

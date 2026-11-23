@@ -497,6 +497,9 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		wantToolUseShared     bool
 		wantResultShared      bool
 		wantRejectionGuidance bool
+		// wantShareReview: an auto-run result in a channel whose sources are
+		// unknown waits for the requester's share decision.
+		wantShareReview bool
 	}{
 		{
 			name:             "interrupted all-auto batch resumes with empty accepted list",
@@ -504,11 +507,9 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
-			wantToolStatus:        conversation.StatusAutoApproved,
-			wantToolResult:        "restored-result",
-			wantToolUseShared:     true,
-			wantResultShared:      true,
-			wantRejectionGuidance: false,
+			wantToolStatus:  conversation.StatusAutoApproved,
+			wantToolResult:  "restored-result",
+			wantShareReview: true,
 		},
 		{
 			name:             "interrupted all-auto resume rejects when policy was disabled",
@@ -546,11 +547,9 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
-			wantToolStatus:        conversation.StatusAutoApproved,
-			wantToolResult:        "restored-result",
-			wantToolUseShared:     true,
-			wantResultShared:      true,
-			wantRejectionGuidance: false,
+			wantToolStatus:  conversation.StatusAutoApproved,
+			wantToolResult:  "restored-result",
+			wantShareReview: true,
 		},
 		{
 			name:             "policy disabled since the pause rejects instead",
@@ -694,10 +693,16 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			assert.Equal(t, tc.wantToolResult, resultBlocks[0].Content)
 			require.NotNil(t, resultBlocks[0].Shared)
 			assert.Equal(t, tc.wantResultShared, *resultBlocks[0].Shared)
-			assert.NotNil(t, resultBlocks[0].DecidedAt, "auto/rejected results are terminal")
 			if tc.includeQuestion {
 				assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
 			}
+			if tc.wantShareReview {
+				assert.Nil(t, resultBlocks[0].DecidedAt, "the result waits for a share decision")
+				assert.True(t, resultBlocks[0].AudienceReview)
+				assert.Empty(t, lm.requests, "no reply may use the result before the share decision")
+				return
+			}
+			assert.NotNil(t, resultBlocks[0].DecidedAt, "rejected results are terminal")
 
 			require.Len(t, lm.requests, 1, "expected a follow-up LLM request")
 			assert.Contains(t, requestToolResults(lm.requests[0]), tc.wantToolResult)

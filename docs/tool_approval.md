@@ -47,7 +47,7 @@ Some tools have no policy:
 
 - Use **Ask Every Time** for any tool that writes data, sends notifications, costs money, or returns something the initiator shouldn't see without consent. It's the safe default.
 - Use **Auto Run (DM)** for read-only tools whose results are fine in a private conversation but might leak context in a shared channel. Examples: search the initiator's own mail, list their calendar. Mattermost seeds its own read-only tools at this level.
-- Use **Auto Run (Everywhere)** only for read-only tools whose results are safe for every channel member, and that enforce per-user permissions themselves. Tools that call external APIs rarely qualify. Results of these tools are shared with the channel at once, with no per-call privacy choice.
+- Use **Auto Run (Everywhere)** only for read-only tools that enforce per-user permissions themselves. In a channel, the tool runs without asking, but its results reach the reply without the initiator's review only when Mattermost can confirm that every channel member can read their sources. Mattermost can confirm that for some of its own read tools. Results of other tools, including every remote MCP tool, wait for the initiator's share decision. See [Share or keep private](#share-or-keep-private).
 - A policy only decides whether the user is asked. Limit what a tool can do with OAuth scopes and least-privilege service accounts.
 
 ### Policies below Enterprise
@@ -63,10 +63,12 @@ Setting a policy that runs tools automatically needs an Enterprise license. Belo
 
 ## Share or keep private
 
-In a channel, after an approved call returns, the initiator chooses **Share** or **Keep private**. See [Use tools and approve actions](using_tools.md#share-or-keep-private-channels-only). Admin-relevant facts:
+In a channel, the initiator chooses **Share** or **Keep private** for tool results before the agent writes from them. See [Use tools and approve actions](using_tools.md#share-or-keep-private-channels-only). Admin-relevant facts:
 
+- Every call the initiator approved gets this step.
+- A call that ran without asking gets it when Mattermost can't confirm that every channel member can read the tool's sources. The agent stops after that round of tool calls and waits. The initiator sees which channels the results came from, and **Keep private** is the default. After the decision, the agent continues and can call more tools.
+- Sources are confirmed only for these Mattermost tools, which record the channels they read: `read_channel`, `read_post`, `search_posts`, `get_channel_info`, `get_channel_members`, `get_user_channels`, `read_file`, `get_file_info`, `get_post_files`, `get_file_link`, and `search_files`. A source is covered when it's the channel the agent replies in, or a public channel on the same team while the replying channel has no guest members. Results of every other tool, including every remote MCP tool, always wait for the decision in a channel. The tools without a policy, listed in [Approval policies](#approval-policies), never do.
 - The decision is recorded once, and there's no unshare.
-- Tools set to **Auto Run (Everywhere)** skip this step and are shared immediately.
 - Direct messages skip it, because only the initiator is there.
 
 ## What observers see
@@ -84,9 +86,10 @@ A post written by a bot, plugin, or OAuth app has no human who can approve.
 
 - Webhook posts never trigger an agent. Bot and plugin posts do only when they set the `activate_ai` post property.
 - A bot post that sets `activate_ai` can start a channel turn. With channel tool calling on, Mattermost removes every tool except those set to **Auto Run (Everywhere)** and the built-in helpers. With it off, the run has no tools.
+- When a round of those tools needs a share decision, the run stops after that round and its results stay private, because nobody can share them. The agent writes no answer from them.
 - Any other automated post starts a run with no tools.
 
-There's no path where a bot approves its own call. To let an automated flow use a tool, set that tool to **Auto Run (Everywhere)** after a security review, or keep a person in the loop.
+There's no path where a bot approves its own call. To let an automated flow use a tool, set that tool to **Auto Run (Everywhere)** after a security review, or keep a person in the loop. The flow gets an answer from the tool's results only when Mattermost can confirm their sources, as described in [Share or keep private](#share-or-keep-private).
 
 ## Audit
 

@@ -335,3 +335,34 @@ describe('shell features on routed cards', () => {
         expect(container.querySelector('img')).toBeNull();
     });
 });
+
+describe('share decision buttons', () => {
+    test.each([
+        {name: 'Share is the default for a result without a review', audienceReview: false, primary: 'Share'},
+        {name: 'Keep private is the default for a result under share review', audienceReview: true, primary: 'Keep private'},
+    ])('$name', ({audienceReview, primary}) => {
+        render(
+            <Provider store={store}>
+                <IntlProvider locale='en'>
+                    {renderToolCall({
+                        ...makeCtx(makeTool({
+                            name: 'some_tool',
+                            status: ToolCallStatus.AutoApproved,
+                            arguments: {q: 'x'},
+                            result: 'ok',
+                            audience_review: audienceReview,
+                        })),
+                        approvalStage: 'result',
+                        onApprove: jest.fn(),
+                        onReject: jest.fn(),
+                    })}
+                </IntlProvider>
+            </Provider>,
+        );
+
+        const primaryButtons = ['Share', 'Keep private'].filter((label) =>
+            screen.getByRole('button', {name: label}).className.includes('emphasis-primary'),
+        );
+        expect(primaryButtons).toEqual([primary]);
+    });
+});

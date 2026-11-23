@@ -31,6 +31,23 @@ import (
 const ThreadIDProp = "referenced_thread"
 const AnalysisTypeProp = "prompt_type"
 
+// provenanceReportingTools are the embedded read tools that record the
+// channels they drew from (see mcp.SourceChannelsParam). Results of any other
+// tool have unknown sources.
+var provenanceReportingTools = map[string]struct{}{
+	"read_channel":        {},
+	"read_post":           {},
+	"search_posts":        {},
+	"get_channel_info":    {},
+	"get_channel_members": {},
+	"get_user_channels":   {},
+	"read_file":           {},
+	"get_file_info":       {},
+	"get_post_files":      {},
+	"get_file_link":       {},
+	"search_files":        {},
+}
+
 // AnalyzedChannelIDProp records the channel a channel analysis post analyzed
 // so continuing or regenerating it can re-check access and re-bind the
 // analysis tools to it.

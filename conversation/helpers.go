@@ -183,8 +183,10 @@ func toolUseBlocks(
 // toolResultBlocks builds tool_result-side content blocks from ToolRunner output.
 // Auto-executed tool rounds are terminal: there is no share/keep-private step,
 // so stamp DecidedAt at creation time to reflect that no further approval UI
-// is needed. DMs inherit the same treatment (shared=true, decided).
-func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlock {
+// is needed. DMs inherit the same treatment (shared=true, decided). A round
+// under share review is the exception: its results stay unshared and
+// undecided until the requester decides.
+func toolResultBlocks(results []toolrunner.ToolResult, shared bool, review *llm.ShareReview) []ContentBlock {
 	now := model.GetMillis()
 	blocks := make([]ContentBlock, len(results))
 	for i, tr := range results {
@@ -199,6 +201,12 @@ func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlo
 			Status:    status,
 			Shared:    new(shared),
 			DecidedAt: new(now),
+		}
+		if review != nil {
+			blocks[i].Shared = new(false)
+			blocks[i].DecidedAt = nil
+			blocks[i].AudienceReview = true
+			blocks[i].SourceChannels = review.Sources
 		}
 	}
 	return blocks

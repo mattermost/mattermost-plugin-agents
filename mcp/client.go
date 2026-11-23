@@ -707,6 +707,11 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 // Every tool call, whether auto-run or run after approval, passes through here,
 // so a failure is recorded once on the span and in the log.
 func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
+	text, _, err := c.callToolWithMeta(ctx, toolName, args, metadata)
+	return text, err
+}
+
+func (c *Client) callToolWithMeta(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, mcp.Meta, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "mcp call tool",
 		trace.WithAttributes(
 			telemetry.MCPTool.String(toolName),
@@ -715,16 +720,16 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	)
 	defer span.End()
 
-	text, err := c.callTool(ctx, toolName, args, metadata)
+	text, meta, err := c.callTool(ctx, toolName, args, metadata)
 	if err != nil {
 		c.recordToolCallFailure(span, toolName, err)
 	}
-	return text, err
+	return text, meta, err
 }
 
-func (c *Client) callTool(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
+func (c *Client) callTool(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, mcp.Meta, error) {
 	if c.session == nil {
-		return "", &classifiedError{class: toolFailureNotConnected, msg: "MCP client not connected"}
+		return "", nil, &classifiedError{class: toolFailureNotConnected, msg: "MCP client not connected"}
 	}
 
 	// Call the tool using new SDK
@@ -744,12 +749,12 @@ func (c *Client) callTool(ctx context.Context, toolName string, args map[string]
 			if c.embeddedClient != nil {
 				// Reconnect to embedded server using stored client helper and session ID
 				if c.sessionID == "" {
-					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
+					return "", nil, fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
 				}
 
 				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
 				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
+					return "", nil, fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
 				}
 
 				c.toolsMu.Lock()
@@ -761,10 +766,10 @@ func (c *Client) callTool(ctx context.Context, toolName string, args map[string]
 				// Reconnect to remote server
 				newSession, reconnectErr := c.createSession(ctx, c.config)
 				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
+					return "", nil, fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
 				}
 				if adoptErr := c.adoptSession(ctx, newSession, c.config.Name); adoptErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
+					return "", nil, fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
 				}
 
 				if c.toolsCache != nil && c.useSharedToolsCache() {
@@ -781,10 +786,10 @@ func (c *Client) callTool(ctx context.Context, toolName string, args map[string]
 			// Retry the tool call after reconnecting
 			result, err = c.session.CallTool(ctx, params)
 			if err != nil {
-				return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
+				return "", nil, fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
 			}
 		} else {
-			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
+			return "", nil, fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
 	text := toolResultText(result)
@@ -794,14 +799,14 @@ func (c *Client) callTool(ctx context.Context, toolName string, args map[string]
 	if result.IsError {
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {
-			return "", &classifiedError{class: toolFailureReturnedError, msg: fmt.Sprintf("tool %s on server %s returned an error", toolName, c.config.Name)}
+			return "", nil, &classifiedError{class: toolFailureReturnedError, msg: fmt.Sprintf("tool %s on server %s returned an error", toolName, c.config.Name)}
 		}
-		return trimmed, &classifiedError{class: toolFailureReturnedError, msg: trimmed}
+		return trimmed, nil, &classifiedError{class: toolFailureReturnedError, msg: trimmed}
 	}
 
 	if text != "" {
-		return text, nil
+		return text, result.Meta, nil
 	}
 
-	return "", &classifiedError{class: toolFailureEmptyResult, msg: fmt.Sprintf("no text content found in response from tool %s on server %s", toolName, c.config.Name)}
+	return "", nil, &classifiedError{class: toolFailureEmptyResult, msg: fmt.Sprintf("no text content found in response from tool %s on server %s", toolName, c.config.Name)}
 }

@@ -644,6 +644,8 @@
   "ai.tool_call.review_tool_response": "Review tool response",
   "ai.tool_call.run_tools": "Run tools",
   "ai.tool_call.share": "Share",
+  "ai.tool_call.share_review_named": "These results include content from {channels}. Members of this channel may not have access. Review them before you share.",
+  "ai.tool_call.share_review_unnamed": "The agent could not confirm that members of this channel can read every source of these results. Review them before you share.",
   "ai.tool_call.show_less": "Show less",
   "ai.tool_call.show_more": "Show more",
   "ai.tool_call.status.accepted": "Accepted",

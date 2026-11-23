@@ -47,6 +47,8 @@ Mattermost MCP tools respect channel/user policy configured in **Agents > Settin
 
 Configure MCP tool policies so relevant tools use **`auto_run_everywhere`** (see `webapp` components such as `mcp_tool_config_row.tsx`). Without this, simulations may stall waiting for approval while the mock LLM still completes streams.
 
+In channels, a mention still stops after a tool round whose sources Mattermost can't confirm, such as a remote tool or a read of a private channel, and waits for a share decision that no simulated user makes. See [Share or keep private](../docs/tool_approval.md#share-or-keep-private).
+
 ## Enable Agents in mattermost-load-test-ng
 
 Integration is **cross-repository**:
