@@ -6,7 +6,7 @@ import {GlobalState} from '@mattermost/types/store';
 import manifest from './manifest';
 import type {ChannelArtifactLibrary, ChannelLibraryState, ProjectAgentInfo, ProjectsState} from './redux';
 import {CustomPrompt} from './types';
-import type {Project, ProjectTab} from './types/projects';
+import type {Project, ProjectPaneState} from './types/projects';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 // Both start null (unloaded); the selectors below default them to shared empty arrays.
@@ -25,7 +25,7 @@ interface PluginState {
     projectChannelsEnabled?: boolean;
     projectAgents?: ProjectAgentInfo[];
     projects?: ProjectsState;
-    projectRHSTab?: ProjectTab;
+    projectPane?: ProjectPaneState;
 }
 
 type AppState = GlobalState & {
@@ -104,9 +104,6 @@ export const isKnownNotProject = (state: AppState, channelId: string): boolean =
 
 export const getCurrentChannelProject = (state: AppState): Project | undefined =>
     getProject(state, state.entities?.channels?.currentChannelId || '');
-
-export const getProjectRHSTab = (state: AppState): ProjectTab =>
-    state[`plugins-${manifest.id}`]?.projectRHSTab ?? 'board';
 
 /** Whether a user is one of the agent bots, hidden project agents included. Only these authors' post props are trusted. */
 export const isAgentBotUserId = (state: AppState, userId: string): boolean => {

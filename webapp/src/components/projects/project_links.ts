@@ -23,6 +23,24 @@ export function checklistRunPath(project: Project, checklistUrl?: string): strin
     return project.playbook_run_id ? `/playbooks/runs/${project.playbook_run_id}` : '';
 }
 
+// toAppPath turns a link to this server into the in-app path the host router takes, and leaves
+// any other link as it is.
+export function toAppPath(link: string): string {
+    if (link.startsWith('/') && !link.startsWith('//')) {
+        return link;
+    }
+    try {
+        const url = new URL(link);
+        const base = window.basename || '';
+        if (url.origin !== window.location.origin || (base && url.pathname !== base && !url.pathname.startsWith(`${base}/`))) {
+            return link;
+        }
+        return (url.pathname.slice(base.length) || '/') + url.search + url.hash;
+    } catch {
+        return link;
+    }
+}
+
 // navigateTo routes path through the host's router, and reports false when there is none so the
 // caller can let the browser follow the link.
 export function navigateTo(path: string): boolean {

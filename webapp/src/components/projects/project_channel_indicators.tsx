@@ -14,32 +14,30 @@ import {FlagOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {getCurrentChannelProject, getProject} from '@/selectors';
 
+import {closeProjectPane, isProjectPaneOpen, openProjectPane} from './pane/pane_state';
 import ProjectStateBadge from './project_state_badge';
-import {getProjectRHSHandle} from './project_rhs_handle';
 
 export const isProjectChannel = (state: GlobalState, channelId: string): boolean => Boolean(getProject(state as never, channelId));
 
-// Channel header icon: opens the Project sidebar, and shows nothing outside projects.
+// Channel header icon: opens and closes the project pane, and shows nothing outside projects.
 export const ProjectHeaderIcon = ({channel}: {channel?: {id: string}}) => {
     const intl = useIntl();
     const dispatch = useDispatch();
-    const isProject = useSelector((state: GlobalState) => Boolean(channel && isProjectChannel(state, channel.id)));
+    const channelId = channel?.id ?? '';
+    const isProject = useSelector((state: GlobalState) => Boolean(channelId && isProjectChannel(state, channelId)));
+    const open = useSelector((state: GlobalState) => isProjectPaneOpen(state as never, channelId));
     if (!isProject) {
         return null;
     }
-    const label = intl.formatMessage({defaultMessage: 'Project'});
+    const label = open ? intl.formatMessage({defaultMessage: 'Close the project pane'}) : intl.formatMessage({defaultMessage: 'Open the project pane'});
     return (
         <IconButton
             size='small'
             icon={<Icon glyph={<FlagOutlineIcon/>}/>}
             aria-label={label}
+            aria-pressed={open}
             title={label}
-            onClick={() => {
-                const handle = getProjectRHSHandle();
-                if (handle) {
-                    dispatch(handle.toggleRHSPlugin as never);
-                }
-            }}
+            onClick={() => dispatch(open ? closeProjectPane(channelId) : openProjectPane(channelId))}
             data-testid='project-header-button'
         />
     );

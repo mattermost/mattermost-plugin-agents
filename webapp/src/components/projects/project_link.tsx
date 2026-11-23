@@ -4,7 +4,7 @@
 import React from 'react';
 import styled from 'styled-components';
 
-import {navigateTo} from './project_links';
+import {navigateTo, toAppPath} from './project_links';
 
 type Props = {
     path: string;
@@ -12,9 +12,11 @@ type Props = {
     testId?: string;
 };
 
-// A link inside the app: a relative path goes through the host router, anything else opens normally.
-const ProjectLink = ({path, children, testId}: Props) => {
-    const isAppPath = path.startsWith('/');
+// A link inside the app goes through the host router, a link to this server included; anything
+// else opens in a new tab.
+const ProjectLink = ({path: link, children, testId}: Props) => {
+    const path = toAppPath(link);
+    const isAppPath = path.startsWith('/') && !path.startsWith('//');
     return (
         <Anchor
             href={path}

@@ -22,7 +22,7 @@ import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 import type {Project, ProjectChecklist} from '@/types/projects';
 
-import ProjectRHS from './project_rhs';
+import ProjectPane from './project_pane';
 
 jest.mock('@/client', () => ({
     endProject: jest.fn(),
@@ -66,7 +66,19 @@ jest.mock('@mattermost/compass-ui/components/select', () => ({
     ),
 }));
 
-jest.mock('../channel_artifacts/viewers/artifact_viewer', () => ({
+jest.mock('../../agent_chat/agent_chat_thread_view', () => ({
+    __esModule: true,
+    isThreadViewerAvailable: true,
+    default: ({rootId, layout}: {rootId: string; layout: string}) => (
+        <div
+            data-testid='mock-agent-chat-thread'
+            data-root-id={rootId}
+            data-layout={layout}
+        />
+    ),
+}));
+
+jest.mock('../../channel_artifacts/viewers/artifact_viewer', () => ({
     ArtifactViewer: (props: {entry: {id: string; format?: string}; presentation: string; startedByClick: boolean; canEdit: boolean; canDelete: boolean; onClose: () => void; onPopOut?: () => void}) => (
         <div
             data-testid='mock-artifact-viewer'
@@ -103,6 +115,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
         agent_bot_user_id: 'bot1',
         agent_display_name: 'Matty',
         agent_username: 'matty',
+        setup_completed: true,
         state: 'active',
         lead_user_id: 'lead1',
         reply_mode: 'ambient',
@@ -152,9 +165,9 @@ function makeEntry(id: string, overrides: Partial<ChannelArtifactEntry> = {}): C
 
 const checklist: ProjectChecklist = {available: true, run_id: 'run1', name: 'Launch', status: 'InProgress', completed_tasks: 7, total_tasks: 12, url: '/playbooks/runs/run1'};
 
-function renderRHS({project = makeProject() as Project | null, projectChannelsEnabled = true, channelArtifactsEnabled = true} = {}) {
+function renderPane({project = makeProject() as Project | null, projectChannelsEnabled = true, channelArtifactsEnabled = true} = {}) {
     const entities = {
-        channels: {currentChannelId: CHANNEL_ID, channels: {[CHANNEL_ID]: {id: CHANNEL_ID, type: 'O'}}},
+        channels: {currentChannelId: CHANNEL_ID, channels: {[CHANNEL_ID]: {id: CHANNEL_ID, type: 'O', display_name: 'Login revamp'}}},
         users: {currentUserId: 'me', profiles: {lead1: {id: 'lead1', username: 'lena'}}},
         teams: {currentTeamId: 'team1', teams: {team1: {id: 'team1', name: 'engineering'}}},
     };
@@ -169,7 +182,7 @@ function renderRHS({project = makeProject() as Project | null, projectChannelsEn
     }
     const view = render(
         <Provider store={store}>
-            <ProjectRHS/>
+            <ProjectPane channelId={CHANNEL_ID}/>
         </Provider>,
     );
     return {store, ...view};
@@ -195,45 +208,58 @@ beforeEach(() => {
     });
     (getProfilesByIds as jest.Mock).mockResolvedValue([]);
     delete window.MattermostBoardsV2;
+    delete window.MattermostPlaybooks;
 });
 
 afterEach(() => {
     delete window.MattermostBoardsV2;
+    delete window.MattermostPlaybooks;
 });
 
-describe('ProjectRHS header', () => {
-    test('shows the agent, state, lead, status note and checklist progress', async () => {
-        renderRHS();
+describe('ProjectPane header', () => {
+    test('shows the project, agent, state, lead, status note and checklist progress', async () => {
+        renderPane();
 
+        expect(screen.getByTestId('project-pane-title').textContent).toBe('Login revamp');
         expect(screen.getByTestId('project-agent-name').textContent).toContain('Matty');
         expect(screen.getByTestId('project-state-badge').textContent).toContain('Active');
         expect(screen.getByTestId('project-lead').textContent).toContain('Lead: @lena');
         expect(screen.getByTestId('project-status-note').textContent).toContain('Login revamp is on track.');
         expect((await screen.findByTestId('project-checklist-count')).textContent).toContain('7/12 done');
-        expect(screen.getByTestId('project-checklist-link').getAttribute('href')).toBe('/playbooks/runs/run1');
+        expect(screen.queryByTestId('project-checklist-link')).toBeNull();
+    });
+
+    test('the checklist progress opens the Checklist tab instead of leaving the channel', async () => {
+        renderPane();
+
+        fireEvent.click(await screen.findByTestId('project-checklist-progress'));
+
+        expect(screen.getByTestId('project-tab-checklist').getAttribute('aria-selected')).toBe('true');
+        expect(screen.getByTestId('project-checklist-fallback')).not.toBeNull();
     });
 
     test.each([
         {name: 'Playbooks is unreachable', setup: () => (getProjectChecklist as jest.Mock).mockRejectedValue(new Error('down'))},
         {name: 'the server reports the run as unavailable', setup: () => (getProjectChecklist as jest.Mock).mockResolvedValue({...checklist, available: false})},
-    ])('falls back to the checklist link when $name', async ({setup}) => {
+    ])('still opens the Checklist tab when $name', async ({setup}) => {
         setup();
-        renderRHS();
+        renderPane();
 
-        const fallback = await screen.findByTestId('project-checklist-unavailable');
-        expect(within(fallback).getByTestId('project-checklist-link').getAttribute('href')).toBe('/playbooks/runs/run1');
+        fireEvent.click(await screen.findByTestId('project-checklist-unavailable'));
+        expect(screen.getByTestId('project-tab-checklist').getAttribute('aria-selected')).toBe('true');
         expect(screen.queryByTestId('project-checklist-count')).toBeNull();
     });
 
-    test('says so when no checklist is linked', () => {
-        renderRHS({project: makeProject({playbook_run_id: ''})});
+    test('shows no checklist progress when no checklist is linked', () => {
+        renderPane({project: makeProject({playbook_run_id: ''})});
 
-        expect(screen.getByTestId('project-checklist-none')).not.toBeNull();
+        expect(screen.queryByTestId('project-checklist-progress')).toBeNull();
+        expect(screen.queryByTestId('project-tab-checklist')).toBeNull();
         expect(getProjectChecklist).not.toHaveBeenCalled();
     });
 
     test('a pushed project update changes the state badge and the checklist is read again', async () => {
-        const {store} = renderRHS();
+        const {store} = renderPane();
         await screen.findByTestId('project-checklist-count');
 
         act(() => {
@@ -246,46 +272,46 @@ describe('ProjectRHS header', () => {
     });
 });
 
-describe('ProjectRHS gating and lookup', () => {
+describe('ProjectPane gating and lookup', () => {
     test('shows no project UI when project channels are off', () => {
-        renderRHS({projectChannelsEnabled: false});
+        renderPane({projectChannelsEnabled: false});
 
-        expect(screen.getByTestId('project-rhs-not-project')).not.toBeNull();
-        expect(screen.queryByTestId('project-rhs')).toBeNull();
+        expect(screen.getByTestId('project-pane-not-project')).not.toBeNull();
+        expect(screen.queryByTestId('project-pane-panel')).toBeNull();
         expect(getProject).not.toHaveBeenCalled();
     });
 
     test('asks the server for a project the store does not know, and shows it', async () => {
         (getProject as jest.Mock).mockResolvedValue(makeProject());
-        renderRHS({project: null});
+        renderPane({project: null});
 
-        expect(screen.getByTestId('project-rhs-loading')).not.toBeNull();
-        expect(await screen.findByTestId('project-rhs')).not.toBeNull();
+        expect(screen.getByTestId('project-pane-loading')).not.toBeNull();
+        expect(await screen.findByTestId('project-pane-panel')).not.toBeNull();
         expect(getProject).toHaveBeenCalledWith(CHANNEL_ID);
     });
 
     test('a 404 means the channel is not a project, and is not asked about again', async () => {
         (getProject as jest.Mock).mockRejectedValue(new ClientError('http://localhost', {message: 'not found', status_code: 404, url: 'u'}));
-        renderRHS({project: null});
+        renderPane({project: null});
 
-        expect(await screen.findByTestId('project-rhs-not-project')).not.toBeNull();
+        expect(await screen.findByTestId('project-pane-not-project')).not.toBeNull();
         expect(getProject).toHaveBeenCalledTimes(1);
     });
 
     test('another failure offers a retry', async () => {
         (getProject as jest.Mock).mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(makeProject());
-        renderRHS({project: null});
+        renderPane({project: null});
 
         fireEvent.click(await screen.findByText('Try again'));
 
-        expect(await screen.findByTestId('project-rhs')).not.toBeNull();
+        expect(await screen.findByTestId('project-pane-panel')).not.toBeNull();
     });
 });
 
-describe('ProjectRHS Board tab', () => {
-    test('embeds the Boards v2 board of the project, compact', () => {
+describe('ProjectPane Board tab', () => {
+    test('embeds the Boards v2 board of the project, compact while the pane is narrow', () => {
         window.MattermostBoardsV2 = {version: 1, EmbeddedBoard: ChecklistBoard};
-        renderRHS();
+        renderPane();
 
         const embed = screen.getByTestId('boards-embed');
         expect(embed.getAttribute('data-channel-id')).toBe(BOARD_CHANNEL_ID);
@@ -299,19 +325,20 @@ describe('ProjectRHS Board tab', () => {
         if (boards) {
             window.MattermostBoardsV2 = boards;
         }
-        renderRHS();
+        renderPane();
 
         expect(screen.getByTestId('project-board-fallback')).not.toBeNull();
         expect(screen.queryByTestId('boards-embed')).toBeNull();
         expect(screen.getByTestId('project-board-link').getAttribute('href')).toBe(`/engineering/channels/${BOARD_CHANNEL_ID}`);
     });
 
-    test('says no board is linked yet, even when Boards v2 is installed', () => {
+    test('has no Board tab until the project has a board', () => {
         window.MattermostBoardsV2 = {version: 1, EmbeddedBoard: ChecklistBoard};
-        renderRHS({project: makeProject({board_channel_id: ''})});
+        renderPane({project: makeProject({board_channel_id: ''})});
 
-        expect(screen.getByTestId('project-board-empty').textContent).toContain('No board linked yet — ask your project agent to create one.');
+        expect(screen.queryByTestId('project-tab-board')).toBeNull();
         expect(screen.queryByTestId('boards-embed')).toBeNull();
+        expect(screen.getByTestId('project-tab-checklist').getAttribute('aria-selected')).toBe('true');
     });
 
     test('a board that throws leaves the rest of the sidebar working', () => {
@@ -320,7 +347,7 @@ describe('ProjectRHS Board tab', () => {
             throw new Error('render failed');
         };
         window.MattermostBoardsV2 = {version: 1, EmbeddedBoard: Broken};
-        renderRHS();
+        renderPane();
 
         expect(screen.getByTestId('project-board-fallback')).not.toBeNull();
         expect(screen.getByTestId('project-header')).not.toBeNull();
@@ -328,14 +355,14 @@ describe('ProjectRHS Board tab', () => {
     });
 });
 
-describe('ProjectRHS Artifacts tab', () => {
+describe('ProjectPane Artifacts tab', () => {
     const openArtifactsTab = async () => {
         fireEvent.click(screen.getByTestId('project-tab-artifacts'));
         return screen.findByTestId('project-artifacts-list');
     };
 
     test('lists the charter first and opens an artifact in the inline viewer', async () => {
-        renderRHS();
+        renderPane();
         const list = await openArtifactsTab();
 
         const rows = within(list).getAllByRole('button');
@@ -354,7 +381,7 @@ describe('ProjectRHS Artifacts tab', () => {
     });
 
     test('pops an artifact out to fullscreen and returns to the inline viewer', async () => {
-        renderRHS();
+        renderPane();
         const list = await openArtifactsTab();
         fireEvent.click(within(list).getByTestId('project-artifact-other'));
 
@@ -367,7 +394,7 @@ describe('ProjectRHS Artifacts tab', () => {
     });
 
     test('Back returns to the list', async () => {
-        renderRHS();
+        renderPane();
         const list = await openArtifactsTab();
         fireEvent.click(within(list).getByTestId('project-artifact-other'));
 
@@ -376,14 +403,14 @@ describe('ProjectRHS Artifacts tab', () => {
         expect(screen.getByTestId('project-artifacts-list')).not.toBeNull();
     });
 
-    test('the tab is remembered when the sidebar is reopened', async () => {
-        const {store, unmount} = renderRHS();
+    test('the tab is remembered when the pane is reopened', async () => {
+        const {store, unmount} = renderPane();
         await openArtifactsTab();
         unmount();
 
         render(
             <Provider store={store}>
-                <ProjectRHS/>
+                <ProjectPane channelId={CHANNEL_ID}/>
             </Provider>,
         );
 
@@ -392,14 +419,14 @@ describe('ProjectRHS Artifacts tab', () => {
 
     test('says so when the project has no artifacts yet', async () => {
         (listChannelArtifacts as jest.Mock).mockResolvedValue({entries: [], can_add: true, can_edit: true, can_delete: true, max_per_channel: 50});
-        renderRHS();
+        renderPane();
         fireEvent.click(screen.getByTestId('project-tab-artifacts'));
 
         expect(await screen.findByTestId('project-artifacts-empty')).not.toBeNull();
     });
 
     test('says so when channel artifacts are turned off', () => {
-        renderRHS({channelArtifactsEnabled: false});
+        renderPane({channelArtifactsEnabled: false});
         fireEvent.click(screen.getByTestId('project-tab-artifacts'));
 
         expect(screen.getByTestId('project-artifacts-disabled')).not.toBeNull();
@@ -407,10 +434,10 @@ describe('ProjectRHS Artifacts tab', () => {
     });
 });
 
-describe('ProjectRHS actions', () => {
+describe('ProjectPane actions', () => {
     test('End project asks for confirmation, then ends the project and shows the new state', async () => {
         (endProject as jest.Mock).mockResolvedValue(makeProject({state: 'ending', update_at: 30}));
-        renderRHS();
+        renderPane();
 
         fireEvent.click(screen.getByTestId('project-action-end'));
         expect(endProject).not.toHaveBeenCalled();
@@ -423,7 +450,7 @@ describe('ProjectRHS actions', () => {
     });
 
     test('cancelling the confirmation does not end the project', async () => {
-        renderRHS();
+        renderPane();
 
         fireEvent.click(screen.getByTestId('project-action-end'));
         const dialog = await screen.findByRole('dialog');
@@ -435,7 +462,7 @@ describe('ProjectRHS actions', () => {
 
     test('shows the server\'s reason when ending fails and keeps the project active', async () => {
         (endProject as jest.Mock).mockRejectedValue(new Error('You do not have permission to archive this channel.'));
-        renderRHS();
+        renderPane();
 
         fireEvent.click(screen.getByTestId('project-action-end'));
         const dialog = await screen.findByRole('dialog');
@@ -446,7 +473,7 @@ describe('ProjectRHS actions', () => {
     });
 
     test('an ended project offers no actions', () => {
-        renderRHS({project: makeProject({state: 'ended'})});
+        renderPane({project: makeProject({state: 'ended'})});
 
         expect((screen.getByTestId('project-action-end') as HTMLButtonElement).disabled).toBe(true);
         expect((screen.getByTestId('project-action-schedule') as HTMLButtonElement).disabled).toBe(true);
@@ -463,7 +490,7 @@ describe('ProjectRHS actions', () => {
             member('gone', {delete_at: 5}),
         ]);
         (transferProjectLead as jest.Mock).mockResolvedValue(makeProject({lead_user_id: 'newlead', update_at: 40}));
-        renderRHS();
+        renderPane();
 
         fireEvent.click(screen.getByTestId('project-action-transfer'));
         const select = await screen.findByLabelText('New lead');
@@ -479,7 +506,7 @@ describe('ProjectRHS actions', () => {
 
     test('Check-in schedule sends the weekday cron with the time zone, and off clears it', async () => {
         (updateProjectSchedule as jest.Mock).mockResolvedValue(makeProject({checkin_cron: '30 10 * * 1-5', checkin_timezone: 'Europe/Berlin', update_at: 50}));
-        renderRHS();
+        renderPane();
 
         fireEvent.click(screen.getByTestId('project-action-schedule'));
         fireEvent.change(await screen.findByLabelText('Check in'), {target: {value: 'weekdays'}});
@@ -497,5 +524,90 @@ describe('ProjectRHS actions', () => {
         fireEvent.click(screen.getByTestId('project-schedule-save'));
 
         await waitFor(() => expect(updateProjectSchedule).toHaveBeenLastCalledWith(CHANNEL_ID, '', ''));
+    });
+});
+
+describe('ProjectPane tabs', () => {
+    test('a project still being set up opens on its setup chat, in the Agents chat view', () => {
+        renderPane({project: makeProject({setup_completed: false, setup_root_post_id: 'setuproot'})});
+
+        expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('data-testid'))).toEqual(['project-tab-setup', 'project-tab-board', 'project-tab-checklist', 'project-tab-artifacts']);
+        const chat = screen.getByTestId('mock-agent-chat-thread');
+        expect(chat.getAttribute('data-root-id')).toBe('setuproot');
+        expect(chat.getAttribute('data-layout')).toBe('panel');
+    });
+
+    test('a project whose setup is complete has no Setup tab', () => {
+        renderPane({project: makeProject({setup_completed: true, setup_root_post_id: 'setuproot'})});
+
+        expect(screen.queryByTestId('project-tab-setup')).toBeNull();
+        expect(screen.getByTestId('project-tab-board').getAttribute('aria-selected')).toBe('true');
+    });
+
+    test('a project with neither board nor checklist shows only its artifacts', () => {
+        renderPane({project: makeProject({board_channel_id: '', playbook_run_id: ''})});
+
+        expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('data-testid'))).toEqual(['project-tab-artifacts']);
+    });
+
+    test('a tab asked for that the project doesn\'t have says so and shows another', () => {
+        const {store} = renderPane({project: makeProject({board_channel_id: ''})});
+
+        act(() => {
+            store.dispatch({type: 'PROJECT_PANE_TAB_SET', channelId: CHANNEL_ID, tab: 'board'});
+        });
+
+        expect(screen.getByTestId('project-pane-missing-tab').textContent).toContain('no board yet');
+        expect(screen.getByTestId('project-tab-checklist').getAttribute('aria-selected')).toBe('true');
+    });
+
+    test('the Checklist tab embeds the Playbooks checklist of the project run', () => {
+        const EmbeddedChecklist = jest.fn(({runId, channelId}: {runId: string; channelId?: string}) => (
+            <div
+                data-testid='playbooks-embed'
+                data-run-id={runId}
+                data-channel-id={channelId}
+            />
+        ));
+        window.MattermostPlaybooks = {version: 1, EmbeddedChecklist};
+        renderPane();
+
+        fireEvent.click(screen.getByTestId('project-tab-checklist'));
+
+        const embed = screen.getByTestId('playbooks-embed');
+        expect(embed.getAttribute('data-run-id')).toBe('run1');
+        expect(embed.getAttribute('data-channel-id')).toBe(CHANNEL_ID);
+        expect(EmbeddedChecklist.mock.calls[0][0]).not.toHaveProperty('compact');
+    });
+
+    test.each([
+        {name: 'Playbooks has no embed', playbooks: null, text: 'Update Playbooks'},
+        {name: 'Playbooks\'s embed is older than version 1', playbooks: {version: 0, EmbeddedChecklist: () => null}, text: 'Update Playbooks'},
+        {
+            name: 'the embed fails to render',
+            playbooks: {
+                version: 1,
+                EmbeddedChecklist: () => {
+                    throw new Error('boom');
+                },
+            },
+            text: 'could not be shown here',
+        },
+    ])('the Checklist tab falls back to its progress and an in-app link when $name', async ({playbooks, text}) => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(jest.fn());
+        if (playbooks) {
+            window.MattermostPlaybooks = playbooks as never;
+        }
+        renderPane();
+
+        fireEvent.click(screen.getByTestId('project-tab-checklist'));
+
+        const fallback = screen.getByTestId('project-checklist-fallback');
+        expect(fallback.textContent).toContain(text);
+        expect(await within(fallback).findByTestId('project-checklist-fallback-progress')).not.toBeNull();
+        const link = within(fallback).getByTestId('project-checklist-open-in-playbooks');
+        expect(link.getAttribute('href')).toBe('/playbooks/runs/run1');
+        expect(link.getAttribute('target')).toBeNull();
+        consoleError.mockRestore();
     });
 });

@@ -18,6 +18,7 @@ export type Project = {
     agent_bot_user_id: string;
     agent_display_name: string;
     agent_username: string;
+    setup_completed: boolean;
     state: ProjectState;
     lead_user_id: string;
     reply_mode: ProjectReplyMode;
@@ -64,7 +65,17 @@ export type ProjectChecklist = {
     url: string;
 };
 
-export type ProjectTab = 'board' | 'artifacts';
+export type ProjectTab = 'setup' | 'board' | 'checklist' | 'artifacts';
+
+// split: beside the channel's messages; pane: over the whole center column; fullscreen: also
+// over the channel sidebar.
+export type ProjectPaneMode = 'split' | 'pane' | 'fullscreen';
+
+export type ProjectPaneState = {
+    open: Record<string, boolean>;
+    tab: Record<string, ProjectTab>;
+    mode: ProjectPaneMode;
+};
 
 // What the Boards v2 plugin publishes for other plugins to embed.
 export type BoardsV2Global = {
@@ -72,8 +83,24 @@ export type BoardsV2Global = {
     EmbeddedBoard: React.ComponentType<{channelId: string; compact?: boolean}>;
 };
 
+export type EmbeddedChecklistProps = {
+    runId: string;
+    channelId?: string;
+    compact?: boolean;
+    onOpenInPlaybooks?: () => void;
+};
+
+// What the Playbooks plugin publishes for other plugins to embed a checklist run, and to keep its
+// own sidebar from opening in a channel that shows the run elsewhere.
+export type PlaybooksEmbedGlobal = {
+    version: number;
+    EmbeddedChecklist: React.ComponentType<EmbeddedChecklistProps>;
+    suppressAutoOpen?: (channelId: string) => () => void;
+};
+
 declare global {
     interface Window {
         MattermostBoardsV2?: BoardsV2Global;
+        MattermostPlaybooks?: PlaybooksEmbedGlobal;
     }
 }

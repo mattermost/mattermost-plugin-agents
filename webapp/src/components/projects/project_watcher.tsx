@@ -2,17 +2,15 @@
 // See LICENSE.txt for license information.
 
 import {useEffect} from 'react';
-import {useDispatch, useSelector, useStore} from 'react-redux';
+import {useSelector, useStore} from 'react-redux';
 import type {Store, UnknownAction} from 'redux';
 
 import type {GlobalState} from '@mattermost/types/store';
 
 import {listProjects} from '@/client';
-import manifest from '@/manifest';
-import {getProject, getProjectChannelsEnabled, isKnownNotProject} from '@/selectors';
+import {getProjectChannelsEnabled} from '@/selectors';
 
 import {receiveProjects} from './project_state';
-import {getProjectRHSHandle} from './project_rhs_handle';
 
 type WebappStore = Store<GlobalState, UnknownAction>;
 
@@ -30,34 +28,16 @@ export async function loadTeamProjects(store: WebappStore, teamId: string): Prom
 
 export const refreshCurrentTeamProjects = (store: WebappStore) => loadTeamProjects(store, store.getState().entities.teams.currentTeamId);
 
-type RHSView = {isSidebarOpen?: boolean; pluggableId?: string};
-
-// Core keeps a plugin sidebar open across channel switches, so this closes the Project sidebar
-// when the channel it would show is not a project. In a project channel it stays and re-targets.
+// Loads the team's projects, so channel indicators and the project pane know which channels are
+// projects.
 const ProjectWatcher = () => {
-    const dispatch = useDispatch();
     const store = useStore<GlobalState>();
     const enabled = useSelector((state: GlobalState) => getProjectChannelsEnabled(state as never));
     const teamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
-    const channelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
-    const isProject = useSelector((state: GlobalState) => Boolean(getProject(state as never, channelId)));
-    const teamLoaded = useSelector((state: GlobalState & Record<string, any>) => Boolean(state[`plugins-${manifest.id}`]?.projects?.loadedTeams?.[teamId]));
-    const knownNotProject = useSelector((state: GlobalState) => isKnownNotProject(state as never, channelId));
 
     useEffect(() => {
         loadTeamProjects(store as WebappStore, teamId);
     }, [store, enabled, teamId]);
-
-    useEffect(() => {
-        const handle = getProjectRHSHandle();
-        const rhs = (store.getState() as {views?: {rhs?: RHSView}}).views?.rhs;
-        if (!handle || !rhs?.isSidebarOpen || rhs.pluggableId !== handle.id) {
-            return;
-        }
-        if (!enabled || (!isProject && (teamLoaded || knownNotProject))) {
-            dispatch(handle.hideRHSPlugin as never);
-        }
-    }, [store, dispatch, enabled, channelId, isProject, teamLoaded, knownNotProject]);
 
     return null;
 };

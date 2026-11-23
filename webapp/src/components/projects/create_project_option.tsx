@@ -14,6 +14,7 @@ import {FlagOutlineIcon} from '@mattermost/compass-icons/components';
 import {createChannelAsUser, createProject} from '@/client';
 import {getProjectChannelsEnabled} from '@/selectors';
 
+import {openProjectPane} from './pane/pane_state';
 import {receiveProject} from './project_state';
 
 // The slice of the host's NewChannelFormState this option reads.
@@ -34,12 +35,19 @@ type Visibility = 'O' | 'P';
 // state to the option read-only, so the choice made in extraContent is kept here for onCreate.
 let visibility: Visibility = 'O';
 
-export const ProjectCreateExtra = ({setCanCreate}: {setCanCreate: (value: boolean) => void}) => {
+type ExtraProps = {
+    formState?: Partial<ProjectFormState>;
+    setCanCreate: (value: boolean) => void;
+};
+
+// The project's agent starts from the channel's Purpose, so a project needs one.
+export const ProjectCreateExtra = ({formState, setCanCreate}: ExtraProps) => {
     const [value, setValue] = useState<Visibility>(visibility);
+    const hasPurpose = Boolean(formState?.purpose?.trim());
 
     useEffect(() => {
-        setCanCreate(true);
-    }, [setCanCreate]);
+        setCanCreate(hasPurpose);
+    }, [setCanCreate, hasPurpose]);
 
     const choose = (next: Visibility) => {
         visibility = next;
@@ -48,8 +56,8 @@ export const ProjectCreateExtra = ({setCanCreate}: {setCanCreate: (value: boolea
 
     return (
         <Extra data-testid='project-create-extra'>
-            <Hint>
-                <FormattedMessage defaultMessage='A project channel is led by its own agent, which sets up a charter, a board and a checklist with your team.'/>
+            <Hint data-testid='project-create-purpose-hint'>
+                <FormattedMessage defaultMessage='Describe what this project is for in Purpose. Its agent starts from that to write a charter and set up a board or checklist, whichever fits the work.'/>
             </Hint>
             <Group>
                 <Legend><FormattedMessage defaultMessage='Who can find this channel'/></Legend>
@@ -108,6 +116,7 @@ export function makeProjectChannelTypeOption(store: Store<GlobalState, UnknownAc
                 private: type === 'P',
             });
             store.dispatch(receiveProject(project));
+            store.dispatch(openProjectPane(project.channel_id, 'setup'));
         } catch (error) {
             return {
                 status: 'error',
@@ -121,7 +130,7 @@ export function makeProjectChannelTypeOption(store: Store<GlobalState, UnknownAc
 
     return {
         label: <FormattedMessage defaultMessage='Project'/>,
-        description: <FormattedMessage defaultMessage='A channel led by its own AI agent, with a board, a checklist and artifacts'/>,
+        description: <FormattedMessage defaultMessage='A channel with its own AI agent that tracks the work on a board or checklist'/>,
         icon: <FlagOutlineIcon size={20}/>,
         createButtonText: <FormattedMessage defaultMessage='Create project'/>,
         isAvailable: (state: GlobalState) => getProjectChannelsEnabled(state as never),

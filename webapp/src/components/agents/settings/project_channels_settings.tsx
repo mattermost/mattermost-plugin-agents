@@ -38,7 +38,7 @@ const ProjectChannelsSettings = ({value, updateConfig}: Props) => {
                 onChange={(to) => {
                     updateConfig({enableProjectChannels: to});
                 }}
-                helpText={intl.formatMessage({defaultMessage: 'Adds a Project option to the Create a new channel dialog. Each project channel is led by its own agent, which keeps a board, a checklist and artifacts next to the channel and works only inside the project. Requires a default service below, ambient auto-replies, channel mention tool calling, and HTML and channel artifacts.'})}
+                helpText={intl.formatMessage({defaultMessage: 'Adds a Project option to the Create a new channel dialog. Each project channel is led by its own agent, which keeps a board or checklist, whichever fits the work, and artifacts next to the channel and works only inside the project. Requires a default service below, ambient auto-replies, channel mention tool calling, and HTML and channel artifacts.'})}
             />
             {Boolean(value.enableProjectChannels) && (
                 <>

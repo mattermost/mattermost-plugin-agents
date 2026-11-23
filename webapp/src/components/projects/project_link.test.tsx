@@ -48,4 +48,38 @@ describe('ProjectLink', () => {
 
         expect(click().defaultPrevented).toBe(false);
     });
+
+    test('routes a link to this server through the host router', () => {
+        const push = jest.fn();
+        window.WebappUtils = {browserHistory: {push}} as unknown as typeof window.WebappUtils;
+        render(
+            <ProjectLink
+                path={`${window.location.origin}/playbooks/runs/run1`}
+                testId='link'
+            >
+                {'Checklist'}
+            </ProjectLink>,
+        );
+
+        expect(screen.getByTestId('link').getAttribute('target')).toBeNull();
+        expect(click().defaultPrevented).toBe(true);
+        expect(push).toHaveBeenCalledWith('/playbooks/runs/run1');
+    });
+
+    test('opens a link to another site in a new tab', () => {
+        const push = jest.fn();
+        window.WebappUtils = {browserHistory: {push}} as unknown as typeof window.WebappUtils;
+        render(
+            <ProjectLink
+                path='https://example.com/docs'
+                testId='link'
+            >
+                {'Docs'}
+            </ProjectLink>,
+        );
+
+        expect(screen.getByTestId('link').getAttribute('target')).toBe('_blank');
+        expect(click().defaultPrevented).toBe(false);
+        expect(push).not.toHaveBeenCalled();
+    });
 });

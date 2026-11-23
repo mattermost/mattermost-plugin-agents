@@ -14,8 +14,6 @@ import {getProfilesByIds} from '@/client';
 import type {Project} from '@/types/projects';
 
 import ProjectActions from './project_actions';
-import ProjectLink from './project_link';
-import {checklistRunPath} from './project_links';
 import ProjectStateBadge from './project_state_badge';
 import {useProjectChecklist} from './use_project';
 
@@ -38,16 +36,12 @@ function useUsername(userId: string): string {
     return username;
 }
 
-const ChecklistProgress = ({project}: {project: Project}) => {
+const ChecklistProgress = ({project, onOpen}: {project: Project; onOpen: () => void}) => {
     const intl = useIntl();
     const lookup = useProjectChecklist(project);
 
     if (lookup.status === 'none') {
-        return (
-            <Muted data-testid='project-checklist-none'>
-                <FormattedMessage defaultMessage='No checklist yet.'/>
-            </Muted>
-        );
+        return null;
     }
     if (lookup.status === 'loading') {
         return (
@@ -58,42 +52,41 @@ const ChecklistProgress = ({project}: {project: Project}) => {
     }
 
     const checklist = lookup.checklist;
-    const link = (
-        <ProjectLink
-            path={checklistRunPath(project, checklist?.url)}
-            testId='project-checklist-link'
-        >
-            <FormattedMessage defaultMessage='Open checklist'/>
-        </ProjectLink>
-    );
-
     if (!checklist) {
         return (
-            <ChecklistRow data-testid='project-checklist-unavailable'>
+            <ProgressButton
+                type='button'
+                onClick={onOpen}
+                data-testid='project-checklist-unavailable'
+            >
                 <Muted><FormattedMessage defaultMessage='Checklist progress is not available.'/></Muted>
-                {link}
-            </ChecklistRow>
+            </ProgressButton>
         );
     }
 
     const percent = checklist.total_tasks > 0 ? Math.round((checklist.completed_tasks / checklist.total_tasks) * 100) : 0;
     return (
-        <ChecklistBlock data-testid='project-checklist-progress'>
-            <ChecklistRow>
-                <Strong data-testid='project-checklist-count'>
-                    <FormattedMessage
-                        defaultMessage='{completed}/{total} done'
-                        values={{completed: checklist.completed_tasks, total: checklist.total_tasks}}
-                    />
-                </Strong>
-                {link}
-            </ChecklistRow>
+        <ProgressButton
+            type='button'
+            onClick={onOpen}
+            aria-label={intl.formatMessage(
+                {defaultMessage: 'Checklist: {completed} of {total} done. Open the checklist.'},
+                {completed: checklist.completed_tasks, total: checklist.total_tasks},
+            )}
+            data-testid='project-checklist-progress'
+        >
+            <Strong data-testid='project-checklist-count'>
+                <FormattedMessage
+                    defaultMessage='Checklist {completed}/{total} done'
+                    values={{completed: checklist.completed_tasks, total: checklist.total_tasks}}
+                />
+            </Strong>
             <ProgressBar
                 size='small'
                 value={percent}
                 aria-label={intl.formatMessage({defaultMessage: 'Checklist progress'})}
             />
-        </ChecklistBlock>
+        </ProgressButton>
     );
 };
 
@@ -129,7 +122,7 @@ const StatusNote = ({note}: {note: string}) => {
     );
 };
 
-const ProjectHeader = ({project}: {project: Project}) => {
+const ProjectHeader = ({project, onOpenChecklist}: {project: Project; onOpenChecklist: () => void}) => {
     const lead = useUsername(project.lead_user_id);
 
     return (
@@ -147,7 +140,10 @@ const ProjectHeader = ({project}: {project: Project}) => {
                 </Muted>
             )}
             <StatusNote note={project.status_note}/>
-            <ChecklistProgress project={project}/>
+            <ChecklistProgress
+                project={project}
+                onOpen={onOpenChecklist}
+            />
             <ProjectActions project={project}/>
         </Container>
     );
@@ -219,16 +215,25 @@ const ToggleButton = styled.button`
     font-weight: 600;
 `;
 
-const ChecklistBlock = styled.div`
+const ProgressButton = styled.button`
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xs, 4px);
-`;
-
-const ChecklistRow = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--spacing-xs, 8px);
+    padding: var(--spacing-xxs, 2px) 0;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
     font-size: 12px;
+    text-align: left;
+
+    &:hover span {
+        color: var(--button-bg);
+    }
+
+    &:focus-visible {
+        border-radius: var(--radius-s, 4px);
+        box-shadow: 0 0 0 2px var(--button-bg);
+        outline: none;
+    }
 `;

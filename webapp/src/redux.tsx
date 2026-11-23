@@ -10,7 +10,7 @@ import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 import type {AIThread} from './types/ai_thread';
-import type {Project, ProjectTab} from './types/projects';
+import type {Project, ProjectPaneMode, ProjectPaneState, ProjectTab} from './types/projects';
 import {LinkPolicy, PLAIN_TEXT_LINK_POLICY} from './utils/link_allowlist';
 
 type WebappStore = Store<GlobalState, UnknownAction>
@@ -206,7 +206,11 @@ export const ProjectAgentsSet = 'SET_PROJECT_AGENTS';
 export const ProjectsReceived = 'PROJECTS_RECEIVED';
 export const ProjectReceived = 'PROJECT_RECEIVED';
 export const ProjectMissing = 'PROJECT_MISSING';
-export const ProjectRHSTabSet = 'SET_PROJECT_RHS_TAB';
+export const ProjectPaneOpened = 'PROJECT_PANE_OPENED';
+export const ProjectPaneClosed = 'PROJECT_PANE_CLOSED';
+export const ProjectPaneTabSet = 'PROJECT_PANE_TAB_SET';
+export const ProjectPaneModeSet = 'PROJECT_PANE_MODE_SET';
+export const ProjectPaneRestored = 'PROJECT_PANE_RESTORED';
 
 function projectChannelsEnabled(state = false, action: any) {
     switch (action.type) {
@@ -288,11 +292,54 @@ export function projects(state: ProjectsState = initialProjectsState, action: an
     }
 }
 
-// Kept in the store so the sidebar reopens on the tab it was left on.
-function projectRHSTab(state: ProjectTab = 'board', action: any): ProjectTab {
+const PANE_TABS: readonly ProjectTab[] = ['setup', 'board', 'checklist', 'artifacts'];
+const PANE_MODES: readonly ProjectPaneMode[] = ['split', 'pane', 'fullscreen'];
+
+function onlyKnown<T extends string>(values: unknown, known: readonly T[]): Record<string, T> {
+    const out: Record<string, T> = {};
+    if (values && typeof values === 'object') {
+        for (const [key, value] of Object.entries(values)) {
+            if (known.includes(value as T)) {
+                out[key] = value as T;
+            }
+        }
+    }
+    return out;
+}
+
+// Which project channels have their pane open, on which tab, and how wide the pane is laid out.
+// The project pane host saves it per user, so a reload reopens what was open.
+export function projectPane(state: ProjectPaneState = {open: {}, tab: {}, mode: 'split'}, action: any): ProjectPaneState {
     switch (action.type) {
-    case ProjectRHSTabSet:
-        return action.tab === 'artifacts' ? 'artifacts' : 'board';
+    case ProjectPaneOpened: {
+        const tab = PANE_TABS.includes(action.tab) ? {...state.tab, [action.channelId]: action.tab} : state.tab;
+        return {...state, open: {...state.open, [action.channelId]: true}, tab};
+    }
+    case ProjectPaneClosed: {
+        const open = {...state.open};
+        delete open[action.channelId];
+        return {...state, open};
+    }
+    case ProjectPaneTabSet:
+        return PANE_TABS.includes(action.tab) ? {...state, tab: {...state.tab, [action.channelId]: action.tab}} : state;
+    case ProjectPaneModeSet:
+        return PANE_MODES.includes(action.mode) ? {...state, mode: action.mode} : state;
+    case ProjectPaneRestored: {
+        const restored = action.state ?? {};
+        const open: Record<string, boolean> = {};
+        if (restored.open && typeof restored.open === 'object') {
+            for (const [key, value] of Object.entries(restored.open)) {
+                if (value === true) {
+                    open[key] = true;
+                }
+            }
+        }
+        return {
+            open: {...open, ...state.open},
+            tab: {...onlyKnown(restored.tab, PANE_TABS), ...state.tab},
+            mode: PANE_MODES.includes(restored.mode) ? restored.mode : state.mode,
+        };
+    }
     default:
         return state;
     }
@@ -454,7 +501,7 @@ export const pluginReducer = combineReducers({
     projectChannelsEnabled,
     projectAgents,
     projects,
-    projectRHSTab,
+    projectPane,
     customPrompts,
     pinnedPromptIds,
     showCustomPromptsModal,

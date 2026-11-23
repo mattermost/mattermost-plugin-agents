@@ -10,11 +10,15 @@ import type {GlobalState} from '@mattermost/types/store';
 
 import type {Project} from '@/types/projects';
 
+import {useElementWidth} from './pane/use_element_width';
 import ProjectErrorBoundary from './project_error_boundary';
 import ProjectLink from './project_link';
 import {boardChannelPath} from './project_links';
 
 const MIN_BOARDS_VERSION = 1;
+
+// Narrower than this, the board uses its compact layout.
+const COMPACT_BELOW_WIDTH = 640;
 
 const BoardLink = ({project}: {project: Project}) => {
     const path = useSelector((state: GlobalState) => boardChannelPath(state, project));
@@ -43,6 +47,8 @@ const BoardUnavailable = ({project, missing}: {project: Project; missing: boolea
 );
 
 const ProjectBoardTab = ({project}: {project: Project}) => {
+    const [hostRef, width] = useElementWidth<HTMLDivElement>();
+
     if (!project.board_channel_id) {
         return (
             <Message data-testid='project-board-empty'>
@@ -63,7 +69,10 @@ const ProjectBoardTab = ({project}: {project: Project}) => {
 
     const EmbeddedBoard = boards.EmbeddedBoard;
     return (
-        <BoardHost data-testid='project-board-embed'>
+        <BoardHost
+            ref={hostRef}
+            data-testid='project-board-embed'
+        >
             <ProjectErrorBoundary
                 fallback={(
                     <BoardUnavailable
@@ -74,7 +83,7 @@ const ProjectBoardTab = ({project}: {project: Project}) => {
             >
                 <EmbeddedBoard
                     channelId={project.board_channel_id}
-                    compact={true}
+                    compact={width === 0 || width < COMPACT_BELOW_WIDTH}
                 />
             </ProjectErrorBoundary>
         </BoardHost>

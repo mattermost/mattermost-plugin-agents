@@ -3,8 +3,8 @@
 
 import type {Dispatch} from 'redux';
 
-import {ProjectMissing, ProjectReceived, ProjectRHSTabSet, ProjectsReceived} from '@/redux';
-import type {Project, ProjectTab} from '@/types/projects';
+import {ProjectMissing, ProjectReceived, ProjectsReceived} from '@/redux';
+import type {Project} from '@/types/projects';
 
 export const PROJECT_UPDATED_EVENT = 'custom_mattermost-ai_project_updated';
 
@@ -27,4 +27,3 @@ export const receiveProjects = (teamId: string, projects: Project[]) => ({type: 
 
 export const markNotProject = (channelId: string) => ({type: ProjectMissing, channelId});
 
-export const setProjectRHSTab = (tab: ProjectTab) => ({type: ProjectRHSTabSet, tab});

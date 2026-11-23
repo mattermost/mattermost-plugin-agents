@@ -12,6 +12,7 @@ import {getProject} from '@/selectors';
 import type {Project} from '@/types/projects';
 
 import {ProjectCreateExtra, makeProjectChannelTypeOption, resetProjectVisibility} from './create_project_option';
+import {getProjectPaneTab, isProjectPaneOpen} from './pane/pane_state';
 
 jest.mock('@/client', () => ({
     createChannelAsUser: jest.fn(),
@@ -69,6 +70,8 @@ describe('Project channel type option', () => {
         expect(createProject).toHaveBeenCalledWith(expect.objectContaining({team_id: 'team1', channel_id: 'newchannel', name: 'q4-login-revamp', display_name: 'Q4 login revamp', private: false}));
         expect(result).toEqual({status: 'created', channel: expect.objectContaining({id: 'newchannel'})});
         expect(getProject(store.getState() as never, 'newchannel')).toEqual(project);
+        expect(isProjectPaneOpen(store.getState() as never, 'newchannel')).toBe(true);
+        expect(getProjectPaneTab(store.getState() as never, 'newchannel')).toBe('setup');
     });
 
     test('a private choice in the extra content makes a private channel and project', async () => {
@@ -82,11 +85,21 @@ describe('Project channel type option', () => {
         expect(createProject).toHaveBeenCalledWith(expect.objectContaining({private: true}));
     });
 
-    test('lets the Create button through', () => {
+    test.each([
+        {name: 'holds Create back until the project has a purpose', purpose: '', want: false},
+        {name: 'holds Create back for a purpose of only spaces', purpose: '   ', want: false},
+        {name: 'lets Create through once the purpose is written', purpose: 'Ship the new login', want: true},
+    ])('$name', ({purpose, want}) => {
         const setCanCreate = jest.fn();
-        render(<ProjectCreateExtra setCanCreate={setCanCreate}/>);
+        render(
+            <ProjectCreateExtra
+                formState={{...form, purpose}}
+                setCanCreate={setCanCreate}
+            />,
+        );
 
-        expect(setCanCreate).toHaveBeenCalledWith(true);
+        expect(setCanCreate).toHaveBeenLastCalledWith(want);
+        expect(screen.getByTestId('project-create-purpose-hint').textContent).toContain('Purpose');
     });
 
     test('a channel the server refuses to create is reported, and no project is started', async () => {
