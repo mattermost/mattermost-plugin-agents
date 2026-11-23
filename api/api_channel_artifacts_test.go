@@ -250,6 +250,17 @@ func TestChannelArtifactContentRoutes(t *testing.T) {
 		assert.False(t, got.TooLarge)
 	})
 
+	t.Run("a download is never served as a page on the Mattermost origin", func(t *testing.T) {
+		f := newLibraryFixture(t)
+		entry := f.save(t, "Notes", "<html><script>alert(1)</script></html>")
+		rec := f.do(http.MethodGet, "/channel-artifacts/"+entry.ID+"/download", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/octet-stream", rec.Header().Get("Content-Type"))
+		assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+		assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+		assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "sandbox")
+	})
+
 	t.Run("an unavailable entry is still listed as unavailable", func(t *testing.T) {
 		f := newLibraryFixture(t)
 		entry := f.save(t, "Notes", "<html>v1</html>")

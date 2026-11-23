@@ -451,9 +451,15 @@ func (a *API) handleDownloadChannelArtifact(c *gin.Context) {
 		return
 	}
 	h := c.Writer.Header()
+	// Saved HTML is agent-authored, so a navigation to this URL must never run it
+	// on the Mattermost origin: it is not served as a page, and the sandbox
+	// policy gives it an opaque origin even if a browser renders it anyway.
 	h.Set("Content-Disposition", attachmentDisposition(entry.Title+".html"))
 	h.Set("X-Content-Type-Options", "nosniff")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
+	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	h.Set("Referrer-Policy", "no-referrer")
+	c.Data(http.StatusOK, "application/octet-stream", body)
 }
 
 func attachmentDisposition(name string) string {
