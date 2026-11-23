@@ -16,6 +16,7 @@ type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
+export const SearchEnabledHandler = manifest.id + '_search_enabled';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
@@ -26,6 +27,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
+        searchEnabled,
         rhsTab,
         aiThreads,
         linkPolicy,
@@ -85,6 +87,15 @@ function linkPolicy(state: LinkPolicy = PLAIN_TEXT_LINK_POLICY, action: any) {
     switch (action.type) {
     case SetLinkPolicyHandler:
         return action.linkPolicy ?? PLAIN_TEXT_LINK_POLICY;
+    default:
+        return state;
+    }
+}
+
+function searchEnabled(state = false, action: any) {
+    switch (action.type) {
+    case SearchEnabledHandler:
+        return action.searchEnabled;
     default:
         return state;
     }

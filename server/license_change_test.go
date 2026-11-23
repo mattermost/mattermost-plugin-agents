@@ -6,14 +6,21 @@ package main
 import (
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOnLicenseChangedRunsEveryListener(t *testing.T) {
 	calls := 0
-	p := &Plugin{licenseChangeListeners: []func(){
+	mockAPI := &plugintest.API{}
+	mockAPI.On("PublishWebSocketEvent", api.WebsocketEventBotsInvalidate, mock.Anything, mock.Anything).Once()
+	defer mockAPI.AssertExpectations(t)
+	p := &Plugin{pluginAPI: pluginapi.NewClient(mockAPI, nil), licenseChangeListeners: []func(){
 		func() { calls++ },
 		func() { calls++ },
 	}}

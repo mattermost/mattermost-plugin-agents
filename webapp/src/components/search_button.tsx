@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {FormattedMessage} from 'react-intl';
 import styled from 'styled-components';
 
 import IconAI from '@/components/assets/icon_ai';
@@ -27,7 +28,8 @@ const SearchButton = () => {
     }
     return (
         <SearchButtonContainer>
-            <StyledIconAI/>{'Agents'}
+            <StyledIconAI/>
+            <FormattedMessage defaultMessage='Ask Agents'/>
         </SearchButtonContainer>
     );
 };

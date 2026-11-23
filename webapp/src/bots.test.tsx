@@ -261,17 +261,53 @@ describe('filterBotsByChannelAccess', () => {
 });
 
 describe('fetchAndStoreBots', () => {
-    test('dispatches the bots and feature flags, and returns the bots', async () => {
+    test('dispatches the bots and feature flags', async () => {
         const bots = [makeBot('a')];
         const linkPolicy = {kind: 'allowlist', allowedDomains: [{host: 'example.com', wildcard: false}]};
         mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: true, linkPolicy, htmlArtifactsEnabled: true});
         const dispatch = jest.fn();
 
-        await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
+        await fetchAndStoreBots(dispatch);
 
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
         expect(dispatch).toHaveBeenCalledWith({type: SetLinkPolicyHandler, linkPolicy});
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_HTML_ARTIFACTS_ENABLED', htmlArtifactsEnabled: true});
+    });
+
+    test('ignores the response of a request superseded by a newer one', async () => {
+        let resolveOlder: (value: unknown) => void = jest.fn();
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockResolvedValueOnce({bots: [makeBot('new')], searchEnabled: true});
+        const dispatch = jest.fn();
+
+        const older = fetchAndStoreBots(dispatch);
+        await fetchAndStoreBots(dispatch);
+        dispatch.mockClear();
+
+        resolveOlder({bots: [makeBot('old')], searchEnabled: false});
+        await older;
+
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    test('keeps an older response when the newer request failed', async () => {
+        let resolveOlder: (value: unknown) => void = jest.fn();
+        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
+            resolveOlder = resolve;
+        }));
+        mockGetAIBots.mockRejectedValueOnce(new Error('network'));
+        const dispatch = jest.fn();
+
+        const older = fetchAndStoreBots(dispatch);
+        await expect(fetchAndStoreBots(dispatch)).rejects.toThrow('network');
+
+        const bots = [makeBot('old')];
+        resolveOlder({bots, searchEnabled: true});
+        await older;
+
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
     });
 
     test('falls back to the plain text link policy when the server omits linkPolicy', async () => {
@@ -288,54 +324,18 @@ describe('fetchAndStoreBots', () => {
             ['plugins-' + manifest.id]: pluginReducer!(state['plugins-' + manifest.id], action),
         }));
 
-        await expect(fetchAndStoreBots(store.dispatch)).resolves.toHaveLength(1);
+        await fetchAndStoreBots(store.dispatch);
 
         expect(getLinkPolicy(store.getState() as any)).toEqual({kind: 'plain_text'});
     });
 
-    test('returns null and dispatches nothing when the response is falsy', async () => {
+    test('dispatches nothing when the response is falsy', async () => {
         mockGetAIBots.mockResolvedValue(null);
         const dispatch = jest.fn();
 
-        await expect(fetchAndStoreBots(dispatch)).resolves.toBeNull();
+        await fetchAndStoreBots(dispatch);
 
         expect(dispatch).not.toHaveBeenCalled();
-    });
-
-    test('a superseded response is returned but never overwrites the newer one', async () => {
-        const stale = [makeBot('stale')];
-        const fresh = [makeBot('fresh')];
-        let resolveStale!: (v: unknown) => void;
-        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
-            resolveStale = resolve;
-        }));
-        mockGetAIBots.mockResolvedValueOnce({bots: fresh});
-        const dispatch = jest.fn();
-
-        const first = fetchAndStoreBots(dispatch);
-        await expect(fetchAndStoreBots(dispatch)).resolves.toBe(fresh);
-        resolveStale({bots: stale});
-
-        await expect(first).resolves.toBe(stale);
-        const stored = dispatch.mock.calls.filter(([action]) => action.type === BotsHandler).map(([action]) => action.bots);
-        expect(stored).toEqual([fresh]);
-    });
-
-    test('an older response is still stored when the newer request failed', async () => {
-        const older = [makeBot('older')];
-        let resolveOlder!: (v: unknown) => void;
-        mockGetAIBots.mockReturnValueOnce(new Promise((resolve) => {
-            resolveOlder = resolve;
-        }));
-        mockGetAIBots.mockRejectedValueOnce(new Error('network'));
-        const dispatch = jest.fn();
-
-        const first = fetchAndStoreBots(dispatch);
-        await expect(fetchAndStoreBots(dispatch)).rejects.toThrow('network');
-        resolveOlder({bots: older});
-
-        await expect(first).resolves.toBe(older);
-        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots: older});
     });
 
     test('propagates fetch failures to the caller', async () => {
