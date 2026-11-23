@@ -228,6 +228,37 @@ func TestStoreAddVersionNeverReusesADeletedVersionNumber(t *testing.T) {
 	assert.Equal(t, 5, entry.Version, "an artifact saved before the counter existed still gets the next number")
 }
 
+func TestStoreIdenticalContentIsNotADuplicateOfAnUnavailableEntry(t *testing.T) {
+	db := testDB(t)
+	s := channelartifacts.NewStore(db)
+	ghostIn := func(channelID string, shaNum int) string {
+		id := model.NewId()
+		first := newVersion(t, db, sha(shaNum))
+		require.NoError(t, s.Create(id, channelID, "Ghost", first, 5))
+		_, err := db.Exec(`UPDATE FileInfo SET DeleteAt = 1 WHERE Id = $1`, first.FileID)
+		require.NoError(t, err)
+		return id
+	}
+
+	t.Run("a new artifact from a file that exists", func(t *testing.T) {
+		channelID := model.NewId()
+		ghostIn(channelID, 1)
+		require.NoError(t, s.Create(model.NewId(), channelID, "Restored", newVersion(t, db, sha(1)), 5))
+		var dup *channelartifacts.DuplicateError
+		require.ErrorAs(t, s.Create(model.NewId(), channelID, "Again", newVersion(t, db, sha(1)), 5), &dup, "available content is still a duplicate")
+	})
+
+	t.Run("a new version of the broken entry", func(t *testing.T) {
+		channelID := model.NewId()
+		ghost := ghostIn(channelID, 2)
+		require.NoError(t, s.AddVersion(ghost, newVersion(t, db, sha(2)), 5))
+		entry, err := s.Get(ghost)
+		require.NoError(t, err)
+		assert.Equal(t, 2, entry.Version)
+		assert.True(t, entry.Available)
+	})
+}
+
 func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	db := testDB(t)
 	s := channelartifacts.NewStore(db)
