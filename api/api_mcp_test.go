@@ -1718,3 +1718,132 @@ func TestUserMCPToolsRoutesFailWhenAccessUnavailable(t *testing.T) {
 		}
 	}
 }
+
+func TestUserMCPToolsIncludesSchemaReadOnlyHintAndAgentConfigDisabledTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+		},
+	}
+
+	tests := []struct {
+		name                string
+		method              string
+		path                string
+		wantIncludeDisabled bool
+		wantStatus          int
+	}{
+		{
+			name:                "GET /mcp/tools omits disabled tools flag",
+			method:              http.MethodGet,
+			path:                "/mcp/tools",
+			wantIncludeDisabled: false,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:                "GET /mcp/tools?purpose=agent_config requests disabled tools",
+			method:              http.MethodGet,
+			path:                "/mcp/tools?purpose=agent_config",
+			wantIncludeDisabled: true,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:                "POST /mcp/tools/refresh omits disabled tools flag by default",
+			method:              http.MethodPost,
+			path:                "/mcp/tools/refresh",
+			wantIncludeDisabled: false,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:                "POST /mcp/tools/refresh?purpose=agent_config requests disabled tools",
+			method:              http.MethodPost,
+			path:                "/mcp/tools/refresh?purpose=agent_config",
+			wantIncludeDisabled: true,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:       "POST /mcp/tools/refresh rejects invalid purpose",
+			method:     http.MethodPost,
+			path:       "/mcp/tools/refresh?purpose=invalid",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+
+			serverOrigin := "https://tracker.example.com/mcp"
+			e.config.mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{
+					{
+						Name:    "Tracker",
+						Enabled: true,
+						BaseURL: serverOrigin,
+						ToolConfigs: []mcp.ToolConfig{
+							{Name: "search_issues", Policy: mcp.ToolPolicyAutoRunInDM, Enabled: true},
+							{Name: "delete_issue", Policy: mcp.ToolPolicyAsk, Enabled: false},
+						},
+					},
+				},
+			}
+			mcpMock := &mockMCPClientManager{
+				tools: []llm.Tool{
+					{
+						Name:         "tracker__search_issues",
+						Description:  "Search issues",
+						Schema:       schema,
+						ReadOnlyHint: true,
+						ServerOrigin: serverOrigin,
+					},
+					{
+						Name:         "tracker__delete_issue",
+						Description:  "Delete issue",
+						Schema:       schema,
+						ReadOnlyHint: false,
+						ServerOrigin: serverOrigin,
+					},
+				},
+			}
+			e.api.mcpClientManager = mcpMock
+
+			request := httptest.NewRequest(tt.method, tt.path, nil)
+			request.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(nil, recorder, request)
+
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode, recorder.Body.String())
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+
+			assert.Equal(t, tt.wantIncludeDisabled, mcpMock.lastCatalogRequest.IncludeDisabledTools)
+
+			var response UserMCPToolsResponse
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+			require.Len(t, response.Servers, 1)
+			require.Len(t, response.Servers[0].Tools, 2)
+
+			// Sorted alphabetically: delete_issue, search_issues.
+			deleteTool := response.Servers[0].Tools[0]
+			searchTool := response.Servers[0].Tools[1]
+			assert.Equal(t, "delete_issue", deleteTool.Name)
+			assert.False(t, deleteTool.Enabled)
+			assert.False(t, deleteTool.ReadOnlyHint)
+			assert.Equal(t, schema, deleteTool.InputSchema)
+
+			assert.Equal(t, "search_issues", searchTool.Name)
+			assert.True(t, searchTool.Enabled)
+			assert.True(t, searchTool.ReadOnlyHint)
+			assert.Equal(t, mcp.ToolPolicyAutoRunInDM, searchTool.Policy)
+			assert.Equal(t, schema, searchTool.InputSchema)
+		})
+	}
+}

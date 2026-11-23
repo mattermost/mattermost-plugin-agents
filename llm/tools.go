@@ -50,6 +50,10 @@ type Tool struct {
 	// controls; other servers' read-only hints are not trusted.
 	ReadOnly bool
 
+	// ReadOnlyHint is the MCP server's annotations.readOnlyHint metadata.
+	// Used only for UI grouping/hints; never for approval or authorization.
+	ReadOnlyHint bool
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.
