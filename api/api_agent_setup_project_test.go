@@ -163,6 +163,7 @@ type projectsEnabled struct{}
 func (projectsEnabled) EnableProjectChannels() bool     { return true }
 func (projectsEnabled) ProjectDefaultServiceID() string { return "svc-1" }
 func (projectsEnabled) ProjectDefaultModel() string     { return "" }
+func (projectsEnabled) GetBots() []llm.BotConfig        { return nil }
 
 func TestChannelAdminSetsUpTheProjectAgentWithoutAgentPermissions(t *testing.T) {
 	tests := []struct {

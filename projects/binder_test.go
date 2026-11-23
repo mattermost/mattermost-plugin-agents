@@ -137,12 +137,12 @@ func TestBinderCreateOnce(t *testing.T) {
 			var linked string
 			callbacks := BinderCallbacks{
 				Current: func(string) (*store.Project, error) { return current, nil },
-				BoardCreated: func(_ context.Context, _ *store.Project, id string) error {
+				BoardCreated: func(_ context.Context, _ *llm.Context, _ *store.Project, id string) error {
 					linked = id
 					current.BoardChannelID = id
 					return nil
 				},
-				RunCreated: func(_ context.Context, _ *store.Project, id string) error {
+				RunCreated: func(_ context.Context, _ *llm.Context, _ *store.Project, id string) error {
 					linked = id
 					current.PlaybookRunID = id
 					return nil
@@ -186,7 +186,7 @@ func TestOnceOnlyCreateDoesNotHoldTheLockAcrossTheCall(t *testing.T) {
 			current := &store.Project{ChannelID: "P", TeamID: "T", State: store.ProjectStateActive}
 			callbacks := BinderCallbacks{
 				Current:      func(string) (*store.Project, error) { return current, nil },
-				BoardCreated: func(context.Context, *store.Project, string) error { return nil },
+				BoardCreated: func(context.Context, *llm.Context, *store.Project, string) error { return nil },
 			}
 			started, release := make(chan struct{}), make(chan struct{})
 			calls := 0
@@ -298,7 +298,7 @@ func TestOnceOnlyCreateRetriesTheLinkWithoutCreatingAgain(t *testing.T) {
 	var linked []string
 	callbacks := BinderCallbacks{
 		Current: func(string) (*store.Project, error) { return current, nil },
-		BoardCreated: func(_ context.Context, _ *store.Project, id string) error {
+		BoardCreated: func(_ context.Context, _ *llm.Context, _ *store.Project, id string) error {
 			if linkErr != nil {
 				return linkErr
 			}

@@ -46,6 +46,9 @@ type turnRequest struct {
 	// operation is the operation of the conversation a new thread's first
 	// turn will create; turns of an existing conversation use conv's.
 	operation string
+	// requesterPresent marks the first turn of an agent-posted channel thread
+	// user just started and is looking at; see AgentThreadRequest.
+	requesterPresent bool
 }
 
 // turnPolicy is the resolved behavior of one turn. Every entry point that
@@ -136,7 +139,11 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		p.toolsEnabled = true
 		p.interactive = initiator != nil && initiatingUser != nil && !isAutomatedInvoker(initiator, initiatingUser)
 	} else {
-		p.setChannelRunTools(initiator, initiatingUser)
+		if initiator == nil && req.requesterPresent {
+			p.setPresentRequesterTools()
+		} else {
+			p.setChannelRunTools(initiator, initiatingUser)
+		}
 		p.scoped = p.toolsEnabled && c.contextBuilder != nil && c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel)
 	}
 	if req.bot.IsProjectAgent() {
@@ -186,6 +193,13 @@ func (p *turnPolicy) setChannelRunTools(initiator *model.Post, initiatingUser *m
 		p.toolsEnabled = configEnabled
 		p.interactive = true
 	}
+}
+
+// setPresentRequesterTools gives a channel run the tools of a run its
+// requester started by posting, for a thread they started without a post.
+func (p *turnPolicy) setPresentRequesterTools() {
+	p.toolsEnabled = p.c.channelMentionToolCallingEnabled()
+	p.interactive = true
 }
 
 // runInitiator returns the post that started the run which produced post,

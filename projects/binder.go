@@ -85,10 +85,11 @@ var ErrNotInRunThread = errors.New("start the Cursor agent in its run thread: op
 // BinderCallbacks record links the project agent creates.
 type BinderCallbacks struct {
 	// BoardCreated records the project's board channel and grants the bot
-	// channel admin there.
-	BoardCreated func(ctx context.Context, project *store.Project, boardChannelID string) error
-	// RunCreated records the project's checklist run.
-	RunCreated func(ctx context.Context, project *store.Project, runID string) error
+	// channel admin there. llmCtx is the turn that created it.
+	BoardCreated func(ctx context.Context, llmCtx *llm.Context, project *store.Project, boardChannelID string) error
+	// RunCreated records the project's checklist run. llmCtx is the turn that
+	// created it.
+	RunCreated func(ctx context.Context, llmCtx *llm.Context, project *store.Project, runID string) error
 	// Current returns the project's current state, so once-only creates
 	// re-check it at call time.
 	Current func(channelID string) (*store.Project, error)
@@ -260,7 +261,7 @@ func (b *Binder) bindBoards(tool llm.Tool, name string) (llm.Tool, bool) {
 			tool = tool.WithBoundParams(map[string]any{"team_id": b.project.TeamID})
 		}
 		return b.onceOnly(tool, &b.boardCreate, func(c *store.Project) bool { return c.BoardChannelID == "" },
-			func(ctx context.Context, result string) error {
+			func(ctx context.Context, llmCtx *llm.Context, result string) error {
 				id := resultID(result, "board_id", "channel_id", "id")
 				if id == "" {
 					return errors.New("the created board did not report its channel")
@@ -268,7 +269,7 @@ func (b *Binder) bindBoards(tool llm.Tool, name string) (llm.Tool, bool) {
 				if b.callbacks.BoardCreated == nil {
 					return errors.New("board creation is not available")
 				}
-				return b.callbacks.BoardCreated(ctx, b.project, id)
+				return b.callbacks.BoardCreated(ctx, llmCtx, b.project, id)
 			}), true
 	default:
 		return llm.Tool{}, false
@@ -289,7 +290,7 @@ func (b *Binder) bindPlaybooks(tool llm.Tool, name string) (llm.Tool, bool) {
 		}
 		tool = tool.WithBoundParams(map[string]any{"channel_id": b.project.ChannelID})
 		return b.onceOnly(tool, &b.runCreate, func(c *store.Project) bool { return c.PlaybookRunID == "" },
-			func(ctx context.Context, result string) error {
+			func(ctx context.Context, llmCtx *llm.Context, result string) error {
 				id := resultID(result, "run_id", "id")
 				if id == "" {
 					return errors.New("the created checklist did not report its run")
@@ -297,7 +298,7 @@ func (b *Binder) bindPlaybooks(tool llm.Tool, name string) (llm.Tool, bool) {
 				if b.callbacks.RunCreated == nil {
 					return errors.New("checklist creation is not available")
 				}
-				return b.callbacks.RunCreated(ctx, b.project, id)
+				return b.callbacks.RunCreated(ctx, llmCtx, b.project, id)
 			}), true
 	default:
 		return llm.Tool{}, false
@@ -442,7 +443,7 @@ func turnThreadRoot(llmCtx *llm.Context) string {
 // onceOnly lets a create tool succeed at most once per project: once per
 // binder, and only while the project, re-read at call time, still lacks the
 // link. record runs after the create succeeded.
-func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.Project) bool, record func(ctx context.Context, result string) error) llm.Tool {
+func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.Project) bool, record func(ctx context.Context, llmCtx *llm.Context, result string) error) llm.Tool {
 	inner := tool.Resolver
 	tool.Resolver = func(ctx context.Context, llmCtx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
 		b.mu.Lock()
@@ -466,7 +467,7 @@ func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.P
 		}()
 
 		if pending != "" {
-			if err := record(ctx, pending); err != nil {
+			if err := record(ctx, llmCtx, pending); err != nil {
 				return "", fmt.Errorf("created, but failed to link it to the project: %w", err)
 			}
 			linked = true
@@ -490,7 +491,7 @@ func (b *Binder) onceOnly(tool llm.Tool, state *onceState, missing func(*store.P
 			return result, err
 		}
 		created = result
-		if err := record(ctx, result); err != nil {
+		if err := record(ctx, llmCtx, result); err != nil {
 			return result, fmt.Errorf("created, but failed to link it to the project: %w", err)
 		}
 		linked = true

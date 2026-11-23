@@ -122,7 +122,7 @@ func (s *Service) linkCharterTool(project *store.Project) llm.Tool {
 		Description: "Record an artifact saved in the project channel's artifact library as the project charter, so the project panel links to it.",
 		Schema:      llm.NewJSONSchemaFromStruct[linkCharterArgs](),
 		AutoExecute: true,
-		Resolver: func(ctx context.Context, _ *llm.Context, get llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(ctx context.Context, llmCtx *llm.Context, get llm.ToolArgumentGetter) (string, error) {
 			var args linkCharterArgs
 			if err := get(&args); err != nil {
 				return "", fmt.Errorf("invalid arguments: %w", err)
@@ -138,8 +138,15 @@ func (s *Service) linkCharterTool(project *store.Project) llm.Tool {
 			if artifactChannelID != channelID {
 				return "", errors.New("the charter must be an artifact in the project channel")
 			}
+			current, err := s.deps.Store.GetProject(channelID)
+			if err != nil {
+				return "", fmt.Errorf("failed to check the project: %w", err)
+			}
 			if err := s.deps.Store.SetProjectArtifact(channelID, false, artifactID); err != nil {
 				return "", fmt.Errorf("failed to link the charter: %w", err)
+			}
+			if current.CharterArtifactID != artifactID {
+				s.addProjectBookmark(ctx, llmCtx, current, charterBookmarkDisplayName, artifactQuery(artifactID))
 			}
 			s.broadcast(channelID)
 			return "Charter linked.", nil

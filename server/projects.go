@@ -20,11 +20,15 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/projects"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
+
+// projectSetupSystemPrompt renders a project's setup conversation.
+const projectSetupSystemPrompt = prompts.PromptProjectSetupSystem
 
 // wrapUpHistoryPosts is how many recent channel posts the wrap-up reads.
 const wrapUpHistoryPosts = 200
@@ -40,6 +44,31 @@ func (p projectPlatform) GetUser(userID string) (*model.User, error) {
 }
 func (p projectPlatform) GetChannel(channelID string) (*model.Channel, error) {
 	return p.client.Channel.Get(channelID)
+}
+func (p projectPlatform) GetTeam(teamID string) (*model.Team, error) {
+	return p.client.Team.Get(teamID)
+}
+func (p projectPlatform) UsernameTaken(username string) (bool, error) {
+	_, err := p.client.User.GetByUsername(username)
+	if errors.Is(err, pluginapi.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+func (p projectPlatform) HideDirectChannel(userID, otherUserID string) error {
+	_, err := p.client.Channel.GetByName("", model.GetDMNameFromIds(userID, otherUserID), false)
+	if errors.Is(err, pluginapi.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if appErr := p.api.UpdatePreferencesForUser(userID, []model.Preference{{
+		UserId: userID, Category: model.PreferenceCategoryDirectChannelShow, Name: otherUserID, Value: "false",
+	}}); appErr != nil {
+		return appErr
+	}
+	return nil
 }
 func (p projectPlatform) CreateChannel(channel *model.Channel) (*model.Channel, error) {
 	if err := p.client.Channel.Create(channel); err != nil {
@@ -249,8 +278,7 @@ const playbooksActingUserHeader = "Mattermost-Plugin-Acting-User-Id"
 // projectPlaybooks reads and finishes checklist runs through the Playbooks
 // plugin's REST API, as the given user.
 type projectPlaybooks struct {
-	api     plugin.API
-	siteURL string
+	api plugin.API
 }
 
 type playbookRun struct {
@@ -313,7 +341,7 @@ func (p projectPlaybooks) RunSummary(ctx context.Context, runID, viewerUserID st
 		RunID:     runID,
 		Name:      run.Name,
 		Status:    run.CurrentStatus,
-		URL:       strings.TrimRight(p.siteURL, "/") + "/playbooks/runs/" + url.PathEscape(runID),
+		URL:       "/playbooks/runs/" + url.PathEscape(runID),
 	}
 	for _, checklist := range run.Checklists {
 		for _, item := range checklist.Items {

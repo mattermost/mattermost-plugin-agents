@@ -76,6 +76,11 @@ type AgentThreadRequest struct {
 	// User's DM with the agent. Otherwise the agent posts Message and the
 	// first turn runs unattended.
 	PostAsUser bool
+	// RequesterPresent runs the first turn as if User had posted it: they
+	// just started the thread from an authenticated request in Channel and
+	// are looking at it. It is only allowed in a channel other than a DM and
+	// without PostAsUser.
+	RequesterPresent bool
 	// Instruction is the first user turn the agent answers when the agent
 	// posts the root. It is never posted. Ignored with PostAsUser, where the
 	// root post is the first user turn.
@@ -97,6 +102,10 @@ type AgentThread struct {
 // ErrAgentThreadPostAsUserOutsideDM is returned when PostAsUser is requested
 // for a channel other than the user's DM with the agent.
 var ErrAgentThreadPostAsUserOutsideDM = errors.New("an agent thread can only be posted as the user in their direct message with the agent")
+
+// ErrAgentThreadRequesterPresentInDM is returned when RequesterPresent is
+// requested together with PostAsUser or in a direct message.
+var ErrAgentThreadRequesterPresentInDM = errors.New("an agent thread's requester can only be marked present for an agent-posted thread outside direct messages")
 
 // StartAgentThread posts the root of a new thread and answers it with the
 // agent in the background, under the same turn policy as a message the user
@@ -142,12 +151,15 @@ func (c *Conversations) StartAgentThread(ctx context.Context, req AgentThreadReq
 	if req.PostAsUser && !isDMBetween(channel, botUserID, req.User.Id) {
 		return nil, ErrAgentThreadPostAsUserOutsideDM
 	}
+	if req.RequesterPresent && (req.PostAsUser || channel.IsGroupOrDirect()) {
+		return nil, ErrAgentThreadRequesterPresentInDM
+	}
 
 	root := &model.Post{ChannelId: channel.Id, Message: req.Message}
 	for key, value := range req.RootProps {
 		root.AddProp(key, value)
 	}
-	turnReq := turnRequest{bot: req.Bot, user: req.User, channel: channel, operation: req.Operation}
+	turnReq := turnRequest{bot: req.Bot, user: req.User, channel: channel, operation: req.Operation, requesterPresent: req.RequesterPresent}
 	if req.PostAsUser {
 		root.UserId = req.User.Id
 		turnReq.trigger = root

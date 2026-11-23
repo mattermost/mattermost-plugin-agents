@@ -49,6 +49,7 @@ func TestProjectPlaybooksActAsTheUser(t *testing.T) {
 					assert.True(t, summary.Available)
 					assert.Equal(t, 2, summary.TotalTasks)
 					assert.Equal(t, 1, summary.CompletedTasks)
+					assert.Equal(t, "/playbooks/runs/run1", summary.URL, "the link stays in the app")
 				}
 				return err
 			},
@@ -66,7 +67,7 @@ func TestProjectPlaybooksActAsTheUser(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var seen []string
 			api := interPluginPlaybooks(t, "alice", &seen)
-			require.NoError(t, tt.call(t, projectPlaybooks{api: api, siteURL: "https://mm.example.com"}))
+			require.NoError(t, tt.call(t, projectPlaybooks{api: api}))
 			assert.Equal(t, []string{tt.want}, seen)
 		})
 	}

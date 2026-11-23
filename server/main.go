@@ -732,8 +732,17 @@ func (p *Plugin) OnActivate() error {
 		AutoReply:         projectAutoReply{service: autoreplyService},
 		WrapUps:           projectWrapUps{client: pluginAPI, projects: func() *projects.Service { return projectsService }},
 		Artifacts:         projectArtifacts{library: channelLibrary},
-		Playbooks:         projectPlaybooks{api: p.API, siteURL: *siteURL},
-		SetupSystemPrompt: agentSetupService.SystemPrompt,
+		Playbooks:         projectPlaybooks{api: p.API},
+		SetupSystemPrompt: func(llmCtx *llm.Context) (string, error) {
+			return prompts.Format(projectSetupSystemPrompt, llmCtx)
+		},
+		SiteURL: func() string {
+			if siteURL := pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL; siteURL != nil {
+				return *siteURL
+			}
+			return ""
+		},
+		I18n: i18nBundle,
 	})
 	contextBuilder.SetProjectRuntime(projectsService)
 	conversationsService.SetProjectGate(projectsService)

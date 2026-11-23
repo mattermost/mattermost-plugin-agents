@@ -20,6 +20,8 @@ type Response struct {
 	store.Project
 	AgentDisplayName string `json:"agent_display_name"`
 	AgentUsername    string `json:"agent_username"`
+	// SetupCompleted reports whether the agent finished its setup thread.
+	SetupCompleted bool `json:"setup_completed"`
 }
 
 // ProjectResponse returns project with its agent's display fields.
@@ -37,6 +39,7 @@ func (s *Service) ProjectResponse(project *store.Project) Response {
 		cfg := bot.GetConfig()
 		r.AgentDisplayName = cfg.DisplayName
 		r.AgentUsername = cfg.Name
+		r.SetupCompleted = cfg.SetupCompletedAt != 0
 	}
 	return r
 }

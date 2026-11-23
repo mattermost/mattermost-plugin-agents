@@ -315,6 +315,13 @@ type fakePlatform struct {
 	addMemberErr  map[string]error
 	// leavesOnAdd names users who leave P while being added elsewhere.
 	leavesOnAdd map[string]bool
+	// usernames are taken by accounts, active or not; createBotErr names
+	// usernames CreateBot refuses.
+	usernames      map[string]bool
+	createBotErr   map[string]error
+	usernameErr    error
+	hiddenDMs      []string
+	channelPurpose string
 }
 
 func (f *fakePlatform) GetUser(id string) (*model.User, error) {
@@ -324,10 +331,27 @@ func (f *fakePlatform) GetUser(id string) (*model.User, error) {
 	return nil, errors.New("not found")
 }
 func (f *fakePlatform) GetChannel(id string) (*model.Channel, error) {
-	return &model.Channel{Id: id, Type: model.ChannelTypeOpen}, nil
+	return &model.Channel{Id: id, Type: model.ChannelTypeOpen, TeamId: "T", Name: "launch-plan"}, nil
+}
+func (f *fakePlatform) GetTeam(id string) (*model.Team, error) {
+	return &model.Team{Id: id, Name: "demo"}, nil
+}
+func (f *fakePlatform) UsernameTaken(username string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.usernames[username], f.usernameErr
+}
+func (f *fakePlatform) HideDirectChannel(userID, otherUserID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hiddenDMs = append(f.hiddenDMs, userID+"/"+otherUserID)
+	return nil
 }
 func (f *fakePlatform) CreateChannel(c *model.Channel) (*model.Channel, error) {
 	c.Id = model.NewId()
+	if c.Purpose == "" {
+		c.Purpose = f.channelPurpose
+	}
 	if f.created != nil {
 		f.created(c)
 	}
@@ -420,12 +444,15 @@ func (f *fakePlatform) BotChannels(string) ([]*model.Channel, error) {
 // CreateBot makes the plugin the owner when none is given, as Mattermost
 // does.
 func (f *fakePlatform) CreateBot(b *model.Bot) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.createBotErr[b.Username]; err != nil {
+		return err
+	}
 	b.UserId = "botuser"
 	if b.OwnerId == "" {
 		b.OwnerId = "mattermost-ai"
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.bots = append(f.bots, *b)
 	return nil
 }
@@ -482,11 +509,15 @@ func (f *fakeThreads) StartAgentThread(_ context.Context, req conversations.Agen
 	return &conversations.AgentThread{RootPost: &model.Post{Id: model.NewId()}}, nil
 }
 
-type fakeConfig struct{ enabled bool }
+type fakeConfig struct {
+	enabled bool
+	bots    []llm.BotConfig
+}
 
 func (f fakeConfig) EnableProjectChannels() bool   { return f.enabled }
 func (fakeConfig) ProjectDefaultServiceID() string { return "svc" }
 func (fakeConfig) ProjectDefaultModel() string     { return "" }
+func (f fakeConfig) GetBots() []llm.BotConfig      { return f.bots }
 
 type fakeAutoReply struct{ instructions *string }
 
@@ -829,14 +860,15 @@ func TestAuthorizerLimitsProjectAgentManagement(t *testing.T) {
 		mutate        func(p *store.Project)
 		want          bool
 	}{
-		{name: "lead", enabled: true, actor: "lead", want: true},
+		{name: "lead who is a channel admin", enabled: true, actor: "lead", channelAdmins: []string{"lead"}, want: true},
+		{name: "lead who isn't a channel admin", enabled: true, actor: "lead"},
 		{name: "channel admin", enabled: true, actor: "other", channelAdmins: []string{"other"}, want: true},
 		{name: "plain member", enabled: true, actor: "other"},
 		{name: "guest with channel roles", enabled: true, actor: "guest", channelAdmins: []string{"guest"}},
 		{name: "the agent's own bot", enabled: true, actor: "botuser"},
 		{name: "unknown user", enabled: true, actor: "nobody"},
-		{name: "setting off", actor: "lead"},
-		{name: "ended project", enabled: true, actor: "lead", mutate: func(p *store.Project) { p.State = store.ProjectStateEnded }},
+		{name: "setting off", actor: "lead", channelAdmins: []string{"lead"}},
+		{name: "ended project", enabled: true, actor: "lead", channelAdmins: []string{"lead"}, mutate: func(p *store.Project) { p.State = store.ProjectStateEnded }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1025,7 +1057,8 @@ func TestSystemPromptSuffixFencesTheStatusNote(t *testing.T) {
 			f := newFixture(t, true, project)
 
 			suffix := f.svc.SystemPromptSuffix(context.Background(), f.bot, tt.operation)
-			assert.Contains(t, suffix, "Board: none yet", "the project state is always there")
+			assert.Contains(t, suffix, "Current project state:", "the project state is always there")
+			assert.NotContains(t, suffix, "none yet", "a missing board or checklist isn't a to-do")
 			if !tt.wantNote {
 				assert.NotContains(t, suffix, "update_my_instructions")
 				assert.NotContains(t, suffix, "<project_status_note>")
@@ -1100,11 +1133,11 @@ func TestProjectLinksAcceptOnlyTheSameID(t *testing.T) {
 }
 
 func boardLink(c BinderCallbacks, p *store.Project, id string) error {
-	return c.BoardCreated(context.Background(), p, id)
+	return c.BoardCreated(context.Background(), nil, p, id)
 }
 
 func runLink(c BinderCallbacks, p *store.Project, id string) error {
-	return c.RunCreated(context.Background(), p, id)
+	return c.RunCreated(context.Background(), nil, p, id)
 }
 
 func TestStartCursorThreadAsksAndFencesTheTask(t *testing.T) {

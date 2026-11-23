@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -80,12 +81,14 @@ type Store interface {
 	RevokeProjectGrant(channelID, targetType, targetID string) error
 	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
+	ListAgents() ([]*llm.BotConfig, error)
 }
 
 // Platform is the Mattermost server API the projects service uses.
 type Platform interface {
 	GetUser(userID string) (*model.User, error)
 	GetChannel(channelID string) (*model.Channel, error)
+	GetTeam(teamID string) (*model.Team, error)
 	CreateChannel(channel *model.Channel) (*model.Channel, error)
 	ArchiveChannel(channelID string) error
 	AddTeamMember(teamID, userID string) error
@@ -99,6 +102,11 @@ type Platform interface {
 	BotChannels(userID string) ([]*model.Channel, error)
 	CreateBot(bot *model.Bot) error
 	DeactivateBot(botUserID string) error
+	// UsernameTaken reports whether any account, active or not, has username.
+	UsernameTaken(username string) (bool, error)
+	// HideDirectChannel hides userID's direct message with otherUserID from
+	// their sidebar, if that channel exists.
+	HideDirectChannel(userID, otherUserID string) error
 	CreatePost(post *model.Post) error
 	PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)
 	HasPermissionToTeam(userID, teamID string, permission *model.Permission) bool
@@ -122,6 +130,8 @@ type Config interface {
 	EnableProjectChannels() bool
 	ProjectDefaultServiceID() string
 	ProjectDefaultModel() string
+	// GetBots returns the agents defined in the plugin configuration.
+	GetBots() []llm.BotConfig
 }
 
 // AutoReply turns on ambient replies for an agent in a channel.
@@ -171,9 +181,13 @@ type Deps struct {
 	WrapUps   WrapUps
 	Artifacts Artifacts
 	Playbooks Playbooks
-	// SetupSystemPrompt renders the setup conversation's system prompt with
-	// extra instructions.
-	SetupSystemPrompt func(llmCtx *llm.Context, extraInstructions string) (string, error)
+	// SetupSystemPrompt renders the setup conversation's system prompt.
+	SetupSystemPrompt func(llmCtx *llm.Context) (string, error)
+	// SiteURL returns the server's site URL, which bookmarks link through.
+	// Nil or empty leaves bookmarks out.
+	SiteURL func() string
+	// I18n localizes the posts the service makes; nil posts English.
+	I18n *i18n.Bundle
 }
 
 // Service runs project channels.
@@ -287,13 +301,17 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 	if bot == nil || bot.GetConfig().ID != agent.ID {
 		return nil, errors.New("the project agent is not running")
 	}
+	purpose := strings.TrimSpace(channel.Purpose)
 	thread, err := s.deps.Threads.StartAgentThread(ctx, conversations.AgentThreadRequest{
 		Bot:         bot,
 		User:        actor,
 		Channel:     channel,
 		Operation:   llm.OperationAgentSetup,
-		Message:     "Let's set up this project. Tell me what it is for and what done looks like.",
-		Instruction: "Start the project setup with the people in this channel.",
+		Message:     s.setupRootMessage(actor, channel.DisplayName, purpose),
+		Instruction: setupKickoffInstruction(purpose),
+		// Only someone who just created the project from the dialog is
+		// looking at the setup thread; a project started from a DM is not.
+		RequesterPresent: req.CreatedFrom == store.ProjectCreatedFromModal,
 		RootProps: map[string]any{
 			conversations.ProjectThreadOperationProp: llm.OperationAgentSetup,
 			agentsetup.RootPostAgentIDProp:           agent.ID,
@@ -319,9 +337,28 @@ func (s *Service) CreateProject(ctx context.Context, actorID string, req CreateR
 // to every project turn by the conversation service, so it is not added here.
 func (s *Service) setupSystemPrompt(llmCtx *llm.Context) (string, error) {
 	if s.deps.SetupSystemPrompt == nil {
-		return setupInstructions, nil
+		return "", errors.New("the project setup prompt is not available")
 	}
-	return s.deps.SetupSystemPrompt(llmCtx, setupInstructions)
+	return s.deps.SetupSystemPrompt(llmCtx)
+}
+
+// setupRootMessage is the post that opens the setup thread, quoting the
+// project's purpose.
+func (s *Service) setupRootMessage(actor *model.User, title, purpose string) string {
+	t := func(id, fallback string, params ...any) string {
+		if s.deps.I18n == nil {
+			if len(params) > 0 {
+				return fmt.Sprintf(fallback, params...)
+			}
+			return fallback
+		}
+		return i18n.LocalizerFunc(s.deps.I18n, actor.Locale)(id, fallback, params...)
+	}
+	message := t("agents.project_setup_root_message", "Setting up **%s**.", strings.TrimSpace(title))
+	if purpose == "" {
+		return message
+	}
+	return message + "\n\n> " + strings.ReplaceAll(purpose, "\n", "\n> ")
 }
 
 // projectChannel creates the project channel, or returns the channel the
@@ -393,21 +430,15 @@ func channelNameFrom(displayName string) string {
 }
 
 func (s *Service) createAgent(actor *model.User, channel *model.Channel) (*llm.BotConfig, error) {
-	username := "project-" + strings.ToLower(model.NewId()[:12])
-	displayName := strings.TrimSpace(channel.DisplayName) + " agent"
-	mmBot := &model.Bot{
-		Username:    username,
-		DisplayName: displayName,
-		Description: "Project agent for ~" + channel.Name,
-	}
-	if err := s.deps.Platform.CreateBot(mmBot); err != nil {
-		return nil, fmt.Errorf("failed to create the project agent's bot: %w", err)
+	mmBot, err := s.createAgentBot(channel)
+	if err != nil {
+		return nil, err
 	}
 	agent := &llm.BotConfig{
 		BotUserID:             mmBot.UserId,
 		CreatorID:             actor.Id,
-		Name:                  username,
-		DisplayName:           displayName,
+		Name:                  mmBot.Username,
+		DisplayName:           mmBot.DisplayName,
 		ServiceID:             s.deps.Config.ProjectDefaultServiceID(),
 		Model:                 s.deps.Config.ProjectDefaultModel(),
 		ProjectChannelID:      channel.Id,
@@ -426,6 +457,58 @@ func (s *Service) createAgent(actor *model.User, channel *model.Channel) (*llm.B
 		return agent, fmt.Errorf("failed to start the project agent: %w", err)
 	}
 	return agent, nil
+}
+
+// createAgentBot creates the project agent's bot account under the first
+// free username derived from the channel. A name another create claims
+// between the check and the create moves on to the next one.
+func (s *Service) createAgentBot(channel *model.Channel) (*model.Bot, error) {
+	agentNames, err := s.agentNames()
+	if err != nil {
+		return nil, err
+	}
+	for _, username := range agentUsernameCandidates(channel) {
+		if !validAgentUsername(username) || agentNames[username] {
+			continue
+		}
+		taken, err := s.deps.Platform.UsernameTaken(username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check the project agent's username: %w", err)
+		}
+		if taken {
+			continue
+		}
+		bot := &model.Bot{
+			Username:    username,
+			DisplayName: agentDisplayName(channel),
+			Description: "Project agent for " + strings.TrimSpace(channel.DisplayName),
+		}
+		createErr := s.deps.Platform.CreateBot(bot)
+		if createErr == nil {
+			return bot, nil
+		}
+		if taken, err := s.deps.Platform.UsernameTaken(username); err != nil || !taken {
+			return nil, fmt.Errorf("failed to create the project agent's bot: %w", createErr)
+		}
+	}
+	return nil, errors.New("no username is free for the project agent")
+}
+
+// agentNames returns the names every agent already uses: two agents with one
+// name can't both run.
+func (s *Service) agentNames() (map[string]bool, error) {
+	agents, err := s.deps.Store.ListAgents()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list agents: %w", err)
+	}
+	names := make(map[string]bool, len(agents))
+	for _, agent := range agents {
+		names[agent.Name] = true
+	}
+	for _, bot := range s.deps.Config.GetBots() {
+		names[bot.Name] = true
+	}
+	return names, nil
 }
 
 // grantProjectAccess adds the bot to the team and the project channel as a
@@ -500,6 +583,9 @@ func (s *Service) undoCreate(project *store.Project, agent *llm.BotConfig) {
 		}
 		if err := s.deps.Platform.DeactivateBot(agent.BotUserID); err != nil {
 			s.deps.Platform.LogError("Failed to deactivate project bot after failed create", "bot_user_id", agent.BotUserID, "error", err)
+		}
+		if err := s.deps.Platform.HideDirectChannel(project.CreatedBy, agent.BotUserID); err != nil {
+			s.deps.Platform.LogError("Failed to hide the direct message with the project bot after failed create", "bot_user_id", agent.BotUserID, "error", err)
 		}
 		if err := s.deps.Bots.EnsureBots(); err != nil {
 			s.deps.Platform.LogError("Failed to reload agents after failed project create", "error", err)
@@ -1041,9 +1127,13 @@ func (s *Service) BindPluginTools(_ context.Context, bot *bots.Bot, llmCtx *llm.
 func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 	return BinderCallbacks{
 		Current: s.deps.Store.GetProject,
-		BoardCreated: func(_ context.Context, project *store.Project, boardChannelID string) error {
-			if err := s.linkOnce(project.ChannelID, boardChannelID, s.deps.Store.SetProjectBoard, func(p *store.Project) string { return p.BoardChannelID }); err != nil {
+		BoardCreated: func(ctx context.Context, llmCtx *llm.Context, project *store.Project, boardChannelID string) error {
+			linked, err := s.linkOnce(project.ChannelID, boardChannelID, s.deps.Store.SetProjectBoard, func(p *store.Project) string { return p.BoardChannelID })
+			if err != nil {
 				return err
+			}
+			if linked {
+				s.addProjectBookmark(ctx, llmCtx, project, boardBookmarkDisplayName, paneQuery(projectPaneTabBoard))
 			}
 			if err := s.grantChannelAdmin(project.ChannelID, boardChannelID, bot.BotUserID()); err != nil {
 				return err
@@ -1060,9 +1150,13 @@ func (s *Service) binderCallbacks(bot *bots.Bot) BinderCallbacks {
 		},
 		CursorAgents:  s.cursorAgentIDs,
 		CursorCreates: s.cursorCreates,
-		RunCreated: func(_ context.Context, project *store.Project, runID string) error {
-			if err := s.linkOnce(project.ChannelID, runID, s.deps.Store.SetProjectRun, func(p *store.Project) string { return p.PlaybookRunID }); err != nil {
+		RunCreated: func(ctx context.Context, llmCtx *llm.Context, project *store.Project, runID string) error {
+			linked, err := s.linkOnce(project.ChannelID, runID, s.deps.Store.SetProjectRun, func(p *store.Project) string { return p.PlaybookRunID })
+			if err != nil {
 				return err
+			}
+			if linked {
+				s.addProjectBookmark(ctx, llmCtx, project, runBookmarkDisplayName, paneQuery(projectPaneTabChecklist))
 			}
 			s.broadcast(project.ChannelID)
 			return nil
@@ -1169,20 +1263,24 @@ func (s *Service) boardProject(channelID, userID string) (*store.Project, error)
 }
 
 // linkOnce records id with set, and accepts a link that already holds the
-// same id, so a retry after a later step failed can finish that step.
-func (s *Service) linkOnce(channelID, id string, set func(channelID, id string) error, linked func(*store.Project) string) error {
+// same id, so a retry after a later step failed can finish that step. It
+// reports whether this call recorded the link.
+func (s *Service) linkOnce(channelID, id string, set func(channelID, id string) error, linked func(*store.Project) string) (bool, error) {
 	err := set(channelID, id)
+	if err == nil {
+		return true, nil
+	}
 	if !errors.Is(err, store.ErrProjectLinkSet) {
-		return err
+		return false, err
 	}
 	project, getErr := s.deps.Store.GetProject(channelID)
 	if getErr != nil {
-		return getErr
+		return false, getErr
 	}
 	if project.State == store.ProjectStateEnded || linked(project) != id {
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // OperationTools implements conversations.OperationTools for the project
@@ -1212,12 +1310,10 @@ func (s *Service) CanSetUpInChannel(_ context.Context, agent *llm.BotConfig, req
 	return s.canAdminChannel(requesterID, project)
 }
 
-// Instructions implements agentsetup.Extension.
-func (s *Service) Instructions(agent *llm.BotConfig) string {
-	if !s.Claims(agent) {
-		return ""
-	}
-	return setupInstructions
+// Instructions implements agentsetup.Extension. Project setup renders its own
+// prompt, so nothing is added to the regular one.
+func (s *Service) Instructions(*llm.BotConfig) string {
+	return ""
 }
 
 // Tools implements agentsetup.Extension.
