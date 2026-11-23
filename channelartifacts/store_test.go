@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -253,6 +254,42 @@ func TestStoreSweepDeletedChannelsOnlyRemovesRows(t *testing.T) {
 	var files int
 	require.NoError(t, db.Get(&files, `SELECT COUNT(*) FROM FileInfo WHERE Id = $1`, dropVersion.FileID))
 	assert.Equal(t, 1, files, "the library never touches source files")
+}
+
+func TestStoreSweepLeavesNoVersionRowsOfASaveInFlight(t *testing.T) {
+	db := testDB(t)
+	s := channelartifacts.NewStore(db)
+	id := model.NewId()
+	require.NoError(t, s.Create(id, model.NewId(), "Drop", newVersion(t, db, sha(1)), 5))
+
+	// A save holds the artifact row and has inserted version 2 but not committed.
+	save, err := db.Beginx()
+	require.NoError(t, err)
+	var locked string
+	require.NoError(t, save.Get(&locked, `SELECT ID FROM Agents_ChannelArtifacts WHERE ID = $1 FOR UPDATE`, id))
+	next := newVersion(t, db, sha(2))
+	_, err = save.Exec(`
+		INSERT INTO Agents_ChannelArtifactVersions (ArtifactID, Version, PostID, FileID, SHA256, Size, SourceBotUserID, CreatedBy, CreateAt)
+		VALUES ($1, 2, $2, $3, $4, $5, $6, $7, 1)`, id, next.PostID, next.FileID, next.SHA256, next.Size, next.SourceBotUserID, next.UserID)
+	require.NoError(t, err)
+
+	swept := make(chan error, 1)
+	go func() {
+		_, sweepErr := s.SweepDeletedChannels()
+		swept <- sweepErr
+	}()
+	select {
+	case sweepErr := <-swept:
+		assert.NoError(t, sweepErr)
+		require.Fail(t, "the sweep did not wait for the save that holds the artifact row")
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.NoError(t, save.Commit())
+	require.NoError(t, <-swept)
+
+	var versionRows int
+	require.NoError(t, db.Get(&versionRows, `SELECT COUNT(*) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id))
+	assert.Zero(t, versionRows, "no version row outlives its artifact")
 }
 
 func TestStoreAddVersionRenamesInTheSameTransaction(t *testing.T) {
