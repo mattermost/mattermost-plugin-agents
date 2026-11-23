@@ -63,13 +63,16 @@ type selfConfig struct {
 	ChangeableFields []string             `json:"changeable_fields"`
 }
 
+var setupToolNames = []string{ToolGetMyConfig, ToolUpdateMyInstructions, ToolSetMyDisplayName, ToolDisableMyTools, ToolCompleteSetup}
+
 func (s *Service) setupTools(agentID string) []llm.Tool {
 	return []llm.Tool{
 		{
 			Name:        ToolGetMyConfig,
 			Description: "Read your own current configuration: display name, username, instructions, and which tools you have.",
 			Schema:      llm.NewJSONSchemaFromStruct[emptyArgs](),
-			// Reading the configuration the requester already manages has no side effect.
+			// The requester manages the agent and is present; every write is a new
+			// version they can restore.
 			AutoExecute: true,
 			Resolver: func(ctx context.Context, llmCtx *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return s.getMyConfig(ctx, requesterID(llmCtx), agentID)
@@ -77,6 +80,7 @@ func (s *Service) setupTools(agentID string) []llm.Tool {
 		},
 		{
 			Name:        ToolUpdateMyInstructions,
+			AutoExecute: true,
 			Description: "Replace your own instructions, which every future conversation with you starts from. Show the user the full text and get their confirmation first.",
 			Schema:      llm.NewJSONSchemaFromStruct[updateMyInstructionsArgs](),
 			Resolver: func(ctx context.Context, llmCtx *llm.Context, getArgs llm.ToolArgumentGetter) (string, error) {
@@ -92,6 +96,7 @@ func (s *Service) setupTools(agentID string) []llm.Tool {
 		},
 		{
 			Name:        ToolSetMyDisplayName,
+			AutoExecute: true,
 			Description: "Change the display name people see for you. Your username does not change.",
 			Schema:      llm.NewJSONSchemaFromStruct[setMyDisplayNameArgs](),
 			ValidateArguments: func(raw json.RawMessage) error {
@@ -119,6 +124,7 @@ func (s *Service) setupTools(agentID string) []llm.Tool {
 		},
 		{
 			Name:        ToolDisableMyTools,
+			AutoExecute: true,
 			Description: "Turn off some or all of your own tools. Only call it when the user asks for tools to be turned off; tools cannot be turned back on in setup.",
 			Schema:      llm.NewJSONSchemaFromStruct[disableMyToolsArgs](),
 			ValidateArguments: func(raw json.RawMessage) error {
@@ -145,6 +151,7 @@ func (s *Service) setupTools(agentID string) []llm.Tool {
 		},
 		{
 			Name:        ToolCompleteSetup,
+			AutoExecute: true,
 			Description: "Mark your setup as complete once the user confirms you are set up.",
 			Schema:      llm.NewJSONSchemaFromStruct[emptyArgs](),
 			Resolver: func(ctx context.Context, llmCtx *llm.Context, _ llm.ToolArgumentGetter) (string, error) {

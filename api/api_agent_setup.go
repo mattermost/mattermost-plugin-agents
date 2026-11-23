@@ -60,6 +60,7 @@ func (a *API) handleStartAgentSetup(c *gin.Context) {
 		return
 	}
 
+	// The setup turn keeps running after this handler returns.
 	thread, err := a.agentSetup.Start(context.WithoutCancel(c.Request.Context()), user, agentID)
 	switch {
 	case errors.Is(err, agentsetup.ErrDisabled):

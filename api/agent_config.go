@@ -49,6 +49,10 @@ func (b agentConfigBackend) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVers
 	return b.a.agentStore.UpdateAgent(cfg, meta)
 }
 
+func (b agentConfigBackend) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta store.AgentVersionMeta) error {
+	return b.a.agentStore.UpdateAgentIfUnchanged(cfg, expectedUpdateAt, meta)
+}
+
 func (b agentConfigBackend) PluginConfig() (*config.Config, error) {
 	return b.a.configStore.GetConfig()
 }

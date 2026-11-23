@@ -363,8 +363,9 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
 	}
+	// A new thread with no operation becomes an ordinary conversation.
 	operation := p.effectiveOperation()
-	opts = append(opts, builder.WithLLMContextSkills(operation == "" || operation == llm.OperationConversation))
+	opts = append(opts, builder.WithLLMContextSkills(operation == llm.OperationConversation || (p.conv == nil && operation == "")))
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
@@ -387,6 +388,11 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			llmContext.Tools = llm.NewToolStore()
 		}
 		llmContext.Tools.AddTools(builder.AuditScopedToolCalls(llmContext, p.bot, p.user.Id, tools.OperationTools(ctx, p.bot, llmContext)))
+		if filter, ok := tools.(OperationCatalogFilter); ok {
+			llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool {
+				return filter.KeepOperationTool(ctx, p.bot, llmContext, tool)
+			})
+		}
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():

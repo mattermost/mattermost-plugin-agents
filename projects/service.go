@@ -562,6 +562,16 @@ func (s *Service) canLead(actorID string, project *store.Project) bool {
 	return s.deps.Platform.HasPermissionToChannel(actorID, project.ChannelID, model.PermissionManageChannelRoles)
 }
 
+// canAdminChannel reports whether actorID is an active person who can manage
+// the project channel's roles: its channel admins, and team and system admins.
+func (s *Service) canAdminChannel(actorID string, project *store.Project) bool {
+	user, err := s.deps.Platform.GetUser(actorID)
+	if err != nil || user.IsGuest() || user.IsBot || user.DeleteAt != 0 {
+		return false
+	}
+	return s.deps.Platform.HasPermissionToChannel(actorID, project.ChannelID, model.PermissionManageChannelRoles)
+}
+
 func (s *Service) isMember(channelID, userID string) bool {
 	member, err := s.deps.Platform.GetChannelMember(channelID, userID)
 	return err == nil && member != nil
@@ -921,7 +931,9 @@ func (s *Service) CheckTurn(_ context.Context, bot *bots.Bot, channel *model.Cha
 // AgentStore reads and updates stored agents.
 type AgentStore interface {
 	ListAgents() ([]*llm.BotConfig, error)
-	UpdateAgentIfUnchanged(cfg *llm.BotConfig, meta store.AgentVersionMeta, expectedUpdateAt int64) (bool, error)
+	// UpdateAgentIfUnchanged returns store.ErrAgentChanged when the agent was
+	// saved since it was read.
+	UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta store.AgentVersionMeta) error
 }
 
 // BackfillAgentTools gives project agents created before their embedded
@@ -942,13 +954,14 @@ func BackfillAgentTools(agents AgentStore) (int, error) {
 		}
 		next := *agent
 		next.EnabledMCPTools = ProjectEmbeddedTools()
-		ok, err := agents.UpdateAgentIfUnchanged(&next, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem}, agent.UpdateAt)
+		err := agents.UpdateAgentIfUnchanged(&next, agent.UpdateAt, store.AgentVersionMeta{Source: store.AgentVersionSourceSystem})
+		if errors.Is(err, store.ErrAgentChanged) {
+			continue
+		}
 		if err != nil {
 			return updated, fmt.Errorf("failed to give project agent %s its tools: %w", agent.ID, err)
 		}
-		if ok {
-			updated++
-		}
+		updated++
 	}
 	return updated, nil
 }
@@ -1186,10 +1199,17 @@ func (s *Service) Claims(agent *llm.BotConfig) bool {
 	return agent != nil && agent.IsProjectAgent()
 }
 
-// AutoExecute implements agentsetup.Extension: a project agent writes its
-// own name and instructions without asking, within what agentconfig allows.
-func (s *Service) AutoExecute(agent *llm.BotConfig, _ string) bool {
-	return s.Claims(agent) && s.enabled()
+// CanSetUpInChannel implements agentsetup.Extension: only someone who can
+// manage the project channel's roles runs the agent's setup there.
+func (s *Service) CanSetUpInChannel(_ context.Context, agent *llm.BotConfig, requesterID string) bool {
+	if !s.Claims(agent) || !s.enabled() {
+		return false
+	}
+	project, err := s.deps.Store.GetProject(agent.ProjectChannelID)
+	if err != nil || !project.Live() || project.AgentID != agent.ID {
+		return false
+	}
+	return s.canAdminChannel(requesterID, project)
 }
 
 // Instructions implements agentsetup.Extension.
@@ -1231,8 +1251,8 @@ func (s *Service) ArtifactActor(project *store.Project) channelartifacts.Actor {
 	return channelartifacts.Actor{UserID: project.AgentBotUserID, BotUserID: project.AgentBotUserID}
 }
 
-// Authorizer wraps base so a live project's lead, and whoever manages the
-// project channel's roles, may manage its agent's non-sensitive settings.
+// Authorizer wraps base so whoever manages a live project channel's roles may
+// manage its agent's non-sensitive settings.
 // Sensitive settings stay with base.
 func (s *Service) Authorizer(base agentconfig.Authorizer) agentconfig.Authorizer {
 	return projectAuthorizer{base: base, service: s}
@@ -1254,7 +1274,7 @@ func (a projectAuthorizer) CanManage(ctx context.Context, actorID string, agent 
 	if err != nil || !project.Live() || project.AgentID != agent.ID {
 		return false
 	}
-	return a.service.canLead(actorID, project)
+	return a.service.canAdminChannel(actorID, project)
 }
 
 func (a projectAuthorizer) CanManageServiceAccounts(ctx context.Context, actorID string, agent *llm.BotConfig) bool {

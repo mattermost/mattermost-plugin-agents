@@ -302,6 +302,52 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	require.False(t, env.lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
 }
 
+// presenceGatedOperation offers its write tool only while a user is present,
+// as the agent setup operation does.
+type presenceGatedOperation struct {
+	mu           sync.Mutex
+	interactives []bool
+}
+
+func (o *presenceGatedOperation) OperationTools(_ context.Context, _ *bots.Bot, llmCtx *llm.Context) []llm.Tool {
+	o.mu.Lock()
+	o.interactives = append(o.interactives, llmCtx.ToolCatalog.InteractiveUserPresent)
+	o.mu.Unlock()
+	tools := []llm.Tool{{Name: "op_read", Schema: llm.NewJSONSchemaFromStruct[struct{}]()}}
+	if llmCtx.ToolCatalog.InteractiveUserPresent {
+		tools = append(tools, llm.Tool{Name: "op_write", AutoExecute: true, Schema: llm.NewJSONSchemaFromStruct[struct{}]()})
+	}
+	return tools
+}
+
+func TestResumeConversationOfAnOperationIsUnattended(t *testing.T) {
+	env := newWakeEnv(t, nil)
+	env.seedTurn(t, "user-1", "user", "please watch the job", nil, 1, 0)
+	const operation = "presence_gated"
+	op := &presenceGatedOperation{}
+	env.c.RegisterOperation(operation, op)
+	env.convStore.mu.Lock()
+	env.convStore.conversations[env.conv.ID].Operation = operation
+	env.convStore.mu.Unlock()
+
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: channel.Id, RootId: "root-post-id"}
+	env.expectLiveWake(post, channel, wakeUserID)
+
+	env.resume(t, post, wakeUserID)
+
+	require.Len(t, env.lm.requests, 1)
+	var names []string
+	for _, tool := range env.lm.requests[0].Context.Tools.GetTools() {
+		names = append(names, tool.Name)
+	}
+	require.Contains(t, names, "op_read")
+	require.NotContains(t, names, "op_write", "nobody is present on a wake to stand behind an auto-run write")
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	require.Equal(t, []bool{false}, op.interactives)
+}
+
 func TestResumeConversationInChannelOnlySeesPostsVettedBeforeSleeping(t *testing.T) {
 	tests := []struct {
 		name     string

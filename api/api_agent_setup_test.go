@@ -8,17 +8,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	prompttemplates "github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -43,27 +46,28 @@ func (c *autoSetupConfig) EnableAgentAutoSetup() bool { return c.enabled }
 type recordingThreads struct {
 	mu       sync.Mutex
 	requests []conversations.AgentThreadRequest
+	contexts []context.Context
 }
 
-func (r *recordingThreads) StartAgentThread(_ context.Context, req conversations.AgentThreadRequest) (*conversations.AgentThread, error) {
+func (r *recordingThreads) StartAgentThread(ctx context.Context, req conversations.AgentThreadRequest) (*conversations.AgentThread, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.requests = append(r.requests, req)
+	r.contexts = append(r.contexts, ctx)
 	return &conversations.AgentThread{
 		RootPost:  &model.Post{Id: "setuproot00000000000000000", ChannelId: "setupdm0000000000000000000", UserId: req.User.Id, Message: req.Message},
 		BotUserID: req.Bot.BotUserID(),
 	}, nil
 }
 
-// testExtension claims every agent and auto-runs the named setup tools.
+// testExtension claims every agent.
 type testExtension struct {
-	autoRun      []string
 	instructions string
 }
 
 func (x *testExtension) Claims(*llm.BotConfig) bool { return true }
-func (x *testExtension) AutoExecute(_ *llm.BotConfig, toolName string) bool {
-	return slices.Contains(x.autoRun, toolName)
+func (x *testExtension) CanSetUpInChannel(context.Context, *llm.BotConfig, string) bool {
+	return true
 }
 func (x *testExtension) Instructions(*llm.BotConfig) string { return x.instructions }
 func (x *testExtension) Tools(context.Context, *llm.BotConfig, *llm.Context) []llm.Tool {
@@ -121,7 +125,14 @@ func requesterDMContext(userID string) *llm.Context {
 	return &llm.Context{
 		RequestingUser: &model.User{Id: userID},
 		Channel:        &model.Channel{Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds(setupBotUserID, userID)},
+		ToolCatalog:    llm.ToolCatalogContext{InteractiveUserPresent: true},
 	}
+}
+
+func unattendedDMContext(userID string) *llm.Context {
+	llmCtx := requesterDMContext(userID)
+	llmCtx.ToolCatalog.InteractiveUserPresent = false
+	return llmCtx
 }
 
 func setupTool(t *testing.T, tools []llm.Tool, name string) llm.Tool {
@@ -258,30 +269,30 @@ func TestListAgentsCanSetUp(t *testing.T) {
 	}
 }
 
-func TestSetupToolsOffered(t *testing.T) {
-	writeTools := []string{agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName, agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup}
+func TestSetupOperationTools(t *testing.T) {
+	allTools := []string{agentsetup.ToolGetMyConfig, agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName, agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup}
 	tests := []struct {
-		name        string
-		enabled     bool
-		extension   *testExtension
-		llmCtx      *llm.Context
-		creatorID   string
-		wantOffered bool
-		wantAutoRun []string
+		name      string
+		enabled   bool
+		extension *testExtension
+		llmCtx    *llm.Context
+		creatorID string
+		wantTools []string
 	}{
-		{name: "regular agent: writes ask for approval", enabled: true, llmCtx: requesterDMContext(testUserID), wantOffered: true,
-			wantAutoRun: []string{agentsetup.ToolGetMyConfig}},
+		{name: "interactive DM: every setup tool runs without approval", enabled: true, llmCtx: requesterDMContext(testUserID), wantTools: allTools},
+		{name: "unattended DM turn: only get_my_config", enabled: true, llmCtx: unattendedDMContext(testUserID), wantTools: []string{agentsetup.ToolGetMyConfig}},
 		{name: "setting off", llmCtx: requesterDMContext(testUserID)},
-		{name: "an extension auto-runs the tools it chooses", extension: &testExtension{autoRun: []string{agentsetup.ToolUpdateMyInstructions, agentsetup.ToolCompleteSetup}},
-			llmCtx: requesterDMContext(testUserID), wantOffered: true,
-			wantAutoRun: []string{agentsetup.ToolGetMyConfig, agentsetup.ToolUpdateMyInstructions, agentsetup.ToolCompleteSetup}},
+		{name: "an extension adds its tools", extension: &testExtension{}, llmCtx: requesterDMContext(testUserID),
+			wantTools: append(slices.Clone(allTools), "extension_tool")},
 		{name: "outside the requester's DM with the agent", enabled: true, llmCtx: &llm.Context{
 			RequestingUser: &model.User{Id: testUserID},
 			Channel:        &model.Channel{Type: model.ChannelTypeOpen, Name: "town-square"},
+			ToolCatalog:    llm.ToolCatalogContext{InteractiveUserPresent: true},
 		}},
 		{name: "another user's DM with the agent", enabled: true, llmCtx: &llm.Context{
 			RequestingUser: &model.User{Id: testUserID},
 			Channel:        &model.Channel{Type: model.ChannelTypeDirect, Name: model.GetDMNameFromIds(setupBotUserID, "someoneelse000000000000000")},
+			ToolCatalog:    llm.ToolCatalogContext{InteractiveUserPresent: true},
 		}},
 		{name: "a requester who cannot manage the agent", enabled: true, llmCtx: requesterDMContext(testUserID), creatorID: "someoneelse000000000000000"},
 	}
@@ -300,24 +311,44 @@ func TestSetupToolsOffered(t *testing.T) {
 			}
 
 			tools := env.setup.OperationTools(context.Background(), bot, tt.llmCtx)
-			if !tt.wantOffered {
-				assert.Empty(t, tools)
-				return
-			}
-			var autoRun []string
+			var names []string
 			for _, tool := range tools {
-				if tool.AutoExecute {
-					autoRun = append(autoRun, tool.Name)
-				}
+				names = append(names, tool.Name)
 				assert.Empty(t, tool.ServerOrigin, "setup tools are built-ins")
+				if tool.Name != "extension_tool" {
+					assert.True(t, tool.AutoExecute, "%s runs without approval", tool.Name)
+				}
 			}
-			assert.ElementsMatch(t, tt.wantAutoRun, autoRun)
-			for _, name := range writeTools {
-				setupTool(t, tools, name)
-			}
-			if tt.extension != nil {
-				setupTool(t, tools, "extension_tool")
-			}
+			assert.ElementsMatch(t, tt.wantTools, names)
+		})
+	}
+}
+
+func TestKeepOperationTool(t *testing.T) {
+	dm := requesterDMContext(testUserID)
+	channel := &llm.Context{Channel: &model.Channel{Type: model.ChannelTypePrivate}}
+	tests := []struct {
+		name string
+		ctx  *llm.Context
+		tool llm.Tool
+		want bool
+	}{
+		{name: "DM keeps a setup tool", ctx: dm, tool: llm.Tool{Name: agentsetup.ToolUpdateMyInstructions}, want: true},
+		{name: "DM drops built-in web search", ctx: dm, tool: llm.Tool{Name: mmtools.WebSearchToolName}},
+		{name: "DM drops another built-in", ctx: dm, tool: llm.Tool{Name: "CreateFile"}},
+		{name: "DM drops an MCP tool", ctx: dm, tool: llm.Tool{Name: "search", ServerOrigin: "https://mcp.example.com"}},
+		{name: "DM drops an MCP tool named like a setup tool", ctx: dm, tool: llm.Tool{Name: agentsetup.ToolGetMyConfig, ServerOrigin: "https://mcp.example.com"}},
+		{name: "unknown channel fails closed", ctx: &llm.Context{}, tool: llm.Tool{Name: "CreateFile"}},
+		{name: "channel drops built-in web search", ctx: channel, tool: llm.Tool{Name: mmtools.WebSearchToolName}},
+		{name: "channel drops built-in web fetch", ctx: channel, tool: llm.Tool{Name: mmtools.WebSearchSourceToolName}},
+		{name: "channel keeps another built-in", ctx: channel, tool: llm.Tool{Name: "CreateFile"}, want: true},
+		{name: "channel keeps an MCP tool", ctx: channel, tool: llm.Tool{Name: "WebSearch", ServerOrigin: "https://mcp.example.com"}, want: true},
+	}
+	env := setupAgentSetupEnv(t, true)
+	defer env.Cleanup(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, env.setup.KeepOperationTool(context.Background(), env.bot, tt.ctx, tt.tool))
 		})
 	}
 }
@@ -539,4 +570,48 @@ func TestGetMyConfigAndCompleteSetup(t *testing.T) {
 	env.agentStore.agents[setupAgentID].CreatorID = "someoneelse000000000000000"
 	_, err = callSetupTool(t, setupTool(t, tools, agentsetup.ToolGetMyConfig), requesterDMContext(testUserID), map[string]any{})
 	require.ErrorContains(t, err, "not allowed", "reads are re-authorized too")
+}
+
+func TestSetupToolWriteKeepsAConcurrentManagerSave(t *testing.T) {
+	env := setupAgentSetupEnv(t, true)
+	defer env.Cleanup(t)
+	tools := env.setup.OperationTools(context.Background(), env.bot, requesterDMContext(testUserID))
+
+	raced := false
+	env.agentStore.beforeConditionalUpdate = func() {
+		if raced {
+			return
+		}
+		raced = true
+		stored := env.agentStore.agents[setupAgentID]
+		stored.EnabledNativeTools = nil
+		stored.UpdateAt++
+	}
+
+	_, err := callSetupTool(t, setupTool(t, tools, agentsetup.ToolUpdateMyInstructions), requesterDMContext(testUserID),
+		map[string]any{"instructions": setupNewPromptText})
+	require.NoError(t, err)
+
+	stored := env.agentStore.agents[setupAgentID]
+	assert.True(t, raced)
+	assert.Equal(t, setupNewPromptText, stored.CustomInstructions)
+	assert.Empty(t, stored.EnabledNativeTools, "the manager's concurrent change must not be overwritten")
+}
+
+func TestStartAgentSetupTurnOutlivesTheRequest(t *testing.T) {
+	env := setupAgentSetupEnv(t, true)
+	defer env.Cleanup(t)
+	reqCtx, cancel := context.WithCancel(context.Background())
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/agents/"+setupAgentID+"/setup", nil).WithContext(reqCtx)
+	ginCtx.Request.Header.Set("Mattermost-User-Id", testUserID)
+	ginCtx.Params = gin.Params{{Key: "agentid", Value: setupAgentID}}
+
+	env.api.handleStartAgentSetup(ginCtx)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	cancel() // net/http cancels the request context once the handler returns.
+
+	require.Len(t, env.threads.contexts, 1)
+	assert.NoError(t, env.threads.contexts[0].Err(), "the background setup turn must not be canceled with the request")
 }

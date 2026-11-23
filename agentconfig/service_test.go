@@ -29,6 +29,13 @@ type fakeBackend struct {
 	managers map[string]bool
 	admins   map[string]bool
 	changed  []string
+
+	// updateErrs pops an error for each UpdateAgent call while non-empty.
+	updateErrs []error
+	// deletePolicyErr fails DeleteAgentPolicy.
+	deletePolicyErr error
+	// beforeConditionalUpdate runs at the start of each UpdateAgentIfUnchanged.
+	beforeConditionalUpdate func()
 }
 
 func newFakeBackend() *fakeBackend {
@@ -55,10 +62,35 @@ func (f *fakeBackend) GetAgent(id string) (*llm.BotConfig, error) {
 }
 
 func (f *fakeBackend) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
+	if len(f.updateErrs) > 0 {
+		err := f.updateErrs[0]
+		f.updateErrs = f.updateErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
+	cfg.UpdateAt = f.agents[cfg.ID].UpdateAt + 1
 	c := *cfg
 	f.agents[cfg.ID] = &c
 	f.metas = append(f.metas, meta)
 	return nil
+}
+
+func (f *fakeBackend) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta store.AgentVersionMeta) error {
+	if f.beforeConditionalUpdate != nil {
+		f.beforeConditionalUpdate()
+	}
+	if f.agents[cfg.ID].UpdateAt != expectedUpdateAt {
+		return store.ErrAgentChanged
+	}
+	return f.UpdateAgent(cfg, meta)
+}
+
+// concurrentSave changes the stored agent the way another manager's save would.
+func (f *fakeBackend) concurrentSave(change func(cfg *llm.BotConfig)) {
+	cfg := f.agents[testAgentID]
+	change(cfg)
+	cfg.UpdateAt++
 }
 
 func (f *fakeBackend) PluginConfig() (*config.Config, error) {
@@ -71,7 +103,9 @@ func (f *fakeBackend) ValidateAgentWrite(context.Context, string, *llm.BotConfig
 	return nil
 }
 
-func (f *fakeBackend) DeleteAgentPolicy(context.Context, string, string) error { return nil }
+func (f *fakeBackend) DeleteAgentPolicy(context.Context, string, string) error {
+	return f.deletePolicyErr
+}
 
 func (f *fakeBackend) GetUserByUsername(string) (*model.User, error) {
 	return nil, pluginapi.ErrNotFound
@@ -269,6 +303,89 @@ func TestUpdateErrorKinds(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, tt.wantKind, KindOf(err))
 			assert.Empty(t, backend.metas)
+		})
+	}
+}
+
+func TestSelfSetupWriteKeepsConcurrentSaves(t *testing.T) {
+	tests := []struct {
+		name string
+		// conflicts is how many conditional writes race with another save.
+		conflicts   int
+		preloaded   bool
+		wantKind    Kind
+		wantWritten bool
+	}{
+		{name: "a save between read and write is kept and the change re-applied", conflicts: 1, wantWritten: true},
+		{name: "a caller that preloaded the agent gets a conflict", conflicts: 1, preloaded: true, wantKind: KindConflict},
+		{name: "persistent races give up with a conflict", conflicts: selfSetupWriteAttempts, wantKind: KindConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			races := 0
+			backend.beforeConditionalUpdate = func() {
+				if races < tt.conflicts {
+					races++
+					backend.concurrentSave(func(cfg *llm.BotConfig) { cfg.Model = "chosen-by-manager" })
+				}
+			}
+			req := UpdateRequest{
+				ActorID: testManager, AgentID: testAgentID, Meta: selfSetup(testManager),
+				Apply: func(cfg *llm.BotConfig) error { cfg.CustomInstructions = "new"; return nil },
+			}
+			if tt.preloaded {
+				req.Stored, _ = backend.GetAgent(testAgentID)
+			}
+
+			_, err := newTestService(backend).Update(context.Background(), req)
+			stored := backend.agents[testAgentID]
+			assert.Equal(t, "chosen-by-manager", stored.Model, "the concurrent save must never be overwritten")
+			if !tt.wantWritten {
+				require.Error(t, err)
+				assert.Equal(t, tt.wantKind, KindOf(err))
+				require.ErrorIs(t, err, store.ErrAgentChanged)
+				assert.Equal(t, "original", stored.CustomInstructions)
+				assert.Empty(t, backend.metas)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "new", stored.CustomInstructions)
+			assert.Equal(t, []store.AgentVersionMeta{selfSetup(testManager)}, backend.metas)
+		})
+	}
+}
+
+func TestPolicyDeleteFailureKeepsRegistriesInSyncWithTheStore(t *testing.T) {
+	tests := []struct {
+		name            string
+		rollbackErr     error
+		wantStoredLevel llm.UserAccessLevel
+		wantRefreshed   bool
+	}{
+		{name: "rollback succeeds: the store and registries keep the old config", wantStoredLevel: llm.UserAccessLevelAttributeBased},
+		{name: "rollback fails: registries load the stored new config", rollbackErr: errors.New("db down"), wantStoredLevel: llm.UserAccessLevelAll, wantRefreshed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.agents[testAgentID].UserAccessLevel = llm.UserAccessLevelAttributeBased
+			backend.deletePolicyErr = errors.New("policy service down")
+			backend.updateErrs = []error{nil, tt.rollbackErr}
+
+			_, err := newTestService(backend).Update(context.Background(), UpdateRequest{
+				ActorID: testManager, AgentID: testAgentID,
+				Meta:  store.AgentVersionMeta{ActorID: testManager, Source: store.AgentVersionSourceUpdate},
+				Apply: func(cfg *llm.BotConfig) error { cfg.UserAccessLevel = llm.UserAccessLevelAll; return nil },
+			})
+			require.Error(t, err)
+			assert.Equal(t, KindPolicy, KindOf(err))
+			assert.Equal(t, tt.wantStoredLevel, backend.agents[testAgentID].UserAccessLevel)
+			if tt.wantRefreshed {
+				assert.Equal(t, []string{testAgentID}, backend.changed)
+			} else {
+				assert.Empty(t, backend.changed)
+			}
 		})
 	}
 }

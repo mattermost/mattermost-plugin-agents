@@ -355,25 +355,28 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 // state recorded as a "system" version first. It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
 func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) error {
-	_, err := s.updateAgent(cfg, meta, nil)
-	return err
+	return s.updateAgent(cfg, meta, nil)
 }
 
-// UpdateAgentIfUnchanged is UpdateAgent for an agent whose UpdateAt is still
-// expectedUpdateAt. It returns false, writing nothing, when the agent changed
-// since the caller read it.
-func (s *Store) UpdateAgentIfUnchanged(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt int64) (bool, error) {
+// ErrAgentChanged is returned by UpdateAgentIfUnchanged when the agent was
+// saved since the caller read it.
+var ErrAgentChanged = errors.New("the agent was changed since it was read")
+
+// UpdateAgentIfUnchanged is UpdateAgent for a read-modify-write that must not
+// overwrite a concurrent save: it writes only while the agent's UpdateAt is
+// still expectedUpdateAt, and returns ErrAgentChanged otherwise.
+func (s *Store) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, meta AgentVersionMeta) error {
 	return s.updateAgent(cfg, meta, &expectedUpdateAt)
 }
 
-func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt *int64) (updated bool, err error) {
+func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedUpdateAt *int64) (err error) {
 	if err = validateAgentVersionMeta(meta); err != nil {
-		return false, err
+		return err
 	}
 
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return false, fmt.Errorf("failed to begin agent update transaction: %w", err)
+		return fmt.Errorf("failed to begin agent update transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -383,18 +386,18 @@ func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedU
 
 	current, err := lockActiveAgentTx(tx, cfg.ID)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if current == nil {
-		return false, fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
 	if expectedUpdateAt != nil && current.UpdateAt != *expectedUpdateAt {
-		return false, tx.Rollback()
+		return ErrAgentChanged
 	}
 
 	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// Millisecond timestamps can collide when create and update run in the same ms; ensure UpdateAt advances.
@@ -464,29 +467,29 @@ func (s *Store) updateAgent(cfg *llm.BotConfig, meta AgentVersionMeta, expectedU
 		cfg.ID,
 	)
 	if err != nil {
-		return false, fmt.Errorf("failed to update agent %q: %w", cfg.ID, err)
+		return fmt.Errorf("failed to update agent %q: %w", cfg.ID, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("failed to check rows affected for agent %q: %w", cfg.ID, err)
+		return fmt.Errorf("failed to check rows affected for agent %q: %w", cfg.ID, err)
 	}
 	if rowsAffected == 0 {
-		return false, fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
 
 	snapshot := agentVersionSnapshot(cfg)
 	if _, err = insertAgentVersionTx(tx, cfg.ID, latest+1, snapshot, meta, changedVersionFields(latestConfig, snapshot), now); err != nil {
-		return false, err
+		return err
 	}
 	if err = s.pruneAgentVersionsTx(tx, cfg.ID, latest+1); err != nil {
-		return false, err
+		return err
 	}
 	if err = tx.Commit(); err != nil {
-		return false, fmt.Errorf("failed to commit agent update: %w", err)
+		return fmt.Errorf("failed to commit agent update: %w", err)
 	}
 
-	return true, nil
+	return nil
 }
 
 // DeleteAgent performs a soft delete by setting DeleteAt to the current

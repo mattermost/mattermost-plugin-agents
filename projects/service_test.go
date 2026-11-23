@@ -273,20 +273,20 @@ func (m *memStore) ListAgents() ([]*llm.BotConfig, error) {
 	}
 	return out, nil
 }
-func (m *memStore) UpdateAgentIfUnchanged(cfg *llm.BotConfig, _ store.AgentVersionMeta, expectedUpdateAt int64) (bool, error) {
+func (m *memStore) UpdateAgentIfUnchanged(cfg *llm.BotConfig, expectedUpdateAt int64, _ store.AgentVersionMeta) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.agents {
 		if m.agents[i].ID == cfg.ID {
 			if m.agents[i].UpdateAt != expectedUpdateAt {
-				return false, nil
+				return store.ErrAgentChanged
 			}
 			m.agents[i] = *cfg
 			m.agents[i].UpdateAt++
-			return true, nil
+			return nil
 		}
 	}
-	return false, errors.New("no such agent")
+	return errors.New("no such agent")
 }
 func (m *memStore) DeleteAgent(id string) error {
 	m.mu.Lock()

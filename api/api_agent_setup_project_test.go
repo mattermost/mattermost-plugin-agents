@@ -38,6 +38,7 @@ func TestSetupToolsInProjectChannel(t *testing.T) {
 		name         string
 		projectAgent bool
 		creatorID    string
+		refuse       bool
 		llmCtx       *llm.Context
 		wantOffered  bool
 	}{
@@ -45,13 +46,14 @@ func TestSetupToolsInProjectChannel(t *testing.T) {
 		{name: "project agent in its channel with nobody present", projectAgent: true, llmCtx: channelCtx(setupProjectChannelID, false)},
 		{name: "project agent in another channel", projectAgent: true, llmCtx: channelCtx("otherchannel00000000000000", true)},
 		{name: "project agent for a requester who can't manage it", projectAgent: true, creatorID: "someoneelse000000000000000", llmCtx: channelCtx(setupProjectChannelID, true)},
+		{name: "project agent for a requester the extension doesn't trust with the channel", projectAgent: true, refuse: true, llmCtx: channelCtx(setupProjectChannelID, true)},
 		{name: "regular agent in a channel", llmCtx: channelCtx(setupProjectChannelID, true)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := setupAgentSetupEnv(t, true)
 			defer env.Cleanup(t)
-			env.setup.RegisterExtension(&projectOnlyExtension{})
+			env.setup.RegisterExtension(&projectOnlyExtension{refuse: tt.refuse})
 
 			cfg := env.bot.GetConfig()
 			if tt.projectAgent {
@@ -80,18 +82,22 @@ func TestSetupToolsInProjectChannel(t *testing.T) {
 	}
 }
 
-// projectOnlyExtension claims project agents only, like the projects service.
-type projectOnlyExtension struct{}
+// projectOnlyExtension claims project agents only, like the projects service,
+// and trusts every requester with the channel unless refuse is set.
+type projectOnlyExtension struct{ refuse bool }
 
-func (projectOnlyExtension) Claims(agent *llm.BotConfig) bool        { return agent.IsProjectAgent() }
-func (projectOnlyExtension) AutoExecute(*llm.BotConfig, string) bool { return false }
-func (projectOnlyExtension) Instructions(*llm.BotConfig) string      { return "" }
+func (projectOnlyExtension) Claims(agent *llm.BotConfig) bool { return agent.IsProjectAgent() }
+func (x projectOnlyExtension) CanSetUpInChannel(context.Context, *llm.BotConfig, string) bool {
+	return !x.refuse
+}
+func (projectOnlyExtension) Instructions(*llm.BotConfig) string { return "" }
 func (projectOnlyExtension) Tools(context.Context, *llm.BotConfig, *llm.Context) []llm.Tool {
 	return nil
 }
 
 const (
 	setupLeadID         = "projectlead000000000000000"
+	projectAdminID      = "projectadmin00000000000000"
 	projectMemberID     = "projectmember0000000000000"
 	projectGuestID      = "projectguest00000000000000"
 	setupProjectAgentID = "projectagent00000000000000"
@@ -117,12 +123,13 @@ func (s projectStoreStub) GetProject(channelID string) (*store.Project, error) {
 	return &cp, nil
 }
 
-// projectPlatformStub knows the project's users and members, and that nobody
-// can manage the channel's roles.
+// projectPlatformStub knows the project's users and members, and which of
+// them can manage the channel's roles.
 type projectPlatformStub struct {
 	projects.Platform
 	users   map[string]*model.User
 	members []string
+	admins  []string
 }
 
 func (p projectPlatformStub) GetUser(id string) (*model.User, error) {
@@ -139,8 +146,8 @@ func (p projectPlatformStub) GetChannelMember(channelID, userID string) (*model.
 	return nil, errors.New("not a member")
 }
 
-func (p projectPlatformStub) HasPermissionToChannel(string, string, *model.Permission) bool {
-	return false
+func (p projectPlatformStub) HasPermissionToChannel(userID, channelID string, permission *model.Permission) bool {
+	return channelID == projectChannelP && permission.Id == model.PermissionManageChannelRoles.Id && slices.Contains(p.admins, userID)
 }
 
 func (p projectPlatformStub) LogError(string, ...any) {}
@@ -157,14 +164,15 @@ func (projectsEnabled) EnableProjectChannels() bool     { return true }
 func (projectsEnabled) ProjectDefaultServiceID() string { return "svc-1" }
 func (projectsEnabled) ProjectDefaultModel() string     { return "" }
 
-func TestProjectLeadSetsUpTheProjectAgentWithoutAgentPermissions(t *testing.T) {
+func TestChannelAdminSetsUpTheProjectAgentWithoutAgentPermissions(t *testing.T) {
 	tests := []struct {
 		name      string
 		actor     string
 		wantSaved bool
 	}{
-		{name: "project lead", actor: setupLeadID, wantSaved: true},
-		{name: "ordinary member", actor: projectMemberID},
+		{name: "project lead who is a channel admin", actor: setupLeadID, wantSaved: true},
+		{name: "channel admin who isn't the lead", actor: projectAdminID, wantSaved: true},
+		{name: "project lead who is no longer a channel admin", actor: projectMemberID},
 		{name: "guest member", actor: projectGuestID},
 		{name: "non-member", actor: testUserID},
 	}
@@ -191,10 +199,12 @@ func TestProjectLeadSetsUpTheProjectAgentWithoutAgentPermissions(t *testing.T) {
 					users: map[string]*model.User{
 						setupLeadID:     {Id: setupLeadID, Roles: model.SystemUserRoleId},
 						projectMemberID: {Id: projectMemberID, Roles: model.SystemUserRoleId},
+						projectAdminID:  {Id: projectAdminID, Roles: model.SystemUserRoleId},
 						projectGuestID:  {Id: projectGuestID, Roles: model.SystemGuestRoleId},
 						testUserID:      {Id: testUserID, Roles: model.SystemUserRoleId},
 					},
-					members: []string{setupLeadID, projectMemberID, projectGuestID, setupProjectBotID},
+					members: []string{setupLeadID, projectMemberID, projectAdminID, projectGuestID, setupProjectBotID},
+					admins:  []string{setupLeadID, projectAdminID, projectGuestID},
 				},
 				Bots:      env.bots,
 				Threads:   projectThreadsStub{},
@@ -224,14 +234,12 @@ func TestProjectLeadSetsUpTheProjectAgentWithoutAgentPermissions(t *testing.T) {
 				return
 			}
 
-			// Other members' posts are in a project thread's context, so every
-			// write asks the lead even though project turns run tools unasked.
-			for _, name := range []string{agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName, agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup} {
+			// A channel admin's setup writes run without approval.
+			for _, name := range []string{agentsetup.ToolGetMyConfig, agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName, agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup} {
 				tool := setupTool(t, tools, name)
-				assert.True(t, tool.AlwaysAsk, name)
-				assert.False(t, tool.AutoExecute, name)
+				assert.False(t, tool.AlwaysAsk, name)
+				assert.True(t, tool.AutoExecute, name)
 			}
-			assert.False(t, setupTool(t, tools, agentsetup.ToolGetMyConfig).AlwaysAsk, "reading the configuration doesn't ask")
 
 			_, err := callSetupTool(t, setupTool(t, tools, agentsetup.ToolUpdateMyInstructions), llmCtx, map[string]any{"instructions": setupNewPromptText})
 			require.NoError(t, err)

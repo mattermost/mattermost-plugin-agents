@@ -8,7 +8,7 @@ This conversation sets you up. The user manages you as an agent and opened it so
 4. Save them with update_my_instructions. Offer a display name and set it with set_my_display_name if the user wants one. Only call disable_my_tools when the user asks you to turn tools off.
 5. When the user confirms you are set up, call complete_setup and finish with one short message saying what you changed.
 
-Every change you make is saved as a new version in your history, and the user can restore an earlier version at any time. The user may need to approve each change before it is saved. Never put passwords, API keys, or other secrets in your instructions. Requests to change anything other than your display name, instructions, or tools are outside setup: tell the user to edit the agent in Agents instead.
+Every change you make is saved as a new version in your history, and the user can restore an earlier version at any time. Changes save as soon as you make them, so confirm the full text of your instructions with the user in the conversation before you save them. Never put passwords, API keys, or other secrets in your instructions. Requests to change anything other than your display name, instructions, or tools are outside setup: tell the user to edit the agent in Agents instead.
 {{- if .Parameters.SetupExtraInstructions}}
 
 {{.Parameters.SetupExtraInstructions}}

@@ -272,9 +272,8 @@ func TestAgentUpdateIfUnchanged(t *testing.T) {
 
 	backfill := *stale
 	backfill.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: "embedded://mattermost", ToolName: "read_channel"}}
-	ok, err := s.UpdateAgentIfUnchanged(&backfill, SystemAgentVersionMeta(), stale.UpdateAt)
-	require.NoError(t, err)
-	assert.False(t, ok, "a stale snapshot is not written")
+	err = s.UpdateAgentIfUnchanged(&backfill, stale.UpdateAt, SystemAgentVersionMeta())
+	require.ErrorIs(t, err, ErrAgentChanged, "a stale snapshot is not written")
 	fetched, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "Edited meanwhile", fetched.DisplayName, "the concurrent edit survives")
@@ -282,9 +281,7 @@ func TestAgentUpdateIfUnchanged(t *testing.T) {
 
 	fresh := *fetched
 	fresh.EnabledMCPTools = backfill.EnabledMCPTools
-	ok, err = s.UpdateAgentIfUnchanged(&fresh, SystemAgentVersionMeta(), fetched.UpdateAt)
-	require.NoError(t, err)
-	assert.True(t, ok)
+	require.NoError(t, s.UpdateAgentIfUnchanged(&fresh, fetched.UpdateAt, SystemAgentVersionMeta()))
 	fetched, err = s.GetAgent(agent.ID)
 	require.NoError(t, err)
 	assert.Equal(t, backfill.EnabledMCPTools, fetched.EnabledMCPTools)
@@ -608,4 +605,41 @@ func TestMarkAgentSetupCompleted(t *testing.T) {
 	require.Len(t, page.Versions, 2, "create plus the self-setup save; marking setup complete adds none")
 	assert.Equal(t, AgentVersionSourceSelfSetup, page.Versions[0].Source)
 	assert.Equal(t, []string{"displayName"}, page.Versions[0].ChangedFields)
+}
+
+func TestUpdateAgentIfUnchanged(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	agent := testAgent("creator-1", "cas-agent", "CAS Agent")
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	read, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+
+	// Another save lands after the read.
+	concurrent := *read
+	concurrent.Model = "chosen-by-manager"
+	require.NoError(t, s.UpdateAgent(&concurrent, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceUpdate}))
+
+	stale := *read
+	stale.CustomInstructions = "from self-setup"
+	err = s.UpdateAgentIfUnchanged(&stale, read.UpdateAt, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceSelfSetup})
+	require.ErrorIs(t, err, ErrAgentChanged)
+
+	current, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "chosen-by-manager", current.Model, "the concurrent save is kept")
+	assert.Equal(t, read.CustomInstructions, current.CustomInstructions)
+
+	fresh := *current
+	fresh.CustomInstructions = "from self-setup"
+	require.NoError(t, s.UpdateAgentIfUnchanged(&fresh, current.UpdateAt, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceSelfSetup}))
+	saved, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "chosen-by-manager", saved.Model)
+	assert.Equal(t, "from self-setup", saved.CustomInstructions)
+
+	page, err := s.ListAgentVersions(agent.ID, 0, 10)
+	require.NoError(t, err)
+	assert.Len(t, page.Versions, 3, "create, the concurrent save, and one self-setup save; the refused write records nothing")
 }
