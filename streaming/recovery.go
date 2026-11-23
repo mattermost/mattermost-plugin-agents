@@ -22,8 +22,9 @@ type RecoveryStore interface {
 	GetStaleStreamingTurns(staleAfterMillis int64, limit uint64) ([]store.Turn, error)
 	ClaimStaleStreamingTurn(id string, staleAfterMillis int64) (bool, error)
 	ReleaseStreamingTurnClaim(id string) error
-	// GetConversation finds who requested the run, so they can be notified.
-	GetConversation(id string) (*store.Conversation, error)
+	// GetConversationIncludingArchived finds who requested the run, so they can
+	// be notified; archiving a conversation must not block repairing its post.
+	GetConversationIncludingArchived(id string) (*store.Conversation, error)
 }
 
 // ErrPostNotFound is returned by RecoveryClient.GetPost when the post no
@@ -138,13 +139,18 @@ func recoverTurn(ctx context.Context, rs RecoveryStore, client RecoveryClient, n
 	}
 	var requesterID string
 	if notifier != nil {
-		conv, convErr := rs.GetConversation(turn.ConversationID)
-		if convErr != nil {
+		conv, convErr := rs.GetConversationIncludingArchived(turn.ConversationID)
+		switch {
+		case errors.Is(convErr, store.ErrConversationNotFound):
+			// Nobody left to notify; the post is still repaired.
+			notifier = nil
+		case convErr != nil:
 			client.LogWarn("Failed to load conversation for abandoned stream", "error", convErr, "turn_id", turn.ID)
 			release()
 			return RecoveredStream{}, recoveryRetry
+		default:
+			requesterID = conv.UserID
 		}
-		requesterID = conv.UserID
 	}
 	if partial := PartialTextFromTurn(turn); len(partial) > len(post.Message) {
 		post.Message = partial

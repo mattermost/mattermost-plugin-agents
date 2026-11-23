@@ -516,7 +516,7 @@ type fakeRecoveryStore struct {
 	convErr     error
 }
 
-func (f *fakeRecoveryStore) GetConversation(id string) (*store.Conversation, error) {
+func (f *fakeRecoveryStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
 	if f.convErr != nil {
 		return nil, f.convErr
 	}
@@ -731,7 +731,18 @@ func TestRecoverAbandonedStreamsNotifiesTheRequester(t *testing.T) {
 		assert.Equal(t, notifications.DeliveryRequesterOnly, notifications.Decide(notifier.ends[0]))
 	})
 
-	t.Run("a requester that cannot be found keeps the turn retryable and the post untouched", func(t *testing.T) {
+	t.Run("a conversation that no longer exists still has its post repaired, without a notification", func(t *testing.T) {
+		notifier := &recoveryNotifier{}
+		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": post()}}
+
+		recovered, err := RecoverAbandonedStreams(context.Background(), newStore(store.ErrConversationNotFound), client, notifier, 10)
+		require.NoError(t, err)
+		require.Len(t, recovered, 1)
+		assert.Equal(t, InterruptedReasonLost, client.posts["post-1"].GetProp(InterruptedProp))
+		assert.Empty(t, notifier.ends)
+	})
+
+	t.Run("a requester lookup failure keeps the turn retryable and the post untouched", func(t *testing.T) {
 		notifier := &recoveryNotifier{}
 		rs := newStore(errors.New("db down"))
 		client := &fakeRecoveryClient{posts: map[string]*model.Post{"post-1": post()}}
