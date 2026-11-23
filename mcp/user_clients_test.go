@@ -773,3 +773,85 @@ type failingEmbeddedMCPServer struct {
 func (s failingEmbeddedMCPServer) CreateClientTransport(context.Context, string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, s.err
 }
+
+func TestCollectToolsFromSnapshotsPreservesReadOnlyHintAndSchema(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
+		},
+	}
+
+	userClients := &UserClients{
+		userID: "user-1",
+		clients: map[string]*Client{
+			"Demo": {
+				config: ServerConfig{
+					Name:    "Demo",
+					BaseURL: "https://demo.example.com/mcp",
+				},
+				tools: map[string]*gomcp.Tool{
+					"list_items": {
+						Name:        "list_items",
+						Description: "List items",
+						InputSchema: schema,
+						Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+					},
+					"delete_item": {
+						Name:        "delete_item",
+						Description: "Delete an item",
+						InputSchema: schema,
+						Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: false},
+					},
+					"plain_tool": {
+						Name:        "plain_tool",
+						Description: "No annotations",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	require.Len(t, tools, 3)
+
+	byBareName := make(map[string]llm.Tool, len(tools))
+	for _, tool := range tools {
+		byBareName[llm.BareMCPToolName(tool.Name)] = tool
+	}
+
+	tests := []struct {
+		name             string
+		toolName         string
+		wantReadOnlyHint bool
+		wantSchema       any
+	}{
+		{
+			name:             "readOnlyHint true with schema",
+			toolName:         "list_items",
+			wantReadOnlyHint: true,
+			wantSchema:       schema,
+		},
+		{
+			name:             "readOnlyHint false with schema",
+			toolName:         "delete_item",
+			wantReadOnlyHint: false,
+			wantSchema:       schema,
+		},
+		{
+			name:             "absent annotations and nil schema",
+			toolName:         "plain_tool",
+			wantReadOnlyHint: false,
+			wantSchema:       nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, ok := byBareName[tt.toolName]
+			require.True(t, ok, "expected tool %q to be collected", tt.toolName)
+			require.Equal(t, tt.wantReadOnlyHint, tool.ReadOnlyHint)
+			require.Equal(t, tt.wantSchema, tool.Schema)
+		})
+	}
+}

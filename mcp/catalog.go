@@ -44,6 +44,10 @@ type CatalogRequest struct {
 	// IgnoreAccessPolicy lists servers the invoker's access policy denies. Only
 	// for a system admin configuring an agent; never for a runtime catalog.
 	IgnoreAccessPolicy bool
+	// IncludeDisabledTools keeps admin-disabled tools on enabled servers in the
+	// returned catalog so agent configuration UIs can show why they are unavailable.
+	// Never set for runtime tool execution.
+	IncludeDisabledTools bool
 }
 
 // CatalogAccess is one request-scoped catalog result. PluginServers and
