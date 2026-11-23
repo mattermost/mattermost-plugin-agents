@@ -21,6 +21,8 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go bac
 - Prompt evals (non-interactive): `make evals-ci` (includes `./mcpserver`, which boots Mattermost containers and needs Docker)
   Provider: `LLM_PROVIDER=openai|anthropic|azure|mistral|bedrock|cohere|openaicompatible|all make evals-ci`
   Model: `ANTHROPIC_MODEL=claude-opus-5-5 make evals-ci`
+ Subset: `EVAL_PACKAGES=./react make evals-ci`
+ On pull requests, CI runs evals only while the PR has the `Run Evals` label.
 - Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
 
 When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`, `make check-i18n`, `make check-locks`, `make check-go-mods`) to isolate which step broke. CI runs the same drift checks; if i18n or a lockfile is out of sync, those targets regenerate the file in place — review and commit. Never pipe lint or test commands through `tail`/`grep` without `set -o pipefail` before committing — a pipe masks non-zero exit codes.

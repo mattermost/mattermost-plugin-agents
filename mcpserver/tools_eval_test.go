@@ -63,9 +63,7 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 		assert.True(e, found, "None of the tools %v was called by the LLM (called tools: %v)", alternatives, calledTools)
 	}
 
-	for _, rubric := range rubrics {
-		evals.LLMRubricT(e, rubric, response)
-	}
+	evals.LLMRubricsT(e, rubrics, response)
 
 	return response
 }
