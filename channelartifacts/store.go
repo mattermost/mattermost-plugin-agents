@@ -118,13 +118,15 @@ func (s *Store) Version(id string, version int) (*VersionRecord, error) {
 	return &rec, nil
 }
 
-// headWithSHA returns the artifact in the channel whose current version has sha.
+// headWithSHA returns the artifact in the channel whose current version has sha
+// and whose source still exists. An unavailable entry does not block saving the
+// same HTML again from a file that does exist.
 func headWithSHA(tx *sqlx.Tx, channelID, sha string) (string, error) {
 	var id string
 	err := tx.Get(&id, `
 		SELECT a.ID FROM Agents_ChannelArtifacts a
 		JOIN Agents_ChannelArtifactVersions v ON v.ArtifactID = a.ID AND v.Version = a.HeadVersion
-		WHERE a.ChannelID = $1 AND v.SHA256 = $2 LIMIT 1`, channelID, sha)
+		WHERE a.ChannelID = $1 AND v.SHA256 = $2 AND `+sourceAvailable+` LIMIT 1`, channelID, sha)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

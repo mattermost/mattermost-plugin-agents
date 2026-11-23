@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -63,16 +62,6 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 		},
 		nil, // ServerOptions - keeping nil for now
 	)
-
-	// The plugin injects an in-process service. Without one, fall back to the
-	// plugin HTTP callback that external servers use.
-	if channelArtifactsService == nil {
-		base := config.GetMMInternalServerURL()
-		if base == "" {
-			base = config.GetMMServerURL()
-		}
-		channelArtifactsService = tools.NewHTTPChannelArtifactsService(strings.TrimRight(base, "/") + "/plugins/mattermost-ai")
-	}
 
 	// Register tools with remote access mode (embedded clients are treated as remote)
 	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, channelArtifactsService, allowStateChangingTools)

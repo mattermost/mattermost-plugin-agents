@@ -161,3 +161,16 @@ func TestInMemoryServerNilPredicateFailsClosed(t *testing.T) {
 	require.True(t, result.IsError)
 	assert.Contains(t, toolResultText(t, result), "Enterprise")
 }
+
+func TestInMemoryServerWithoutAChannelArtifactsServiceOffersNoLibraryTools(t *testing.T) {
+	server := newTestInMemoryServer(t, func() bool { return true })
+
+	names, _ := listInMemoryToolNames(t, server)
+	require.NotEmpty(t, names)
+	assert.NotContains(t, names, "list_channel_artifacts")
+	assert.NotContains(t, names, "get_channel_artifact")
+
+	result := callInMemoryTool(t, server, "list_channel_artifacts")
+	assert.True(t, result.IsError)
+	assert.Contains(t, toolResultText(t, result), "not available")
+}
