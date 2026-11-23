@@ -233,9 +233,9 @@ describe('SaveToChannelButton', () => {
         expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalledWith(expect.anything(), channelId, entry().id, 'Renamed', expect.anything());
     });
 
-    test('retries only the bookmark rename, not the save, when it fails after a save', async () => {
+    test('a failing bookmark rename does not make a saved update look failed', async () => {
         jest.mocked(syncLibraryArtifactBookmarkTitle).mockReset();
-        jest.mocked(syncLibraryArtifactBookmarkTitle).mockRejectedValueOnce(new Error('bookmarks down')).mockResolvedValue(true);
+        jest.mocked(syncLibraryArtifactBookmarkTitle).mockRejectedValue(new Error('bookmarks down'));
         jest.mocked(listChannelArtifacts).mockResolvedValue(permissions({entries: [entry({source_file_id: fileId})]}));
         jest.mocked(createChannelArtifact).mockResolvedValue(entry({version: 2, title: 'Renamed'}));
         renderButton();
@@ -243,11 +243,9 @@ describe('SaveToChannelButton', () => {
         trustedClick(await screen.findByTestId('html-artifact-save-to-channel'));
         fireEvent.click(await screen.findByTestId('channel-artifact-update-ack'));
         fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
-        expect(await screen.findByText('Saved the artifact, but could not update its bookmark title.')).toBeTruthy();
 
-        fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
         await waitFor(() => expect(screen.queryByTestId('channel-artifact-save-modal')).toBeNull());
         expect(createChannelArtifact).toHaveBeenCalledTimes(1);
-        expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalledTimes(2);
+        expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalledTimes(1);
     });
 });
