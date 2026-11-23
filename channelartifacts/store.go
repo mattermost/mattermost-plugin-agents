@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // sourceAvailable is true when the version's source file still exists on its
@@ -322,19 +323,23 @@ func (s *Store) Purge(id string) error {
 func (s *Store) SweepDeletedChannels() (int64, error) {
 	var removed int64
 	err := s.tx(func(tx *sqlx.Tx) error {
-		if _, err := tx.Exec(`
-			DELETE FROM Agents_ChannelArtifactVersions WHERE ArtifactID IN (
-				SELECT a.ID FROM Agents_ChannelArtifacts a
-				WHERE NOT EXISTS (SELECT 1 FROM Channels c WHERE c.Id = a.ChannelID))`); err != nil {
-			return fmt.Errorf("failed to sweep channel artifact versions: %w", err)
-		}
-		res, err := tx.Exec(`
+		// The artifacts go first, as in Purge: deleting the row waits for a save
+		// that holds it, and a later save finds no row. Deleting versions first
+		// would miss a version that save commits while the delete waits.
+		var ids []string
+		if err := tx.Select(&ids, `
 			DELETE FROM Agents_ChannelArtifacts a
-			WHERE NOT EXISTS (SELECT 1 FROM Channels c WHERE c.Id = a.ChannelID)`)
-		if err != nil {
+			WHERE NOT EXISTS (SELECT 1 FROM Channels c WHERE c.Id = a.ChannelID)
+			RETURNING a.ID`); err != nil {
 			return fmt.Errorf("failed to sweep channel artifacts: %w", err)
 		}
-		removed, _ = res.RowsAffected()
+		removed = int64(len(ids))
+		if len(ids) == 0 {
+			return nil
+		}
+		if _, err := tx.Exec(`DELETE FROM Agents_ChannelArtifactVersions WHERE ArtifactID = ANY($1)`, pq.Array(ids)); err != nil {
+			return fmt.Errorf("failed to sweep channel artifact versions: %w", err)
+		}
 		return nil
 	})
 	return removed, err
