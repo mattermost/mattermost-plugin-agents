@@ -11,7 +11,7 @@ import {createChannelArtifact, listChannelArtifacts, type ChannelArtifactEntry, 
 import manifest from '@/manifest';
 import {pluginReducer} from '@/redux';
 
-import {canAddChannelBookmarks, pinLibraryArtifactBookmark} from './bookmark';
+import {canAddChannelBookmarks, pinLibraryArtifactBookmark, syncLibraryArtifactBookmarkTitle} from './bookmark';
 import SaveToChannelButton from './save_to_channel_button';
 
 jest.mock('@/client', () => ({
@@ -22,6 +22,7 @@ jest.mock('@/client', () => ({
 jest.mock('./bookmark', () => ({
     canAddChannelBookmarks: jest.fn(() => false),
     pinLibraryArtifactBookmark: jest.fn(),
+    syncLibraryArtifactBookmarkTitle: jest.fn(),
 }));
 
 jest.mock('../animated_modal_shell', () => ({
@@ -215,5 +216,38 @@ describe('SaveToChannelButton', () => {
         await waitFor(() => expect(screen.queryByTestId('channel-artifact-save-modal')).toBeNull());
         expect(createChannelArtifact).toHaveBeenCalledTimes(1);
         expect(pinLibraryArtifactBookmark).toHaveBeenCalledTimes(2);
+    });
+
+    test('a new version that renames the entry renames its channel bookmark too', async () => {
+        jest.mocked(syncLibraryArtifactBookmarkTitle).mockReset();
+        jest.mocked(syncLibraryArtifactBookmarkTitle).mockResolvedValue(true);
+        jest.mocked(listChannelArtifacts).mockResolvedValue(permissions({entries: [entry({source_file_id: fileId})]}));
+        jest.mocked(createChannelArtifact).mockResolvedValue(entry({version: 2, title: 'Renamed'}));
+        renderButton();
+
+        trustedClick(await screen.findByTestId('html-artifact-save-to-channel'));
+        fireEvent.click(await screen.findByTestId('channel-artifact-update-ack'));
+        fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
+
+        await waitFor(() => expect(screen.queryByTestId('channel-artifact-save-modal')).toBeNull());
+        expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalledWith(expect.anything(), channelId, entry().id, 'Renamed', expect.anything());
+    });
+
+    test('retries only the bookmark rename, not the save, when it fails after a save', async () => {
+        jest.mocked(syncLibraryArtifactBookmarkTitle).mockReset();
+        jest.mocked(syncLibraryArtifactBookmarkTitle).mockRejectedValueOnce(new Error('bookmarks down')).mockResolvedValue(true);
+        jest.mocked(listChannelArtifacts).mockResolvedValue(permissions({entries: [entry({source_file_id: fileId})]}));
+        jest.mocked(createChannelArtifact).mockResolvedValue(entry({version: 2, title: 'Renamed'}));
+        renderButton();
+
+        trustedClick(await screen.findByTestId('html-artifact-save-to-channel'));
+        fireEvent.click(await screen.findByTestId('channel-artifact-update-ack'));
+        fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
+        expect(await screen.findByText('Saved the artifact, but could not update its bookmark title.')).toBeTruthy();
+
+        fireEvent.click(screen.getByTestId('channel-artifact-save-confirm'));
+        await waitFor(() => expect(screen.queryByTestId('channel-artifact-save-modal')).toBeNull());
+        expect(createChannelArtifact).toHaveBeenCalledTimes(1);
+        expect(syncLibraryArtifactBookmarkTitle).toHaveBeenCalledTimes(2);
     });
 });

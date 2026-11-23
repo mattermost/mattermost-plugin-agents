@@ -22,7 +22,7 @@ import {getChannelArtifactsEnabled, getChannelLibrary} from '@/selectors';
 
 import {AnimatedModalShell} from '../animated_modal_shell';
 
-import {canAddChannelBookmarks, pinLibraryArtifactBookmark} from './bookmark';
+import {canAddChannelBookmarks, pinLibraryArtifactBookmark, syncLibraryArtifactBookmarkTitle} from './bookmark';
 import {useChannelLibrary} from './library';
 
 interface Props {
@@ -62,7 +62,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
 
     // Set once the save went through but pinning failed, so the next click retries
     // only the pin instead of saving the same content as another version.
-    const [pendingPin, setPendingPin] = useState<{id: string; title: string} | null>(null);
+    const [pendingPin, setPendingPin] = useState<{id: string; title: string; syncTitle: boolean} | null>(null);
 
     const existing = library.entries;
     const savedId = pickReplaceTarget(existing, fileId)?.id ?? null;
@@ -134,26 +134,40 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
     const onSave = async () => {
         setSaving(true);
         setError('');
-        const pinSaved = async (id: string, savedTitle: string) => {
-            if (!pinBookmark) {
+
+        // A new version can rename the entry, so a pinned bookmark follows it.
+        // Both follow-ups can be retried from the dialog without saving again.
+        const followUp = async (id: string, savedTitle: string, syncTitle: boolean) => {
+            if (!pinBookmark && !syncTitle) {
                 setOpen(false);
                 return;
             }
-            setPendingPin({id, title: savedTitle});
-            try {
-                const bookmark = await pinLibraryArtifactBookmark(store.getState(), channelId, id, savedTitle, store.dispatch);
-                if (!bookmark) {
+            setPendingPin({id, title: savedTitle, syncTitle});
+            if (syncTitle) {
+                try {
+                    await syncLibraryArtifactBookmarkTitle(store.getState(), channelId, id, savedTitle, store.dispatch);
+                } catch {
+                    setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not update its bookmark title.'}));
+                    return;
+                }
+            }
+            if (pinBookmark) {
+                try {
+                    const bookmark = await pinLibraryArtifactBookmark(store.getState(), channelId, id, savedTitle, store.dispatch);
+                    if (!bookmark) {
+                        setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
+                        return;
+                    }
+                } catch {
                     setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
                     return;
                 }
-                setPendingPin(null);
-                setOpen(false);
-            } catch {
-                setError(intl.formatMessage({defaultMessage: 'Saved the artifact, but could not pin it to bookmarks.'}));
             }
+            setPendingPin(null);
+            setOpen(false);
         };
         if (pendingPin) {
-            await pinSaved(pendingPin.id, pendingPin.title);
+            await followUp(pendingPin.id, pendingPin.title, pendingPin.syncTitle);
             setSaving(false);
             return;
         }
@@ -166,7 +180,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                 ...(replaceId ? {replace_id: replaceId} : {}),
             });
             store.dispatch({type: 'CHANNEL_ARTIFACT_UPSERT', entry});
-            await pinSaved(entry.id, entry.title);
+            await followUp(entry.id, entry.title, Boolean(replaceId) && library.canEdit);
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.startsWith('duplicate:')) {
                 const id = err.message.slice('duplicate:'.length);
@@ -175,7 +189,7 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                     return;
                 }
                 const stored = existing.find((entry) => entry.id === id);
-                await pinSaved(id, stored?.title || title.trim() || defaultTitle());
+                await followUp(id, stored?.title || title.trim() || defaultTitle(), false);
             } else {
                 setError(saveErrorMessage(err));
             }
@@ -326,8 +340,11 @@ const SaveToChannelButton = ({fileId, fileName, postId, channelId}: Props) => {
                                 disabled={saving || !canSubmit}
                                 data-testid='channel-artifact-save-confirm'
                             >
-                                {pendingPin && (
+                                {pendingPin && pinBookmark && (
                                     <FormattedMessage defaultMessage='Pin to channel bookmarks'/>
+                                )}
+                                {pendingPin && !pinBookmark && (
+                                    <FormattedMessage defaultMessage='Update bookmark title'/>
                                 )}
                                 {!pendingPin && updating && (
                                     <FormattedMessage defaultMessage='Update artifact'/>
