@@ -739,6 +739,7 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 				Description:  llm.SanitizeNonPrintableChars(tool.Description),
 				Title:        title,
 				Schema:       tool.InputSchema,
+				ReadOnlyHint: toolReadOnlyHint(tool),
 				Resolver:     resolver,
 				ServerOrigin: client.config.BaseURL,
 			})
