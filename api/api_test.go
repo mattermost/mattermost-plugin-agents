@@ -199,6 +199,7 @@ type mockMCPClientManager struct {
 	oauthNeededCalls              []mcpDisconnectCall
 	refreshErr                    error
 	refreshCalls                  []string
+	lastCatalogRequest            mcp.CatalogRequest
 	getContexts                   []context.Context
 	getServiceAccountCalls        []string
 	getServiceAccountInvokerCalls []string
@@ -291,6 +292,7 @@ func (m *mockMCPClientManager) GetToolsWithSelection(ctx context.Context, _ mcp.
 }
 
 func (m *mockMCPClientManager) catalogAccess(req mcp.CatalogRequest) mcp.CatalogAccess {
+	m.lastCatalogRequest = req
 	pluginSnapshot := m.accessPluginServers
 	if pluginSnapshot == nil {
 		pluginSnapshot = m.ListPluginServers()
