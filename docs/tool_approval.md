@@ -40,7 +40,7 @@ Some tools have no policy:
 
 - `search_tools` and `load_tool`, the dynamic loading helpers, always run without approval.
 - The built-in `CreateFile` tool always runs without approval, because it only attaches a file to the agent's own reply. `wait_for_async_work`, which schedules the agent's own follow-up, does too.
-- The agent setup tools (`get_my_config`, `update_my_instructions`, `set_my_display_name`, `disable_my_tools`, `complete_setup`) run without approval in the requester's own direct message while they are present. Each write is a version that can be restored. See [Set up an agent by chatting with it](managing_agents.md#set-up-an-agent-by-chatting-with-it).
+- The agent setup tools (`get_my_config`, `update_my_instructions`, `set_my_display_name`, `disable_my_tools`, `complete_setup`) run without approval in the requester's own direct message while they are present. Changes to the display name, instructions, or tools are saved as versions that can be restored. `complete_setup` only records that setup is complete and creates no version. Setup turns also leave out the agent's other tools and provider-native tools. See [Set up an agent by chatting with it](managing_agents.md#set-up-an-agent-by-chatting-with-it).
 - `AskUserQuestion` always waits for the user's answer.
 - The built-in web search tool (Brave or SearXNG) always asks. Native provider web search runs inside the provider, so it has no approval card.
 

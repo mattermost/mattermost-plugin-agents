@@ -196,6 +196,10 @@ func webToolResponsesTool(toolType schemas.ResponsesToolType, sandboxEnabled boo
 // native tools and function tools.
 func convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig, nativeTools []string) []schemas.ResponsesTool {
 	var result []schemas.ResponsesTool
+	if cfg.SkipNativeTools {
+		nativeTools = nil
+		cfg.SkipNativeWebSearch = true
+	}
 	sandboxEnabled := slices.Contains(nativeTools, llm.NativeToolCodeInterpreter)
 
 	// Add native tools (always add when configured, regardless of ToolsDisabled)

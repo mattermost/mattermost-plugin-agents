@@ -1655,6 +1655,13 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			expected:           false,
 		},
 		{
+			name:               "SkipNativeTools does not auto-enable Responses API for configured native tools",
+			provider:           schemas.Anthropic,
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			cfg:                llm.LanguageModelConfig{SkipNativeTools: true},
+			expected:           false,
+		},
+		{
 			name:               "nothing configured returns false",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,

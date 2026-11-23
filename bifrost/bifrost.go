@@ -675,6 +675,9 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 		return false
 	}
 
+	if cfg.SkipNativeTools {
+		return false
+	}
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}

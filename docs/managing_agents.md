@@ -139,7 +139,7 @@ The default agent setting selects an agent by bot user ID, so it keeps working a
 
 In the agent's row menu on the **Agents** page, select **Set up with agent**. It's shown to people who can manage the agent, for running agents created on the **Agents** page. It opens a new thread in your direct message with the agent, starting with "Help me set up AGENT_NAME." The agent reads its current settings, asks what it's for, who it helps, its tasks, its tone, and its rules, and drafts instructions for you to confirm. Reply in the thread to answer.
 
-In that thread, and only there, the agent has these tools. Only the setup tools are available in the thread: its other tools, including web search and MCP tools, are left out, so content from the web can't change its instructions.
+In that thread, and only there, the agent has these tools. Only the setup tools are available in the thread. Its other tools, including built-in web search, MCP tools, and skills, are left out. Provider-native tools (native web search, web fetch, and code interpreter) are turned off for every turn of the thread. This keeps content from the web or other tools from changing its instructions. Your agent's settings are not changed: it uses these tools again in other conversations.
 
 | Tool | What it does | Approval |
 |---|---|---|
@@ -151,7 +151,7 @@ In that thread, and only there, the agent has these tools. Only the setup tools 
 
 The writes save as soon as the agent calls them, so the agent confirms the full instructions with you in the conversation first. The writes are offered only on turns you are present for. When the agent resumes on its own, for example after waiting for async work, it can read its settings but not change them. The tools work even when the agent's tools are turned off, and they can't change anything else: not access, agent admins, the service, the model, the username, or MCP grants beyond removing tools. An agent that gets every MCP tool can turn off all its tools but not single MCP tools. While **Use service accounts for authentication** is on, removing MCP tools still needs a System Admin. Each call checks again that you can manage the agent, so removing your access stops the setup.
 
-Every change is saved as a version labeled **Self-setup**, made by you. Restore an earlier version to undo it. See [Version history](#version-history). New instructions apply to new conversations, not to the setup thread itself. Turning **Enable agent auto-setup** off removes the menu item and the setup tools from existing setup threads.
+Every change to the display name, instructions, or tools is saved as a version labeled **Self-setup**, made by you. Restore an earlier version to undo it. `complete_setup` only records that setup is complete and doesn't create a version. See [Version history](#version-history). New instructions apply to new conversations, not to the setup thread itself. Turning **Enable agent auto-setup** off removes the menu item and the setup tools from existing setup threads.
 
 ## Version history
 

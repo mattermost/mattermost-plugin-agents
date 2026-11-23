@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentsetup"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -130,6 +131,7 @@ func setupAgentSetupWiring(t *testing.T, responses ...*llm.TextStreamResult) (*d
 		cfg.CreatorID = "user12345678901234567890ab"
 		cfg.ServiceID = "svc-1"
 		cfg.CustomInstructions = "Be brief."
+		cfg.EnabledNativeTools = []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch}
 	}, responses...)
 	env.toolProvider.tools = []llm.Tool{
 		{Name: mmtools.WebSearchToolName, Description: "web search", Schema: llm.NewJSONSchemaFromStruct[struct{}]()},
@@ -215,4 +217,49 @@ func TestAgentSetupTurnSendsSetupAndExtensionToolsOnly(t *testing.T) {
 		agentsetup.ToolGetMyConfig, agentsetup.ToolUpdateMyInstructions, agentsetup.ToolSetMyDisplayName,
 		agentsetup.ToolDisableMyTools, agentsetup.ToolCompleteSetup, wiringExtensionTool,
 	}, requestToolNames(t, env, 0), "the catalog's web search, fetch and other tools stay out of a turn that saves on its own")
+}
+
+func TestAgentSetupTurnsSkipProviderNativeTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     bool
+		wantSkips bool
+	}{
+		{name: "a setup turn sends no provider-native tool", setup: true, wantSkips: true},
+		{name: "an ordinary DM turn keeps the agent's native tools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			responses := []*llm.TextStreamResult{dmMakeTextStream("Hi.")}
+			if tt.setup {
+				responses = []*llm.TextStreamResult{
+					dmMakeToolCallStream([]llm.ToolCall{{ID: "call_cfg", Name: agentsetup.ToolGetMyConfig, Arguments: json.RawMessage(`{}`)}}),
+					dmMakeTextStream("Done."),
+				}
+			}
+			env, _, setup := setupAgentSetupWiring(t, responses...)
+			if tt.setup {
+				_, err := setup.Start(context.Background(), env.user, wiringAgentID)
+				require.NoError(t, err)
+			} else {
+				bot := env.botService.GetBotByID(env.botID)
+				require.NotNil(t, bot)
+				_, err := env.conversations.StartAgentThread(context.Background(), conversations.AgentThreadRequest{
+					Bot: bot, User: env.user, Operation: llm.OperationConversation, Message: "hello", PostAsUser: true,
+				})
+				require.NoError(t, err)
+			}
+			waitForStreamFinished(t, env)
+
+			env.fakeLLM.mu.Lock()
+			defer env.fakeLLM.mu.Unlock()
+			require.NotEmpty(t, env.fakeLLM.configs)
+			for i, cfg := range env.fakeLLM.configs {
+				assert.Equal(t, tt.wantSkips, cfg.SkipNativeTools, "round %d", i)
+			}
+			if tt.setup {
+				require.Len(t, env.fakeLLM.configs, 2, "the tool round and its follow-up both skip native tools")
+			}
+		})
+	}
 }

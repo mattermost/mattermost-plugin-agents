@@ -445,6 +445,11 @@ func (p *turnPolicy) sharedForTurns(turns []toolrunner.ToolTurn, llmCtx *llm.Con
 // persisting a round fails.
 func (p *turnPolicy) runToolLoop(ctx context.Context, llmCtx *llm.Context, convID string, req llm.CompletionRequest, writeFailMsg string, writeFailArgs ...any) (*toolrunner.ToolRunResult, error) {
 	opts := p.c.withProviderWebSearchLicense(p.c.toolsDisabledLLMOptions(p.bot, !p.toolsEnabled))
+	if p.conversationOperation() == llm.OperationAgentSetup {
+		// Provider-native tools run inside the provider, outside the catalog
+		// filter, and fetch content a turn that saves on its own must not see.
+		opts = append(opts, llm.WithSkipNativeTools())
+	}
 	runner := toolrunner.New(p.bot.LLM(), toolrunner.WithMaxRounds(p.bot.GetConfig().EffectiveMaxToolTurns()), toolrunner.WithToolErrorResult(llmcontext.MCPToolErrorResult))
 	return runner.Run(ctx, req, p.autoExecute(llmCtx), func(turns []toolrunner.ToolTurn) {
 		if writeErr := p.c.convService.WriteToolTurns(convID, turns, p.sharedForTurns(turns, llmCtx), llmCtx.ResponsePostID); writeErr != nil {
