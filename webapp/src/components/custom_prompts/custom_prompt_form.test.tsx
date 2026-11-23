@@ -24,11 +24,6 @@ jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('../dropdown', () => ({
     __esModule: true,
     default: ({children}: {children: React.ReactNode}) => <div>{children}</div>,

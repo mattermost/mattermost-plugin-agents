@@ -4,17 +4,18 @@
 package metrics
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/sirupsen/logrus"
 )
 
 type ErrorLoggerWrapper struct {
 }
 
 func (el *ErrorLoggerWrapper) Println(v ...any) {
-	logrus.Warn("metric server error", v)
+	slog.Warn("metric server error", "error", fmt.Sprint(v...))
 }
 
 // NewMetricsHandler creates an HTTP handler to expose metrics.

@@ -27,6 +27,8 @@ type EvalLogLine struct {
 	// Error is set when the run failed before any rubric could be graded,
 	// for example because the provider rejected the request.
 	Error string `json:"error,omitempty"`
+	// Usage is the token usage of the whole trial, set on its last line.
+	Usage *TrialUsage `json:"usage,omitempty"`
 }
 
 type EvalResult struct {

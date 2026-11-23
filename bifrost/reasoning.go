@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/maximhq/bifrost/core/providers/anthropic"
+	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -43,6 +44,11 @@ func (b *LLM) providerReasoning(provider schemas.ModelProvider, cfg llm.Language
 			return anthropicThinkingOff(cfg.Model)
 		}
 		return b.anthropicReasoning(cfg)
+	case schemas.OpenAI, schemas.Azure:
+		if b.thinkingOff(cfg) {
+			return openAIThinkingOff(cfg.Model)
+		}
+		return reasoningParams{}, false
 	case schemas.Gemini, schemas.Vertex:
 		if b.thinkingOff(cfg) {
 			return reasoningParams{}, false
@@ -108,6 +114,17 @@ func anthropicThinkingOff(model string) (reasoningParams, bool) {
 	default:
 		return reasoningParams{}, false
 	}
+}
+
+// openAIThinkingOff turns reasoning off for an OpenAI reasoning model, which
+// otherwise reasons at its default effort. Bifrost lowers "none" to the lowest
+// effort of a model that cannot turn reasoning off. Models that do not reason
+// reject a reasoning parameter, so they get none.
+func openAIThinkingOff(model string) (reasoningParams, bool) {
+	if !openai.IsOpenAIReasoningModel(model) {
+		return reasoningParams{}, false
+	}
+	return reasoningParams{effort: new("none")}, true
 }
 
 var claudeVersionPattern = regexp.MustCompile(`(?i)(opus|sonnet)-(\d{1,2})(?:[-.](\d{1,2}))?(?:\D|$)`)

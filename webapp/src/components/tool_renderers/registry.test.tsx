@@ -12,11 +12,6 @@ import {ToolCall, ToolCallStatus} from '../tool_types';
 
 import {renderToolCall, ToolRenderContext} from './registry';
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('@/client', () => ({
     getPost: jest.fn(),
     getProfilesByIds: jest.fn(() => Promise.resolve([])),

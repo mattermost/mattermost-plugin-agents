@@ -70,7 +70,7 @@ export const BuiltInPluginServersSection = ({
                     <FormattedMessage defaultMessage='Built-in & plugin servers'/>
                 </BuiltInSectionTitle>
                 <BuiltInSectionDescription>
-                    <FormattedMessage defaultMessage='These servers are provided by Mattermost or other plugins. They are not remote connections and cannot be edited here.'/>
+                    <FormattedMessage defaultMessage='Provided by Mattermost or other plugins; cannot be edited here.'/>
                 </BuiltInSectionDescription>
             </BuiltInSectionHeader>
             <ServersList>
@@ -78,7 +78,7 @@ export const BuiltInPluginServersSection = ({
                     title={intl.formatMessage({defaultMessage: 'Mattermost'})}
                     badge={<Tag label={<FormattedMessage defaultMessage='Built-in'/>}/>}
                     helpText={abacSupported && (
-                        <FormattedMessage defaultMessage='Denying access to the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users. This has broader impact than denying a single remote MCP server.'/>
+                        <FormattedMessage defaultMessage='Denying access removes nearly all built-in Mattermost tools for matching users.'/>
                     )}
                     policyId={embeddedServerId}
                 />
