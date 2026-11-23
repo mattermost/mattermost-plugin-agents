@@ -724,15 +724,15 @@ func (p *Plugin) OnActivate() error {
 	apiService.SetAgentSetup(agentSetupService)
 
 	projectsService = projects.New(projects.Deps{
-		Store:             p.store,
-		Platform:          projectPlatform{api: p.API, client: pluginAPI},
-		Bots:              bots,
-		Threads:           conversationsService,
-		Config:            &p.configuration,
-		AutoReply:         projectAutoReply{service: autoreplyService},
-		WrapUps:           projectWrapUps{client: pluginAPI, projects: func() *projects.Service { return projectsService }},
-		Artifacts:         projectArtifacts{library: channelLibrary},
-		Playbooks:         projectPlaybooks{api: p.API},
+		Store:     p.store,
+		Platform:  projectPlatform{api: p.API, client: pluginAPI},
+		Bots:      bots,
+		Threads:   conversationsService,
+		Config:    &p.configuration,
+		AutoReply: projectAutoReply{service: autoreplyService},
+		WrapUps:   projectWrapUps{client: pluginAPI, projects: func() *projects.Service { return projectsService }},
+		Artifacts: projectArtifacts{library: channelLibrary},
+		Playbooks: projectPlaybooks{api: p.API},
 		SetupSystemPrompt: func(llmCtx *llm.Context) (string, error) {
 			return prompts.Format(projectSetupSystemPrompt, llmCtx)
 		},

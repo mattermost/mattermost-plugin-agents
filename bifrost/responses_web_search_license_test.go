@@ -40,3 +40,12 @@ func TestConvertToResponsesToolsSkipNativeWebSearch(t *testing.T) {
 		}, nil)))
 	})
 }
+
+func TestSkipNativeToolsOmitsEveryNativeTool(t *testing.T) {
+	nativeTools := []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch, llm.NativeToolCodeInterpreter}
+	request := llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}}}
+
+	require.Len(t, convertToResponsesTools(request, llm.LanguageModelConfig{}, nativeTools), 3)
+	require.Empty(t, convertToResponsesTools(request, llm.LanguageModelConfig{SkipNativeTools: true}, nativeTools))
+	require.Empty(t, convertToResponsesTools(request, llm.LanguageModelConfig{SkipNativeTools: true, NativeWebSearchAllowed: true}, nil))
+}

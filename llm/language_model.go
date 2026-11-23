@@ -47,6 +47,7 @@ type LanguageModelConfig struct {
 	ToolsDisabled          bool
 	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
 	SkipNativeWebSearch    bool // Omits the provider-native web search tool from the request
+	SkipNativeTools        bool // Omits every provider-native tool (web search, web fetch, code interpreter) from the request
 	ReasoningDisabled      bool
 }
 
@@ -79,6 +80,14 @@ func WithNativeWebSearchAllowed() LanguageModelOption {
 func WithSkipNativeWebSearch() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.SkipNativeWebSearch = true
+	}
+}
+
+// WithSkipNativeTools sends the request without any provider-native tool, even
+// ones the agent has enabled.
+func WithSkipNativeTools() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.SkipNativeTools = true
 	}
 }
 

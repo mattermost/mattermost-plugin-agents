@@ -448,7 +448,9 @@ type dmTestLLM struct {
 	responses []*llm.TextStreamResult
 	callIdx   int
 	requests  []llm.CompletionRequest
-	onChat    func()
+	// configs records the options of each ChatCompletion, parallel to requests.
+	configs []llm.LanguageModelConfig
+	onChat  func()
 	// callTraces records the trace each call ran under, in call order.
 	callTraces []trace.TraceID
 	// titleDone, when set, is signaled after each title ChatCompletionNoStream.
@@ -473,6 +475,11 @@ func (f *dmTestLLM) ChatCompletion(ctx context.Context, request llm.CompletionRe
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	f.configs = append(f.configs, cfg)
 	f.callTraces = append(f.callTraces, trace.SpanContextFromContext(ctx).TraceID())
 	if f.onChat != nil {
 		f.onChat()
