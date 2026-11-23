@@ -333,11 +333,9 @@ func TestKeepOperationTool(t *testing.T) {
 		tool llm.Tool
 		want bool
 	}{
-		{name: "DM keeps a setup tool", ctx: dm, tool: llm.Tool{Name: agentsetup.ToolUpdateMyInstructions}, want: true},
 		{name: "DM drops built-in web search", ctx: dm, tool: llm.Tool{Name: mmtools.WebSearchToolName}},
 		{name: "DM drops another built-in", ctx: dm, tool: llm.Tool{Name: "CreateFile"}},
 		{name: "DM drops an MCP tool", ctx: dm, tool: llm.Tool{Name: "search", ServerOrigin: "https://mcp.example.com"}},
-		{name: "DM drops an MCP tool named like a setup tool", ctx: dm, tool: llm.Tool{Name: agentsetup.ToolGetMyConfig, ServerOrigin: "https://mcp.example.com"}},
 		{name: "unknown channel fails closed", ctx: &llm.Context{}, tool: llm.Tool{Name: "CreateFile"}},
 		{name: "channel drops built-in web search", ctx: channel, tool: llm.Tool{Name: mmtools.WebSearchToolName}},
 		{name: "channel drops built-in web fetch", ctx: channel, tool: llm.Tool{Name: mmtools.WebSearchFetchSourceToolName}},

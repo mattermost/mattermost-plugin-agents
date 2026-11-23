@@ -30,8 +30,9 @@ type OperationTools interface {
 }
 
 // OperationCatalogFilter is an optional addition to OperationTools. It narrows
-// the catalog of every turn of the operation after the operation's tools are
-// added, so no entry point that builds a turn can skip it.
+// the agent's own catalog on every turn of the operation, before the
+// operation's tools are added, so it never removes them and no entry point
+// that builds a turn can skip it.
 type OperationCatalogFilter interface {
 	KeepOperationTool(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context, tool llm.Tool) bool
 }

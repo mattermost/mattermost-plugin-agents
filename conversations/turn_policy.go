@@ -345,12 +345,14 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		if llmContext.Tools == nil {
 			llmContext.Tools = llm.NewToolStore()
 		}
-		llmContext.Tools.AddTools(tools.OperationTools(ctx, p.bot, llmContext))
-		if filter, ok := tools.(OperationCatalogFilter); ok {
+		// The filter narrows the agent's own catalog; the operation's tools
+		// are added afterwards so it can never strip them.
+		if filter, isFilter := tools.(OperationCatalogFilter); isFilter {
 			llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool {
 				return filter.KeepOperationTool(ctx, p.bot, llmContext, tool)
 			})
 		}
+		llmContext.Tools.AddTools(tools.OperationTools(ctx, p.bot, llmContext))
 	}
 	switch {
 	case !p.toolsEnabled && !p.isDM && p.c.channelMentionToolCallingEnabled():
