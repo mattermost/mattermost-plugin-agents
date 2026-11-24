@@ -39,16 +39,35 @@ type UserMCPServerInfo struct {
 
 // UserMCPToolInfo describes a single tool within a server response.
 type UserMCPToolInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	Policy      string `json:"policy"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Enabled      bool   `json:"enabled"`
+	Policy       string `json:"policy"`
+	InputSchema  any    `json:"inputSchema,omitempty"`
+	ReadOnlyHint bool   `json:"readOnlyHint,omitempty"`
 }
 
 const (
 	mcpToolsCatalogServiceAccount = "service_account"
 	mcpToolsPurposeAgentConfig    = "agent_config"
 )
+
+// resolveMCPToolsRequest parses the query parameters shared by GET /mcp/tools
+// and POST /mcp/tools/refresh and returns the resulting CatalogRequest.
+func (a *API) resolveMCPToolsRequest(c *gin.Context, userID string) (mcp.CatalogRequest, bool) {
+	purpose := c.Query("purpose")
+	if purpose != "" && purpose != mcpToolsPurposeAgentConfig {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("purpose must be empty or %s", mcpToolsPurposeAgentConfig))
+		return mcp.CatalogRequest{}, false
+	}
+	req, ok := a.resolveMCPToolsCatalog(c, userID)
+	if !ok {
+		return mcp.CatalogRequest{}, false
+	}
+	req.IgnoreAccessPolicy = purpose == mcpToolsPurposeAgentConfig && a.canBypassServicePolicies(userID)
+	req.IncludeDisabledTools = purpose == mcpToolsPurposeAgentConfig
+	return req, true
+}
 
 // handleGetUserMCPTools returns MCP tools grouped by server.
 //
@@ -58,19 +77,14 @@ const (
 // actually uses at runtime. agent_id is required unless the caller is a system
 // admin creating an agent that does not exist yet. Pass purpose=agent_config
 // from the agent editor: system admins then also see servers whose access
-// policy denies them, as GET /services shows them every service.
+// policy denies them, as GET /services shows them every service, and disabled
+// tools are kept (with enabled=false) so authors can see why a tool is off.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	purpose := c.Query("purpose")
-	if purpose != "" && purpose != mcpToolsPurposeAgentConfig {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("purpose must be empty or %s", mcpToolsPurposeAgentConfig))
-		return
-	}
-	req, ok := a.resolveMCPToolsCatalog(c, userID)
+	req, ok := a.resolveMCPToolsRequest(c, userID)
 	if !ok {
 		return
 	}
-	req.IgnoreAccessPolicy = purpose == mcpToolsPurposeAgentConfig && a.canBypassServicePolicies(userID)
 
 	access := a.mcpClientManager.GetCatalogAccess(c.Request.Context(), req)
 	if !abortIfCatalogUnavailable(c, access) {
@@ -146,7 +160,10 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	req := mcp.UserCatalogRequest(userID)
+	req, ok := a.resolveMCPToolsRequest(c, userID)
+	if !ok {
+		return
+	}
 	access, err := a.mcpClientManager.RefreshCatalogAccess(c.Request.Context(), req)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
@@ -268,10 +285,12 @@ func (a *API) buildUserMCPServerInfo(
 		policy, enabled := serverConfig.GetToolPolicyOrDefault(lookupName, mcp.EffectiveDefaultToolPolicy(serverConfig.BaseURL, lookupName, policiesLicensed))
 		bareName := llm.BareMCPToolName(t.Name)
 		toolInfos = append(toolInfos, UserMCPToolInfo{
-			Name:        bareName,
-			Description: t.Description,
-			Enabled:     enabled,
-			Policy:      policy,
+			Name:         bareName,
+			Description:  t.Description,
+			Enabled:      enabled,
+			Policy:       policy,
+			InputSchema:  t.Schema,
+			ReadOnlyHint: t.ReadOnlyHint,
 		})
 	}
 

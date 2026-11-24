@@ -169,7 +169,7 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
         const rebuild = screen.getByRole('button', {name: 'Rebuild vector index'}) as HTMLButtonElement;
         expect(rebuild.disabled).toBe(true);
         expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
-        expect(screen.getByText(/Search functionality is disabled until you run a full reindex/)).toBeTruthy();
+        expect(screen.getByText(/Search is disabled until you run a Full Reindex/)).toBeTruthy();
     });
 
     it('shows Catch Up banner when index retention is widened', () => {
@@ -222,7 +222,7 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
         );
 
         expect(screen.getByText('Index retention increased')).toBeTruthy();
-        expect(screen.getByText(/Save the configuration before running Catch Up/)).toBeTruthy();
+        expect(screen.getByText(/Save first before running Catch Up/)).toBeTruthy();
         expect(screen.queryByRole('button', {name: 'Catch Up'})).toBeNull();
     });
 
@@ -310,7 +310,7 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
             </IntlProvider>,
         );
 
-        expect(screen.getByText('Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.')).toBeTruthy();
+        expect(screen.getByText('Lowering the window keeps already-indexed posts and applies to live indexing and future Full Reindex or Catch Up runs.')).toBeTruthy();
         expect(screen.queryByText('Embedding Model Changed')).toBeNull();
         expect(screen.queryByText('Index retention increased')).toBeNull();
     });

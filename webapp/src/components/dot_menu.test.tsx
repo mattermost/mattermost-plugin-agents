@@ -94,6 +94,30 @@ describe('DotMenu open and close transition', () => {
 
         await waitFor(() => expect(screen.queryByTestId('dropdownmenu')).toBeNull());
     });
+
+    test('calls onOpenChange only on updates and not on initial mount', () => {
+        const onOpenChange = jest.fn();
+        render(
+            <DotMenu
+                icon={<span>{'icon'}</span>}
+                title='AI Actions'
+                testId='ai-actions-menu'
+                onOpenChange={onOpenChange}
+            >
+                <div>{'item'}</div>
+            </DotMenu>,
+        );
+
+        expect(onOpenChange).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByTestId('ai-actions-menu'));
+        expect(onOpenChange).toHaveBeenCalledTimes(1);
+        expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+        fireEvent.click(screen.getByTestId('ai-actions-menu'));
+        expect(onOpenChange).toHaveBeenCalledTimes(2);
+        expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    });
 });
 
 describe('popover transform origin', () => {
