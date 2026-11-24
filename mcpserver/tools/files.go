@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -40,6 +42,7 @@ func (p *MattermostToolProvider) getFileTools() []MCPTool {
 		mcpReadTool(p, "get_file_link", getFileLinkDescription, p.toolGetFileLink),
 		mcpReadTool(p, "search_files", searchFilesDescription, p.toolSearchFiles),
 		mcpTool(p, "upload_file", uploadFileDescription, p.toolUploadFile),
+		mcpTool(p, "copy_file_to_channel", copyFileToChannelDescription, p.toolCopyFileToChannel),
 	}
 }
 
@@ -118,12 +121,20 @@ type UploadFileArgs struct {
 	Path      string `json:"path" access:"local" jsonschema:"Local file path or URL to upload"`
 }
 
+// CopyFileToChannelArgs represents arguments for the copy_file_to_channel tool.
+type CopyFileToChannelArgs struct {
+	FileID          string `json:"file_id" jsonschema:"The ID of the existing Mattermost file to copy,minLength=26,maxLength=26"`
+	TargetChannelID string `json:"target_channel_id" jsonschema:"The destination channel ID (or board ID, since a board is a channel) to upload the copy to,minLength=26,maxLength=26"`
+	Filename        string `json:"filename,omitempty" jsonschema:"Optional plain filename with extension to use for the copy (no path separators). Defaults to the source file's name.,maxLength=255"`
+}
+
 const (
-	getFileInfoDescription  = "Get metadata for a single file/attachment. Parameters: file_id (required). Returns name, type, size, and File ID."
-	getPostFilesDescription = "Get the file attachments on a post (metadata per file). Parameters: post_id (required)."
-	getFileLinkDescription  = "Get a public permalink URL for a file. Parameters: file_id (required). Requires public links to be enabled on the server."
-	searchFilesDescription  = "Search file attachments by filename/content within a team. Parameters: terms (required), team_id (required)."
-	uploadFileDescription   = "Upload a file from a local path or URL to a channel and return its File ID. Local access only. Parameters: channel_id (required), path (required)."
+	getFileInfoDescription       = "Get metadata for a single file/attachment. Parameters: file_id (required). Returns name, type, size, and File ID."
+	getPostFilesDescription      = "Get the file attachments on a post (metadata per file). Parameters: post_id (required)."
+	getFileLinkDescription       = "Get a public permalink URL for a file. Parameters: file_id (required). Requires public links to be enabled on the server."
+	searchFilesDescription       = "Search file attachments by filename/content within a team. Parameters: terms (required), team_id (required)."
+	uploadFileDescription        = "Upload a file from a local path or URL to a channel and return its File ID. Local access only. Parameters: channel_id (required), path (required)."
+	copyFileToChannelDescription = "Copy an existing Mattermost file (such as an image or document uploaded in a DM or another channel) into a target channel and return the new File ID. Use this before attaching a file from another channel or post to a Boards card (a board's board_id is its channel_id). Enforces your read access to the source file and upload permission in the target channel. Parameters: file_id (required), target_channel_id (required), filename (optional)."
 )
 
 // toolGetFileInfo implements the get_file_info tool.
@@ -222,4 +233,95 @@ func (p *MattermostToolProvider) toolUploadFile(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("upload produced no file")
 	}
 	return fmt.Sprintf("Successfully uploaded file to channel %s. File ID: %s", args.ChannelID, fileIDs[0]), nil
+}
+
+// toolCopyFileToChannel copies an existing Mattermost file into target_channel_id
+// using the caller's authenticated Mattermost client, so both source file-download
+// policy/channel read permissions and target channel upload permissions apply.
+func (p *MattermostToolProvider) toolCopyFileToChannel(mcpContext *MCPToolContext, args CopyFileToChannelArgs) (string, error) {
+	if err := requireID("file_id", args.FileID); err != nil {
+		return "", err
+	}
+	if err := requireID("target_channel_id", args.TargetChannelID); err != nil {
+		return "", err
+	}
+
+	var overrideName string
+	if args.Filename != "" {
+		var err error
+		overrideName, err = validatePlainCopyFilename(args.Filename)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	ctx := mcpContext.Ctx
+	client := mcpContext.Client
+
+	info, _, err := client.GetFileInfo(ctx, args.FileID)
+	if err != nil {
+		return "", fmt.Errorf("error fetching source file info: %w", err)
+	}
+	if info == nil || info.DeleteAt != 0 {
+		return "", fmt.Errorf("source file %s was not found", args.FileID)
+	}
+	if info.Size > maxMCPFetchBytes {
+		return "", fmt.Errorf("source file %q is too large (%d bytes; max %d bytes)", info.Name, info.Size, maxMCPFetchBytes)
+	}
+
+	fileName := overrideName
+	if fileName == "" {
+		fileName = fallbackCopyFilename(info.Name)
+	}
+
+	data, _, err := client.GetFile(ctx, args.FileID)
+	if err != nil {
+		return "", fmt.Errorf("error downloading source file: %w", err)
+	}
+	if int64(len(data)) > maxMCPFetchBytes {
+		return "", fmt.Errorf("source file %q is too large (%d bytes; max %d bytes)", fileName, len(data), maxMCPFetchBytes)
+	}
+
+	uploadResp, _, err := client.UploadFileAsRequestBody(ctx, data, args.TargetChannelID, fileName)
+	if err != nil {
+		return "", fmt.Errorf("error uploading copied file to channel %s: %w", args.TargetChannelID, err)
+	}
+	if uploadResp == nil || len(uploadResp.FileInfos) == 0 || uploadResp.FileInfos[0] == nil {
+		return "", fmt.Errorf("upload produced no file")
+	}
+
+	var result strings.Builder
+	fmt.Fprintf(&result, "Copied file to channel %s:\n", args.TargetChannelID)
+	format.WriteFileDescriptor(&result, format.FileDescriptorEntry{FileInfo: uploadResp.FileInfos[0]})
+	return result.String(), nil
+}
+
+func validatePlainCopyFilename(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.ContainsAny(trimmed, `/\`) {
+		return "", fmt.Errorf("invalid filename %q: provide a plain filename with an extension such as 'screenshot.png'", raw)
+	}
+	name := filepath.Base(trimmed)
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename %q: provide a plain filename with an extension such as 'screenshot.png'", raw)
+	}
+	if utf8.RuneCountInString(name) > 255 {
+		return "", fmt.Errorf("filename %q is too long: filenames must be at most 255 characters", name)
+	}
+	return name, nil
+}
+
+func fallbackCopyFilename(sourceName string) string {
+	trimmed := strings.TrimSpace(sourceName)
+	if trimmed == "" {
+		return "attachment"
+	}
+	name := filepath.Base(strings.ReplaceAll(trimmed, `\`, "/"))
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "attachment"
+	}
+	if runes := []rune(name); len(runes) > 255 {
+		return string(runes[:255])
+	}
+	return name
 }

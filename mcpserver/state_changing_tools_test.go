@@ -86,6 +86,7 @@ func TestInMemoryServerStateChangingToolsByLicense(t *testing.T) {
 				require.Contains(t, names, "create_post")
 				require.Contains(t, names, "add_reaction")
 				require.Contains(t, names, "dm")
+				require.Contains(t, names, "copy_file_to_channel")
 				createPost := byName["create_post"]
 				require.NotNil(t, createPost.Annotations)
 				assert.False(t, createPost.Annotations.ReadOnlyHint)
@@ -94,6 +95,7 @@ func TestInMemoryServerStateChangingToolsByLicense(t *testing.T) {
 				require.NotContains(t, names, "add_reaction")
 				require.NotContains(t, names, "dm")
 				require.NotContains(t, names, "upload_file")
+				require.NotContains(t, names, "copy_file_to_channel")
 				for _, tool := range byName {
 					if tool.Annotations != nil {
 						assert.True(t, tool.Annotations.ReadOnlyHint, "listed tool %q must be read-only below Enterprise", tool.Name)
