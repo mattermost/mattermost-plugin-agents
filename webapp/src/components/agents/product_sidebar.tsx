@@ -76,9 +76,10 @@ interface AgentThreadsSectionProps {
 export const AgentThreadsSection = ({bots, activeBotId, activeRootId, onSelectThread, onNewChat, hideAgentRows}: AgentThreadsSectionProps) => {
     const {threadsByBot, loading, error, refresh} = useAgentThreads(bots);
 
-    // Agents the user created or has chats with, plus the one whose chat is open. The thread list
-    // is a single page, so hasChats covers agents whose chats fall outside it.
-    const yourAgents = useMemo(() => (bots ?? []).filter((bot) => bot.isCreator || bot.hasChats || Boolean(threadsByBot[bot.id]?.length) || bot.id === activeBotId), [bots, threadsByBot, activeBotId]);
+    // Agents the user created or has chats with, plus the one whose chat is open (all of them where
+    // the caller already chose the agents). The thread list is a single page, so hasChats covers
+    // agents whose chats fall outside it.
+    const yourAgents = useMemo(() => (hideAgentRows ? bots ?? [] : (bots ?? []).filter((bot) => bot.isCreator || bot.hasChats || Boolean(threadsByBot[bot.id]?.length) || bot.id === activeBotId)), [bots, threadsByBot, activeBotId, hideAgentRows]);
     const generatingRoots = useGeneratingThreadRoots();
     const listedRoots = useMemo(() => Object.values(threadsByBot).flat().map((t) => t.root_post_id).filter((id): id is string => Boolean(id)), [threadsByBot]);
     const unreadRoots = useUnreadThreadRoots(listedRoots, activeRootId ?? '');

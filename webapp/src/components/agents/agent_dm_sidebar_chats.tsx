@@ -30,7 +30,9 @@ const AgentDMSidebarChats = ({channel, currentTeamName, isCurrentChannel}: Agent
     const {bots} = useBotlist();
     const botId = dmOtherUserId(channel.name, currentUserId);
     const bot = useMemo(() => bots?.find((b) => b.id === botId) ?? null, [bots, botId]);
-    const listBots = useMemo(() => (bot ? [bot] : null), [bot]);
+
+    // The bots list lacks the DM channel of a DM opened after it was fetched; this channel is it.
+    const listBots = useMemo(() => (bot ? [{...bot, dmChannelID: channel.id}] : null), [bot, channel.id]);
 
     const openRootId = useSelector<GlobalState, string>((state) => (isCurrentChannel ? openChatRootId(state, channel.id) : ''));
 

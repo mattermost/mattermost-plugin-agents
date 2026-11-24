@@ -12,6 +12,7 @@ import manifest from '@/manifest';
 import {aiThreads} from '@/redux';
 import type {AIThread} from '@/types/ai_thread';
 
+import AgentDMSidebarChats from './agent_dm_sidebar_chats';
 import ProductSidebar from './product_sidebar';
 import {AGENTS_ROUTE, buildChatPath} from './use_agents_route';
 
@@ -188,6 +189,28 @@ describe('ProductSidebar "Your agents" section', () => {
         const section = screen.getByRole('region', {name: 'Your agents'});
         const newChatButtons = within(section).getAllByRole('button', {name: /^New chat with /});
         expect(newChatButtons.map((b) => b.getAttribute('aria-label'))).toEqual(listed.map((agent) => `New chat with ${agent}`));
+    });
+
+    test('an agent DM lists its chats although the bots list has no DM channel for it yet and the DM is not open', async () => {
+        mockBots = [{id: 'a', displayName: 'Alpha', username: 'alpha', dmChannelID: ''}] as unknown as typeof mockBots;
+        mockGetAIThreads.mockResolvedValue([thread('1', 'Older')]);
+        window.WebappUtils = {browserHistory: makeHistory(AGENTS_ROUTE)} as any;
+        render(
+            <IntlProvider
+                locale='en'
+                onError={() => null}
+            >
+                <Provider store={makeStore()}>
+                    <AgentDMSidebarChats
+                        channel={{id: 'dm_a', type: 'D', name: 'a__me'} as any}
+                        currentTeamName='team1'
+                        isCurrentChannel={false}
+                    />
+                </Provider>
+            </IntlProvider>,
+        );
+
+        expect(await screen.findByRole('button', {name: 'Older'})).toBeTruthy();
     });
 
     test('lists fetched threads and navigates on click', async () => {
