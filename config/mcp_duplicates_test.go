@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -95,8 +96,23 @@ func TestMCPConfigValidateAuthorizationParams(t *testing.T) {
 		{name: "request_uri", params: map[string]string{"request_uri": "urn:example"}, wantErr: `"request_uri"`},
 		{name: "name with surrounding spaces", params: map[string]string{" access_type ": "offline"}, wantErr: `" access_type "`},
 		{name: "name with a character outside RFC 6749", params: map[string]string{"access&type": "offline"}, wantErr: `"access&type"`},
+		{name: "name over length limit", params: map[string]string{strings.Repeat("a", MaxMCPAuthorizationParamNameBytes+1): "offline"}, wantErr: "longer than"},
 		{name: "empty value", params: map[string]string{"access_type": ""}, wantErr: `"access_type"`},
 		{name: "blank value", params: map[string]string{"access_type": "  "}, wantErr: `"access_type"`},
+		{name: "value with surrounding spaces", params: map[string]string{"access_type": " offline "}, wantErr: "leading or trailing whitespace"},
+		{name: "value over length limit", params: map[string]string{"access_type": strings.Repeat("a", MaxMCPAuthorizationParamValueBytes+1)}, wantErr: "longer than"},
+		{name: "duplicate names differing only in case", params: map[string]string{"access_type": "offline", "Access_Type": "online"}, wantErr: "more than once"},
+		{
+			name: "too many parameters",
+			params: func() map[string]string {
+				m := make(map[string]string, MaxMCPAuthorizationParams+1)
+				for i := range MaxMCPAuthorizationParams + 1 {
+					m[fmt.Sprintf("param_%d", i)] = "value"
+				}
+				return m
+			}(),
+			wantErr: "the limit is",
+		},
 	}
 
 	for _, tc := range testCases {

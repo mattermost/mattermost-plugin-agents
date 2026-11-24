@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useId, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
@@ -74,25 +74,6 @@ export const originChanged = (before: string, after: string): boolean => {
 // The client secret, headers, and service account headers only reconnect.
 export type ReauthReason = 'name' | 'url' | 'clientID';
 
-// Mirrors config.reservedMCPAuthorizationParams: the parameters the OAuth flow
-// sets itself.
-const reservedAuthorizationParams = new Set([
-    'response_type',
-    'client_id',
-    'redirect_uri',
-    'state',
-    'scope',
-    'code_challenge',
-    'code_challenge_method',
-    'resource',
-    'response_mode',
-    'request',
-    'request_uri',
-]);
-
-// Mirrors config.mcpAuthorizationParamName.
-const authorizationParamName = /^[A-Za-z0-9._-]+$/;
-
 const authorizationParamRows = (params?: Record<string, string>) => (
     Object.entries(params ?? {}).map(([name, value]) => newKeyValueRow(name, value))
 );
@@ -153,6 +134,7 @@ const initialStep = (mode: MCPServerWizardMode): Step => (mode.kind === 'add' ? 
 
 const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const intl = useIntl();
+    const authorizationParamsErrorId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
     const [step, setStep] = useState<Step>(initialStep(mode));
@@ -281,17 +263,13 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         if (names.includes('')) {
             return intl.formatMessage({defaultMessage: 'Enter a name for every authorization parameter.'});
         }
-        const reserved = names.find((name) => reservedAuthorizationParams.has(name.toLowerCase()));
-        if (reserved) {
-            return intl.formatMessage({defaultMessage: '{name} is set by the OAuth sign-in and cannot be changed.'}, {name: reserved});
-        }
-        const invalid = names.find((name) => !authorizationParamName.test(name));
-        if (invalid) {
-            return intl.formatMessage({defaultMessage: '{name} can only contain letters, digits, hyphens, periods, and underscores.'}, {name: invalid});
-        }
-        const duplicate = names.find((name, index) => names.indexOf(name) !== index);
-        if (duplicate) {
-            return intl.formatMessage({defaultMessage: '{name} is set more than once.'}, {name: duplicate});
+        const seen = new Set<string>();
+        for (const name of names) {
+            const lower = name.toLowerCase();
+            if (seen.has(lower)) {
+                return intl.formatMessage({defaultMessage: '{name} is set more than once.'}, {name});
+            }
+            seen.add(lower);
         }
         const withoutValue = params.find(({value}) => !value);
         if (withoutValue) {
@@ -551,8 +529,15 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                     valuePlaceholder={intl.formatMessage({defaultMessage: 'Parameter value (e.g. offline)'})}
                     addLabel={<FormattedMessage defaultMessage='Add Parameter'/>}
                     removeLabel={intl.formatMessage({defaultMessage: 'Remove parameter'})}
+                    disabled={saving}
+                    {...(showErrors && authorizationParamsError ? {ariaDescribedBy: authorizationParamsErrorId} : {})}
                 />
-                {showErrors && authorizationParamsError && <ErrorMessage message={authorizationParamsError}/>}
+                {showErrors && authorizationParamsError && (
+                    <ErrorMessage
+                        id={authorizationParamsErrorId}
+                        message={authorizationParamsError}
+                    />
+                )}
             </FieldGroup>
             {mode.kind === 'edit' && savedServer?.id && (
                 <ConsolePolicySection

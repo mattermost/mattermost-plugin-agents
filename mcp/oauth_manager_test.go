@@ -333,8 +333,8 @@ func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
 		},
 		{
 			name:   "invalid entries in a stored config are ignored",
-			params: map[string]string{spacedName: "offline", "prompt": " "},
-			absent: []string{spacedName, "access_type", "prompt"},
+			params: map[string]string{spacedName: "offline", "prompt": " ", "hint": " padded "},
+			absent: []string{spacedName, "access_type", "prompt", "hint"},
 		},
 		{
 			name:          "unrelated endpoint parameters are kept",
@@ -346,6 +346,12 @@ func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
 			name:          "a parameter the endpoint already sets is refused",
 			params:        map[string]string{"access_type": "offline"},
 			endpointQuery: "access_type=online",
+			wantErr:       `"access_type"`,
+		},
+		{
+			name:          "a parameter the endpoint already sets in another case is refused",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "Access_Type=online",
 			wantErr:       `"access_type"`,
 		},
 		{

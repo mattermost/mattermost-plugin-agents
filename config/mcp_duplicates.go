@@ -189,10 +189,21 @@ func (c MCPConfig) Validate() error {
 		if n := utf8.RuneCountInString(server.Description); n > MaxMCPServerDescriptionRunes {
 			err = errors.Join(err, fmt.Errorf("MCP server %q description is %d characters; the limit is %d", server.Name, n, MaxMCPServerDescriptionRunes))
 		}
+		if len(server.AuthorizationParams) > MaxMCPAuthorizationParams {
+			err = errors.Join(err, fmt.Errorf("MCP server %q has %d OAuth authorization parameters; the limit is %d", server.Name, len(server.AuthorizationParams), MaxMCPAuthorizationParams))
+		}
+		seenParamNames := make(map[string]string, len(server.AuthorizationParams))
 		for _, key := range slices.Sorted(maps.Keys(server.AuthorizationParams)) {
 			if paramErr := ValidateMCPAuthorizationParam(key, server.AuthorizationParams[key]); paramErr != nil {
 				err = errors.Join(err, fmt.Errorf("MCP server %q %w", server.Name, paramErr))
+				continue
 			}
+			lower := strings.ToLower(key)
+			if prev, dup := seenParamNames[lower]; dup {
+				err = errors.Join(err, fmt.Errorf("MCP server %q sets the OAuth authorization parameter %q more than once (%q and %q)", server.Name, lower, prev, key))
+				continue
+			}
+			seenParamNames[lower] = key
 		}
 	}
 

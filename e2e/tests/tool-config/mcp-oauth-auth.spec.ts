@@ -65,7 +65,7 @@ let openAIMock: OpenAIMockContainer;
 
 async function openServerDialog(page: Page): Promise<Locator> {
     await new MattermostPage(page).login(mattermost.url(), adminUsername, adminPassword);
-    await new SystemConsoleHelper(page).navigateToPluginConfig(mattermost.url());
+    await new SystemConsoleHelper(page).navigateToAgentsSettings(mattermost.url(), 'mcp');
 
     await page.getByRole('button', { name: `Edit ${MOCK_OAUTH_SERVER_NAME}` }).click();
     const dialog = page.getByRole('dialog', { name: `Edit ${MOCK_OAUTH_SERVER_NAME}` });
@@ -194,36 +194,6 @@ test.describe('MCP OAuth Authentication', () => {
         expect(params.get('code_challenge_method')).toBe('S256');
         expect(params.get('code_challenge')).toBeTruthy();
         expect(params.get('state')).toBeTruthy();
-    });
-
-    test('a reserved authorization parameter is refused by the dialog and the API', async ({ page }) => {
-        test.setTimeout(60000);
-
-        const dialog = await openServerDialog(page);
-        await addAuthorizationParam(dialog, 'state', 'fixed');
-        await dialog.getByRole('button', { name: 'Save', exact: true }).click();
-        await expect(dialog.getByText('state is set by the OAuth sign-in and cannot be changed.')).toBeVisible();
-        await expect(dialog).toBeVisible();
-
-        const adminClient = await mattermost.getAdminClient();
-        const configURL = `${mattermost.url()}/plugins/mattermost-ai/admin/config`;
-        const headers = { Authorization: `Bearer ${adminClient.getToken()}`, 'Content-Type': 'application/json' };
-        const config = await (await fetch(configURL, { headers })).json();
-
-        // The same config is accepted without the reserved parameter, so the
-        // rejection below can only come from it.
-        const accepted = await fetch(configURL, { method: 'PUT', headers, body: JSON.stringify(config) });
-        expect(accepted.status).toBe(200);
-
-        const server = config.mcp.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
-        server.authorizationParams = { ...server.authorizationParams, state: 'fixed' };
-
-        const response = await fetch(configURL, { method: 'PUT', headers, body: JSON.stringify(config) });
-        expect(response.status).toBe(400);
-
-        const stored = await (await fetch(configURL, { headers })).json();
-        const storedServer = stored.mcp.servers.find((s: any) => s.name === MOCK_OAUTH_SERVER_NAME);
-        expect(storedServer.authorizationParams?.state).toBeUndefined();
     });
 
     test('system console should show updated OAuth description text', async ({ page }) => {

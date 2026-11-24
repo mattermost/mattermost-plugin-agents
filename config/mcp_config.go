@@ -106,6 +106,15 @@ type MCPServerConfig struct {
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
 }
 
+// MaxMCPAuthorizationParams, MaxMCPAuthorizationParamNameBytes, and
+// MaxMCPAuthorizationParamValueBytes bound per-server OAuth authorization
+// parameters so stored configs and 302 redirect URLs stay bounded.
+const (
+	MaxMCPAuthorizationParams          = 16
+	MaxMCPAuthorizationParamNameBytes  = 64
+	MaxMCPAuthorizationParamValueBytes = 1024
+)
+
 // reservedMCPAuthorizationParams are the authorization request parameters the
 // OAuth flow sets or depends on. Overriding one would break the flow or its
 // CSRF, PKCE, or audience protections: the callback only reads a query response
@@ -130,18 +139,24 @@ var mcpAuthorizationParamName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // ValidateMCPAuthorizationParam reports why an entry cannot be sent on the
 // authorization URL. The error completes a sentence about the server. Reserved
-// names are matched ignoring case and surrounding whitespace; other names must
-// be valid exactly as stored, because they are sent unchanged.
+// names are matched ignoring case and surrounding whitespace; other names and
+// values must be valid exactly as stored, because they are sent unchanged.
 func ValidateMCPAuthorizationParam(name, value string) error {
 	switch {
 	case strings.TrimSpace(name) == "":
 		return errors.New("has an OAuth authorization parameter with an empty name")
 	case reservedMCPAuthorizationParams[strings.ToLower(strings.TrimSpace(name))]:
 		return fmt.Errorf("cannot set the reserved OAuth authorization parameter %q", name)
+	case len(name) > MaxMCPAuthorizationParamNameBytes:
+		return fmt.Errorf("has an OAuth authorization parameter name %q longer than %d bytes", name, MaxMCPAuthorizationParamNameBytes)
 	case !mcpAuthorizationParamName.MatchString(name):
 		return fmt.Errorf("has an OAuth authorization parameter with the invalid name %q", name)
 	case strings.TrimSpace(value) == "":
 		return fmt.Errorf("has an empty value for the OAuth authorization parameter %q", name)
+	case strings.TrimSpace(value) != value:
+		return fmt.Errorf("has leading or trailing whitespace in the value for the OAuth authorization parameter %q", name)
+	case len(value) > MaxMCPAuthorizationParamValueBytes:
+		return fmt.Errorf("has a value for the OAuth authorization parameter %q longer than %d bytes", name, MaxMCPAuthorizationParamValueBytes)
 	}
 	return nil
 }

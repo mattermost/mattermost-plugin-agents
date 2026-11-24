@@ -404,12 +404,13 @@ func (m *OAuthManager) initiateOAuthFlow(ctx context.Context, userID, serverConf
 
 	// Build authorization URL with PKCE and the canonical RFC 8707 resource
 	// so the authorization server audience-restricts the issued token to this
-	// MCP server. Admin-configured parameters come last.
+	// MCP server. Protocol options come last so they always win over
+	// admin-configured parameters as defense in depth.
 	authOpts := []oauth2.AuthCodeOption{
 		oauth2.S256ChallengeOption(codeVerifier),
 		oauth2.SetAuthURLParam("resource", resolved.resource),
 	}
-	authURL := resolved.config.AuthCodeURL(state, append(authOpts, extraOpts...)...)
+	authURL := resolved.config.AuthCodeURL(state, append(extraOpts, authOpts...)...)
 
 	// Store OAuth session, bound to the discovery outcome so the callback
 	// exchanges the code against exactly these endpoints (see OAuthSession).
@@ -466,12 +467,16 @@ func authorizationParamOptions(authorizationEndpoint string, params map[string]s
 	if err != nil {
 		return nil, fmt.Errorf("invalid authorization endpoint query: %w", err)
 	}
+	endpointParamNames := make(map[string]bool, len(endpointParams))
+	for name := range endpointParams {
+		endpointParamNames[strings.ToLower(name)] = true
+	}
 	opts := make([]oauth2.AuthCodeOption, 0, len(params))
 	for _, name := range slices.Sorted(maps.Keys(params)) {
 		if config.ValidateMCPAuthorizationParam(name, params[name]) != nil {
 			continue
 		}
-		if endpointParams.Has(name) {
+		if endpointParamNames[strings.ToLower(name)] {
 			return nil, fmt.Errorf("the authorization endpoint already sets the OAuth authorization parameter %q", name)
 		}
 		opts = append(opts, oauth2.SetAuthURLParam(name, params[name]))

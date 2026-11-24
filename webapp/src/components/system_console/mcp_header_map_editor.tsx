@@ -121,6 +121,8 @@ export const KeyValueRowsEditor = ({
     valuePlaceholder,
     addLabel,
     removeLabel,
+    disabled,
+    ariaDescribedBy,
 }: {
     rows: KeyValueRow[];
     onChange: (rows: KeyValueRow[]) => void;
@@ -130,10 +132,13 @@ export const KeyValueRowsEditor = ({
     valuePlaceholder: string;
     addLabel: React.ReactNode;
     removeLabel: string;
+    disabled?: boolean;
+    ariaDescribedBy?: string;
 }) => {
     const updateRow = (id: number, change: Partial<KeyValueRow>) => {
         onChange(rows.map((row) => (row.id === id ? {...row, ...change} : row)));
     };
+    const describedByProps = ariaDescribedBy ? {'aria-describedby': ariaDescribedBy} : {};
 
     return (
         <>
@@ -144,6 +149,8 @@ export const KeyValueRowsEditor = ({
                             aria-label={nameLabel}
                             placeholder={namePlaceholder}
                             value={row.name}
+                            disabled={disabled}
+                            {...describedByProps}
                             onChange={(e) => updateRow(row.id, {name: e.target.value})}
                         />
                         <HeaderInput
@@ -151,6 +158,8 @@ export const KeyValueRowsEditor = ({
                             aria-label={valueLabel}
                             placeholder={valuePlaceholder}
                             value={row.value}
+                            disabled={disabled}
+                            {...describedByProps}
                             onChange={(e) => updateRow(row.id, {value: e.target.value})}
                         />
                         <IconButton
@@ -158,6 +167,7 @@ export const KeyValueRowsEditor = ({
                             aria-label={removeLabel}
                             size='small'
                             destructive={true}
+                            disabled={disabled}
                             onClick={() => onChange(rows.filter(({id}) => id !== row.id))}
                         />
                     </HeaderRow>
@@ -167,6 +177,7 @@ export const KeyValueRowsEditor = ({
                 emphasis='quaternary'
                 size='small'
                 leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                disabled={disabled}
                 onClick={() => onChange([...rows, newKeyValueRow()])}
             >
                 {addLabel}

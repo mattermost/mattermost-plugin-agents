@@ -71,7 +71,7 @@ Some providers need extra parameters on the authorization URL, for example to is
 | Provider | Parameters |
 |---|---|
 | YouTrack or Hub | `access_type=offline` |
-| Google | `access_type=offline` and `prompt=consent` |
+| Google | `access_type=offline` (add `prompt=consent` to ensure a refresh token is re-issued when re-authorizing an already-consented account) |
 
 ```json
 {
@@ -84,9 +84,9 @@ Some providers need extra parameters on the authorization URL, for example to is
 }
 ```
 
-Every parameter needs a name and a non-blank value. Names can contain only ASCII letters, digits, hyphens, periods, and underscores. Saving fails otherwise, or if a name is one the OAuth flow relies on, compared without regard to case: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `response_mode`, `request`, or `request_uri`.
+A server can have up to 16 parameters. Every parameter needs a unique name (compared without regard to case, up to 64 bytes) and a non-blank value with no leading or trailing whitespace (up to 1024 bytes). Names can contain only ASCII letters, digits, hyphens, periods, and underscores. Saving fails otherwise, or if a name is one the OAuth flow relies on, compared without regard to case: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `response_mode`, `request`, or `request_uri`.
 
-Sign-in fails if the provider's authorization endpoint URL already contains a parameter with the same name.
+Sign-in fails if the provider's authorization endpoint URL already contains a parameter with the same name (compared without regard to case).
 
 A change applies at the next sign-in. Users who are already connected must disconnect and connect again to get it.
 

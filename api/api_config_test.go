@@ -808,3 +808,73 @@ func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {
 	require.Equal(t, 1, updater.callCount)
 	require.Equal(t, 1, notifier.callCount)
 }
+
+func TestAdminConfigMCPAuthorizationParams(t *testing.T) {
+	testCases := []struct {
+		name       string
+		params     map[string]string
+		wantStatus int
+	}{
+		{
+			name:       "valid parameters are persisted in clear text",
+			params:     map[string]string{"access_type": "offline", "prompt": "consent"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "reserved parameter is rejected without overwriting stored config",
+			params:     map[string]string{"state": "fixed"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "padded value is rejected without overwriting stored config",
+			params:     map[string]string{"access_type": " offline "},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			initial := &config.Config{
+				MCP: config.MCPConfig{
+					Enabled: true,
+					Servers: []config.MCPServerConfig{
+						{
+							ID:                  "srv-1",
+							Name:                "YouTrack",
+							Enabled:             true,
+							BaseURL:             "https://youtrack.example.com/mcp",
+							AuthorizationParams: map[string]string{"access_type": "offline"},
+						},
+					},
+				},
+			}
+			store := &testConfigStore{cfg: initial}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router := setupTestRouter(store, updater, notifier)
+
+			saveCfg := *initial.Clone()
+			saveCfg.MCP.Servers[0].AuthorizationParams = tc.params
+			body, err := json.Marshal(saveCfg)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.wantStatus, w.Code)
+
+			if tc.wantStatus != http.StatusOK {
+				require.Equal(t, map[string]string{"access_type": "offline"}, store.cfg.MCP.Servers[0].AuthorizationParams)
+				require.Equal(t, 0, updater.callCount)
+				return
+			}
+
+			var loadedCfg config.Config
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &loadedCfg))
+			require.Len(t, loadedCfg.MCP.Servers, 1)
+			require.Equal(t, tc.params, loadedCfg.MCP.Servers[0].AuthorizationParams)
+			require.Equal(t, 1, updater.callCount)
+		})
+	}
+}

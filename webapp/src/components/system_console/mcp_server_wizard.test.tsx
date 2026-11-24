@@ -603,13 +603,10 @@ describe('MCPServerWizard edit mode', () => {
     });
 
     test.each([
-        {name: 'a reserved name', params: [['state', 'fixed']], error: 'state is set by the OAuth sign-in and cannot be changed.'},
-        {name: 'a reserved name in another case', params: [['Client_ID', 'other']], error: 'Client_ID is set by the OAuth sign-in and cannot be changed.'},
-        {name: 'the response mode', params: [['response_mode', 'form_post']], error: 'response_mode is set by the OAuth sign-in and cannot be changed.'},
         {name: 'a value without a name', params: [[' ', 'offline']], error: 'Enter a name for every authorization parameter.'},
         {name: 'a name without a value', params: [['access_type', ' ']], error: 'Enter a value for access_type.'},
-        {name: 'an invalid name', params: [['access type', 'offline']], error: 'access type can only contain letters, digits, hyphens, periods, and underscores.'},
         {name: 'a name used twice once trimmed', params: [['prompt', 'consent'], [' prompt ', 'none']], error: 'prompt is set more than once.'},
+        {name: 'a name used twice differing only by case', params: [['prompt', 'consent'], ['Prompt', 'none']], error: 'Prompt is set more than once.'},
     ])('an authorization parameter with $name is not saved', async ({params, error}) => {
         const {onPersist} = renderWizard({kind: 'edit', server: saved}, ['Tracker'], [saved]);
 
@@ -617,7 +614,11 @@ describe('MCPServerWizard edit mode', () => {
         params.forEach(([name, value]) => addAuthorizationParam(name, value));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
-        expect(screen.getByText(error)).not.toBeNull();
+        const errorEl = screen.getByText(error);
+        expect(errorEl).not.toBeNull();
+        const errorContainer = errorEl.closest('[id]');
+        expect(errorContainer).not.toBeNull();
+        expect(screen.getAllByRole('textbox', {name: 'Parameter name'})[0].getAttribute('aria-describedby')).toBe(errorContainer?.id);
         expect(onPersist).not.toHaveBeenCalled();
     });
 
