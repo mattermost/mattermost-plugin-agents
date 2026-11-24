@@ -40,11 +40,6 @@ jest.mock('./service', () => ({
     ),
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('@/license', () => ({
     useServiceLimit: jest.fn(() => null),
     useLicenseLevelName: jest.fn(() => () => 'Enterprise'),

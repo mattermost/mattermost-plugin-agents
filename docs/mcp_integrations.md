@@ -7,12 +7,12 @@ Connect remote MCP servers so agents can use tools in Jira, GitHub, and other sy
 | Source | Setup | License |
 |---|---|---|
 | **Built-in Mattermost MCP server** | None. It's embedded and runs every tool as the requesting user. See [Tool reference](mcp_tools.md). | Read-only tools at every level. Tools that change something at Enterprise and above. |
-| **Remote MCP servers** | You add them in the System Console. | Enterprise |
+| **Remote MCP servers** | You add them in the Agents settings. | Enterprise |
 | **Plugin-registered MCP servers** | Another Mattermost plugin registers a server with Agents. You enable it. | Enterprise |
 
 You can't turn MCP off globally. To limit it, disable individual tools or servers, restrict who can reach a server with an [access policy](access_control.md), or restrict an agent's tool grants on its **MCPs** tab. Below Enterprise, stored remote servers stay visible but can't be added or enabled, and their tools aren't offered to agents.
 
-Everything is under **System Console > Plugins > Agents > Model Context Protocol (MCP)**. It has a **Configuration** tab and a **Tools** tab.
+Everything is under **Agents > Settings > MCP servers**. It has a **Configuration** tab and a **Tools** tab.
 
 ## Add a remote MCP server
 
@@ -25,7 +25,7 @@ Everything is under **System Console > Plugins > Agents > Model Context Protocol
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
       | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
    | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. Once the server is saved, **Auto-fill from server** copies the server's own description or instructions, connecting as you with the saved settings. You may need to connect your account first. Review the text and save. |
-   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in the System Console; leave one untouched to keep it, or type a new value to replace it. |
+   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in **Agents > Settings**; leave one untouched to keep it, or type a new value to replace it. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
    | **OAuth authorization parameters** | Config key `authorizationParams`. Optional extra parameters for the OAuth authorization URL. See [Add OAuth authorization parameters](#add-oauth-authorization-parameters). |
@@ -108,7 +108,7 @@ GitHub's MCP server needs a pre-registered OAuth app. GitHub's interface changes
    - **OAuth client ID** and **OAuth client secret** to the values from step 1.
 3. Select **Save and connect**, then **Sign in** to authorize your own account. Each user still connects their own account.
 4. In **Review tools**, check the policies and select **Accept and save**. Tools the server marks read-only are suggested as **Auto Run (DM)**, and tools that change something, such as creating an issue, start at **Ask Every Time**. See [Enable and approve tools](#enable-and-approve-tools).
-6. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
+5. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
 
 A user who asks "Open an issue for the bug in this thread" now sees a **Connect** card the first time. After they connect, the agent finds the issue tool with dynamic tool loading, and the user accepts the call.
 
@@ -190,7 +190,7 @@ Your settings are keyed to the plugin ID and survive unregistering and restarts.
 
 The same built-in Mattermost tools can be offered to external MCP clients such as Claude Code, Claude Desktop, Cursor, and VS Code. For connecting a client, see [Mattermost MCP server](mcp_server.md). The embedded server that agents use is always on and doesn't depend on this setting.
 
-1. Go to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
+1. Go to **Agents > Settings > MCP servers**.
 2. On the **Configuration** tab, set **Enable Mattermost MCP Server (HTTP)** to **True**, and select **Save**. It takes effect without a restart. The endpoint is `https://<your-site-url>/plugins/mattermost-ai/mcp-server/mcp`.
 
 Then set up the sign-in method your clients use, under **System Console > Integrations > Integration Management**:

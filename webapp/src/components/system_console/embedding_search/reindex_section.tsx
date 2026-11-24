@@ -11,6 +11,7 @@ import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Tag, type TagType} from '@mattermost/compass-ui/components/tag';
 
 import {HelpText, ItemLabel} from '../item';
+import {useSettingsReadOnly} from '../settings_read_only';
 
 import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
@@ -179,6 +180,7 @@ export const ReindexSection = ({
     onResumeClick,
 }: ReindexSectionProps) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
 
     // cancel_requested is non-terminal: the worker is still running until it
     // observes the request and writes canceled.
@@ -250,14 +252,14 @@ export const ReindexSection = ({
                     title={<FormattedMessage defaultMessage='Job May Be Stale'/>}
                     description={(
                         <FormattedMessage
-                            defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. Start a new run to take over from where it left off.'
+                            defaultMessage='No update in over 10 minutes; node {nodeId} may have crashed. Start a new run to take over.'
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
                     )}
                     primaryButtonLabel={staleRecovery?.label ?? reindexFromScratchLabel}
                     onPrimaryAction={staleRecovery?.onClick ?? onReindexClick}
-                    primaryActionDisabled={staleRecovery?.disabled}
-                    secondaryButtonLabel={staleRecovery ? reindexFromScratchLabel : null}
+                    primaryActionDisabled={readOnly || staleRecovery?.disabled}
+                    secondaryButtonLabel={staleRecovery && !readOnly ? reindexFromScratchLabel : null}
                     onSecondaryAction={onReindexClick}
                 />
             )}
@@ -269,7 +271,7 @@ export const ReindexSection = ({
                     title={<FormattedMessage defaultMessage='Embedding Model Changed'/>}
                     description={(
                         <FormattedMessage
-                            defaultMessage='The embedding model configuration has changed ({reason}). Search functionality is disabled until you run a full reindex.'
+                            defaultMessage='Embedding config changed ({reason}). Search is disabled until you run a Full Reindex.'
                             values={{reason: localMismatchReason}}
                         />
                     )}
@@ -280,7 +282,7 @@ export const ReindexSection = ({
                 <Banner
                     type='warning'
                     title={<FormattedMessage defaultMessage='HNSW M Changed'/>}
-                    description={<FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>}
+                    description={<FormattedMessage defaultMessage='Use Rebuild vector index (not Full Reindex) to apply the new HNSW M. Search keeps working until then.'/>}
                 />
             )}
 
@@ -288,7 +290,7 @@ export const ReindexSection = ({
                 <Banner
                     type='warning'
                     title={<FormattedMessage defaultMessage='Index retention increased'/>}
-                    description={<FormattedMessage defaultMessage='Save the configuration before running Catch Up. Catch Up uses the saved retention window, not this unsaved value.'/>}
+                    description={<FormattedMessage defaultMessage='Save first before running Catch Up, which uses the saved retention window.'/>}
                 />
             )}
 
@@ -296,14 +298,14 @@ export const ReindexSection = ({
                 <Banner
                     type='warning'
                     title={<FormattedMessage defaultMessage='Index retention increased'/>}
-                    description={<FormattedMessage defaultMessage='The index now looks further back. Run Catch Up to embed older posts that are not already in the index. Search stays available — do not Full Reindex unless you also changed the embedding model or vector precision.'/>}
+                    description={<FormattedMessage defaultMessage='Run Catch Up to embed older posts without disabling search. No Full Reindex needed unless the model or vector precision changed.'/>}
                 />
             )}
 
             {hasLocalRetentionTighten && !hasLocalModelMismatch && !hasLocalRetentionWiden && (
                 <Banner
                     type='info'
-                    title={<FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.'/>}
+                    title={<FormattedMessage defaultMessage='Lowering the window keeps already-indexed posts and applies to live indexing and future Full Reindex or Catch Up runs.'/>}
                 />
             )}
 
@@ -316,25 +318,27 @@ export const ReindexSection = ({
                     {/* Show running job UI */}
                     {isReindexing && (
                         <>
-                            <ButtonGroup>
-                                <Button
-                                    emphasis='secondary'
-                                    onClick={onCancelJob}
-                                    disabled={jobStatus?.status === 'cancel_requested'}
-                                >
-                                    {jobStatus?.status === 'cancel_requested' ? (
-                                        <FormattedMessage defaultMessage='Canceling…'/>
-                                    ) : (
-                                        <FormattedMessage defaultMessage='Cancel Reindexing'/>
-                                    )}
-                                </Button>
-                            </ButtonGroup>
+                            {!readOnly && (
+                                <ButtonGroup>
+                                    <Button
+                                        emphasis='secondary'
+                                        onClick={onCancelJob}
+                                        disabled={jobStatus?.status === 'cancel_requested'}
+                                    >
+                                        {jobStatus?.status === 'cancel_requested' ? (
+                                            <FormattedMessage defaultMessage='Canceling…'/>
+                                        ) : (
+                                            <FormattedMessage defaultMessage='Cancel Reindexing'/>
+                                        )}
+                                    </Button>
+                                </ButtonGroup>
+                            )}
 
                             {jobStatus && (
                                 <>
                                     {jobStatus.phase === 'building_index' ? (
                                         <ProgressText>
-                                            <FormattedMessage defaultMessage='Bulk load complete — building the vector index. This can take a while on large workspaces; search stays unavailable until it finishes.'/>
+                                            <FormattedMessage defaultMessage='Bulk load complete — building vector index. Search stays unavailable until finished.'/>
                                         </ProgressText>
                                     ) : (
                                         <ProgressText>
@@ -380,20 +384,22 @@ export const ReindexSection = ({
                     {/* Show resume UI when job failed or canceled with progress */}
                     {!isReindexing && canResume && jobStatus && (
                         <>
-                            <ButtonGroup>
-                                <Button
-                                    emphasis='primary'
-                                    onClick={onResumeClick}
-                                >
-                                    <FormattedMessage defaultMessage='Resume Reindex'/>
-                                </Button>
-                                <Button
-                                    emphasis='secondary'
-                                    onClick={onReindexClick}
-                                >
-                                    <FormattedMessage defaultMessage='Start Over'/>
-                                </Button>
-                            </ButtonGroup>
+                            {!readOnly && (
+                                <ButtonGroup>
+                                    <Button
+                                        emphasis='primary'
+                                        onClick={onResumeClick}
+                                    >
+                                        <FormattedMessage defaultMessage='Resume Reindex'/>
+                                    </Button>
+                                    <Button
+                                        emphasis='secondary'
+                                        onClick={onReindexClick}
+                                    >
+                                        <FormattedMessage defaultMessage='Start Over'/>
+                                    </Button>
+                                </ButtonGroup>
+                            )}
                             <ProgressText>
                                 <FormattedMessage
                                     defaultMessage='Previous progress: {processed} of {total} posts ({percent}%) - Resume to continue from checkpoint'
@@ -408,7 +414,7 @@ export const ReindexSection = ({
                     )}
 
                     {/* Show default buttons when no job is running and resume is not available */}
-                    {!isReindexing && !canResume && (
+                    {!isReindexing && !canResume && !readOnly && (
                         <ButtonGroup>
                             <Button
                                 emphasis='primary'
@@ -448,7 +454,7 @@ export const ReindexSection = ({
                     )}
 
                     <HelpText>
-                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up fills holes in the current retention window (posts not already in the index) without disabling search. Rebuild vector index rebuilds the HNSW graph without re-embedding posts. Changing the retention window while a job is running does not change the running job window; abort and start a new job if you want the new bounds.'/>
+                        <FormattedMessage defaultMessage='Full Reindex rebuilds from scratch. Catch Up embeds missing posts in the retention window without disabling search. Rebuild vector index rebuilds the HNSW graph without re-embedding. Retention changes do not affect a running job.'/>
                     </HelpText>
                 </div>
             </ActionContainer>

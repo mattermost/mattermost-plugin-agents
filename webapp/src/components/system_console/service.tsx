@@ -19,6 +19,7 @@ import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
+import {useSettingsReadOnly} from './settings_read_only';
 
 export type LLMService = {
     id: string
@@ -151,6 +152,9 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }, [props.service.tokenLimit, props.service.outputTokenLimit]);
 
+    // Listing models sends the service's credentials upstream, which read-only
+    // viewers do not have.
+    const readOnly = useSettingsReadOnly();
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex' || type === 'north';
 
     useEffect(() => {
@@ -180,7 +184,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             hasRequiredCredentials = Boolean(props.service.apiKey);
         }
 
-        if (!supportsModelFetching || !hasRequiredCredentials) {
+        if (readOnly || !supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
             setModelsFetchError('');
             setLoadingModels(false);
@@ -284,7 +288,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     let apiURLHelpText = '';
     if (isNorth) {
         apiURLLabel = intl.formatMessage({defaultMessage: 'North instance URL'});
-        apiURLHelpText = intl.formatMessage({defaultMessage: 'The base URL of your Cohere North instance, for example https://north.example.com'});
+        apiURLHelpText = intl.formatMessage({defaultMessage: 'Base URL of your Cohere North instance (e.g., https://north.example.com).'});
     } else if (isScale) {
         apiURLHelpText = intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'});
     }
@@ -293,9 +297,9 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     let apiKeyHelpText = '';
     if (isNorth) {
         apiKeyLabel = intl.formatMessage({defaultMessage: 'Service token'});
-        apiKeyHelpText = intl.formatMessage({defaultMessage: 'A long-lived North service token. Generate one from your North instance\'s developer page.'});
+        apiKeyHelpText = intl.formatMessage({defaultMessage: 'Long-lived token from your North developer page.'});
     } else if (type === 'bedrock') {
-        apiKeyHelpText = intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'});
+        apiKeyHelpText = intl.formatMessage({defaultMessage: 'Optional base64-encoded Bedrock API key. IAM credentials above take precedence.'});
     }
 
     return (
@@ -345,26 +349,26 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         label={intl.formatMessage({defaultMessage: 'AWS Region'})}
                         value={props.service.region}
                         onChange={(e) => props.onChange({...props.service, region: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'AWS region where Bedrock is available (e.g., us-east-1, us-west-2)'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Bedrock AWS region (e.g., us-east-1, us-west-2).'})}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Custom Endpoint URL (Optional)'})}
                         value={props.service.apiURL}
                         onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Optional custom endpoint for VPC endpoints or proxies (e.g., https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com)'})}
+                        helptext={intl.formatMessage({defaultMessage: 'For VPC endpoints or proxies (e.g., https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com).'})}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'AWS Access Key ID (Optional)'})}
                         value={props.service.awsAccessKeyID}
                         onChange={(e) => props.onChange({...props.service, awsAccessKeyID: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'IAM user access key ID. If set, these credentials take precedence over API Key. Can also be set via AWS_ACCESS_KEY_ID environment variable. System console takes precedence over environment variables.'})}
+                        helptext={intl.formatMessage({defaultMessage: 'IAM access key ID. Takes precedence over API Key and AWS_ACCESS_KEY_ID.'})}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'AWS Secret Access Key (Optional)'})}
                         type='password'
                         value={props.service.awsSecretAccessKey}
                         onChange={(e) => props.onChange({...props.service, awsSecretAccessKey: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via AWS_SECRET_ACCESS_KEY environment variable. System console takes precedence over environment variables.'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Required with AWS Access Key ID. Takes precedence over AWS_SECRET_ACCESS_KEY.'})}
                     />
                 </>
             )}
@@ -374,13 +378,13 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         label={intl.formatMessage({defaultMessage: 'GCP Project ID'})}
                         value={props.service.vertexProjectID}
                         onChange={(e) => props.onChange({...props.service, vertexProjectID: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Your Google Cloud project ID (e.g., my-project-123)'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Google Cloud project ID (e.g., my-project-123).'})}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'GCP Project Number (Optional)'})}
                         value={props.service.vertexProjectNumber}
                         onChange={(e) => props.onChange({...props.service, vertexProjectNumber: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Numeric project number. Required for some Vertex endpoints, leave blank otherwise.'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Numeric project number; only needed for certain Vertex endpoints.'})}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'GCP Region'})}
@@ -393,7 +397,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         type='password'
                         value={props.service.vertexAuthCredentials}
                         onChange={(e) => props.onChange({...props.service, vertexAuthCredentials: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Paste the full service account JSON. Leave blank to use Application Default Credentials (ADC) or an attached IAM role.'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Full service account JSON. Leave blank to use ADC or an attached IAM role.'})}
                     />
                 </>
             )}
@@ -421,7 +425,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                             label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
                             value={props.service.useResponsesAPI ?? false}
                             onChange={(to: boolean) => props.onChange({...props.service, useResponsesAPI: to})}
-                            helpText={intl.formatMessage({defaultMessage: 'Use the new OpenAI Responses API with support for reasoning summaries and other advanced features. Disable for legacy Completions API compatibility.'})}
+                            helpText={intl.formatMessage({defaultMessage: 'Enables reasoning summaries and provider-native tools. Turn off for Chat Completions endpoints.'})}
                         />
                     )}
                 </>
@@ -442,7 +446,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
                     onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-                    helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o). See Scale AI documentation for available models.'}) : '')}
+                    helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o).'}) : '')}
                 />
             )}
             <TextItem
@@ -496,7 +500,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     }
                     props.onChange({...props.service, fallbackServiceID});
                 }}
-                helptext={intl.formatMessage({defaultMessage: 'If this service is unavailable, requests will automatically fall back to the selected service. Fallback chains are supported (e.g., Service A → Service B → Service C).'})}
+                helptext={intl.formatMessage({defaultMessage: 'Used automatically when this service is unavailable. Chains are supported (A → B → C).'})}
                 options={[
                     {value: '', label: intl.formatMessage({defaultMessage: 'No fallback'})},
                     ...(props.services ?? []).
@@ -511,7 +515,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 label={intl.formatMessage({defaultMessage: 'Structured output'})}
                 value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
                 onChange={(structuredOutputPolicy) => props.onChange({...props.service, structuredOutputPolicy})}
-                helptext={intl.formatMessage({defaultMessage: '"Auto" sends a requested JSON schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. The policy is combined across this service\'s fallback chain, so marking one service as natively supported does not force native mode when another service in the chain needs the prompt-based strategy.'})}
+                helptext={intl.formatMessage({defaultMessage: 'Auto uses native JSON schema when known to be supported and falls back to prompts otherwise. Combined across the fallback chain: if any fallback needs prompt mode, it is used.'})}
                 options={[
                     {value: StructuredOutputPolicyAuto, label: intl.formatMessage({defaultMessage: 'Auto (recommended)'})},
                     {value: StructuredOutputPolicyNative, label: intl.formatMessage({defaultMessage: 'Native supported'})},
@@ -527,11 +531,15 @@ type Props = {
     services: LLMService[]
     onChange: (service: LLMService) => void
     onDelete: () => void
+
+    // Starts with the settings shown, for a service the admin is about to fill in.
+    defaultOpen?: boolean
 }
 
 const Service = (props: Props) => {
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(Boolean(props.defaultOpen));
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
 
     return (
         <ServiceContainer>
@@ -553,16 +561,18 @@ const Service = (props: Props) => {
                 </Title>
                 <Spacer/>
                 <HeaderActions>
-                    <IconButton
-                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                        aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
-                        size='small'
-                        destructive={true}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            props.onDelete();
-                        }}
-                    />
+                    {!readOnly && (
+                        <IconButton
+                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                            aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
+                            size='small'
+                            destructive={true}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                props.onDelete();
+                            }}
+                        />
+                    )}
                     <IconButton
                         icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
                         aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse service'}) : intl.formatMessage({defaultMessage: 'Expand service'})}

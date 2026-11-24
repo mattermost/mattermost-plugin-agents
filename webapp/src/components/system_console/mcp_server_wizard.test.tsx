@@ -200,7 +200,7 @@ describe('MCPServerWizard add flow', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Skip connecting'}));
 
         expect(screen.getByText('Save without reviewing tools?')).not.toBeNull();
-        expect(screen.getByText(/ask for approval before every run/)).not.toBeNull();
+        expect(screen.getByText(/Unreviewed tools default to Ask Every Time/)).not.toBeNull();
         expect(onPersist).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: 'Save without connecting'}));
@@ -428,7 +428,7 @@ describe('MCPServerWizard edit mode', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         expect(screen.getByText('Users will have to sign in to Tracker 2 again')).not.toBeNull();
-        expect(screen.getByText(/Renaming the server/)).not.toBeNull();
+        expect(screen.getByText(/Renaming removes saved sign-ins/)).not.toBeNull();
         expect(onPersist).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: 'Back'}));
@@ -460,7 +460,7 @@ describe('MCPServerWizard edit mode', () => {
 
         fireEvent.change(await screen.findByDisplayValue('https://mcp.example.com/mcp'), {target: {value: 'https://other.example.com/mcp'}});
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-        expect(screen.getByText(/Moving the server to another host/)).not.toBeNull();
+        expect(screen.getByText(/Changing the host removes saved sign-ins/)).not.toBeNull();
         fireEvent.click(screen.getByRole('button', {name: 'Save and sign in again'}));
 
         await waitFor(() => expect(onPersist).toHaveBeenCalled());

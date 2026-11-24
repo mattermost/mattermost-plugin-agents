@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"syscall"
@@ -73,6 +74,10 @@ type Config interface {
 	// configuration order. The bridge service endpoints operate on this
 	// snapshot directly rather than going through an agent.
 	GetServices() []llm.ServiceConfig
+
+	// SettingsAccess returns the users delegated access to the plugin
+	// configuration besides system admins.
+	SettingsAccess() config.SettingsAccess
 }
 
 type MCPClientManager interface {
@@ -330,7 +335,18 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
 
-	router := gin.Default()
+	router := a.newRouter(serverCtx, c)
+	router.ServeHTTP(w, r)
+}
+
+func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engine {
+	// Use gin.New() instead of gin.Default(): gin.Recovery dumps full request
+	// headers (including cookies) in debug mode, and gin.Logger writes raw
+	// query strings and client IPs to stdout (plugin_stdout at INFO) while
+	// a.ginlogger, metricsMiddleware, otelgin, and auditMiddleware cover
+	// plugin-side observability.
+	router := gin.New()
+	router.Use(a.recovery(serverCtx))
 	router.Use(httpTracingMiddleware())
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
@@ -490,8 +506,13 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	autoReplyRouter.GET("/autoreply", a.handleGetChannelAutoReply)
 	autoReplyRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
 
+	// The plugin configuration and the actions behind it. System admins and
+	// the users they delegate read/write access to on the System Console reach
+	// them. The delegation lists themselves are system admin only.
+	router.GET("/settings/access", a.handleGetMySettingsAccess)
+
 	adminRouter := router.Group("/admin")
-	adminRouter.Use(a.mattermostAdminAuthorizationRequired)
+	adminRouter.Use(a.settingsWriteAuthorizationRequired)
 	adminRouter.POST("/reindex", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
@@ -505,17 +526,25 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
-	// Service / MCP-server access policy authoring: system admins only. The
-	// :serverid wildcard coexists with the static /admin/mcp/* routes above
-	// (pinned by a route test).
+	// Service / MCP-server access policy authoring. The :serverid wildcard
+	// coexists with the static /admin/mcp/* routes above (pinned by a route test).
 	adminRouter.GET("/services/:serviceid/access_policy", a.handleGetServicePolicy)
 	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
 	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
+	// Connects to the server as the requesting user to draft a description
+	// for the edit form.
 	adminRouter.GET("/mcp/:serverid/suggested-description", a.handleGetMCPSuggestedDescription)
+	// Connects to a saved server as the requesting user for the add-server
+	// review flow.
 	adminRouter.GET("/mcp/:serverid/tools", a.handleGetMCPServerTools)
 	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
 	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
 	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
+
+	settingsAccessRouter := router.Group("/admin/settings-access")
+	settingsAccessRouter.Use(a.mattermostAdminAuthorizationRequired)
+	settingsAccessRouter.GET("", a.handleGetSettingsAccess)
+	settingsAccessRouter.PUT("", a.handlePutSettingsAccess)
 
 	// ABAC availability + CEL editor proxies.
 	acRouter := router.Group("/access_control")
@@ -534,7 +563,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Starts a search conversation with the selected bot in the user's DM
 	searchRouter.POST("/run", a.handleRunSearch)
 
-	router.ServeHTTP(w, r)
+	return router
 }
 
 // ServeMetrics serves the metrics endpoint
@@ -595,6 +624,45 @@ func (a *API) aiBotRequired(c *gin.Context) {
 		}
 	}
 	c.Set(ContextBotKey, bot)
+}
+
+func (a *API) recovery(serverCtx context.Context) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			// Check the server request context rather than c.Request.Context():
+			// ServeHTTP detaches c.Request.Context() with context.WithoutCancel
+			// for background streams, while inner middleware (such as /mcp-server)
+			// cancels its derived context in a defer during panic unwinding.
+			clientCtx := serverCtx
+			if clientCtx == nil {
+				clientCtx = c.Request.Context()
+			}
+			if clientCtx.Err() != nil {
+				a.pluginAPI.Log.Debug("client disconnected before response",
+					"method", c.Request.Method,
+					"path", c.FullPath(),
+				)
+				c.Abort()
+				return
+			}
+			a.pluginAPI.Log.Error("Panic recovered in HTTP handler",
+				"panic", fmt.Sprint(rec),
+				"method", c.Request.Method,
+				"path", c.FullPath(),
+				"stack", string(debug.Stack()),
+			)
+			if !c.Writer.Written() {
+				c.AbortWithStatus(http.StatusInternalServerError)
+			} else {
+				c.Abort()
+			}
+		}()
+		c.Next()
+	}
 }
 
 func (a *API) ginlogger(c *gin.Context) {

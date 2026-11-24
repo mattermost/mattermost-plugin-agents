@@ -1,12 +1,12 @@
 # Web search
 
-Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave, Google, or SearXNG search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
+Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave or SearXNG search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
 
 | | Native web search | Built-in web search |
 |---|---|---|
-| Who runs the search | The model provider | Mattermost, through Brave, Google, or SearXNG |
+| Who runs the search | The model provider | Mattermost, through Brave or SearXNG |
 | Providers | Anthropic, OpenAI, Google Gemini, Google Vertex AI, and OpenAI Compatible or Azure with **Use Responses API** on | Any model that supports tool calling |
-| Where to turn it on | Per agent, under **Advanced configuration** | **System Console > Plugins > Agents > Web Search**. Applies to agents that don't use native search. |
+| Where to turn it on | Per agent, under **Advanced configuration** | **Agents > Settings > Web search**. Applies to agents that don't use native search. |
 | License | Professional | Enterprise |
 | Approval | No approval card | Asks for approval on every call |
 
@@ -18,7 +18,7 @@ On the agent, open **Advanced configuration** and enable **Web Search** under **
 
 Native tool activity, such as searches run and pages fetched, shows on the agent's reply as it streams and is kept with the conversation.
 
-**In channels.** Native web search works in direct messages by default. To allow it in public and private channels too, turn on **Allow native web search in channels** under **AI Functions**. It needs a Professional license. It affects only native provider search, not MCP tools or other tools, and it works even when **Enable Channel Mention Tool Calling** is off.
+**In channels.** Native web search works in direct messages by default. To allow it in public and private channels too, turn on **Allow native web search in channels** under **Agents > Settings > General**. It needs a Professional license. It affects only native provider search, not MCP tools or other tools, and it works even when **Enable Channel Mention Tool Calling** is off.
 
 ### Anthropic web fetch and code execution
 
@@ -40,19 +40,20 @@ OpenAI agents have **Code Interpreter**, which runs code in OpenAI's sandbox.
 
 Mattermost's own search tool lets an agent retrieve current information when the model has no native search.
 
-1. Go to **System Console > Plugins > Agents > Web Search**.
+1. Go to **Agents > Settings > Web search**.
 2. Set **Enable Web Search** to **True**.
 3. Choose a **Provider** and fill in its settings.
 
 | Provider | Settings | Notes |
 |---|---|---|
 | **Brave Search** | **Brave API Key**, **Brave Result Limit** (1 to 10, default 5), **Brave API URL (optional)** | Returns summaries with each result, which reduces page fetches. You must have Brave's **Pro AI plan**. Using another Brave plan for AI use violates Brave's terms and can get the account suspended. |
-| **Google Custom Search** | **Google API Key**, **Search Engine ID**, **Result Limit** (1 to 10, default 5), **API URL (optional)** | Uses Google's Custom Search API, which returns weaker results than google.com, and has strict daily quotas. Mattermost scrapes the pages it needs, and many sites block that. |
 | **SearXNG (self-hosted)** | **SearXNG Base URL**, **SearXNG Result Limit** | Good for air-gapped or sovereign setups. The instance must allow the `json` format (`search.formats` in its settings). If it's on a private or reserved address, add it to the Mattermost Server's `AllowedUntrustedInternalConnections` setting. |
 
 **Domain Denylist (optional)** takes a comma-separated list such as `example.com, spam-site.org`. It applies to every provider. Matching results are removed before the agent sees them, and the agent can't fetch pages from those domains.
 
-Brave API keys come from [brave.com/search/api](https://brave.com/search/api/). For Google, create an API key in the Google Cloud Console with the Custom Search API enabled, and create a search engine at [Programmable Search Engine](https://programmablesearchengine.google.com). Its ID is the **Search Engine ID**.
+Brave API keys come from [brave.com/search/api](https://brave.com/search/api/).
+
+Google Custom Search is no longer supported. If **Provider** was set to Google, built-in web search stays off and the settings page shows an error until you choose Brave or SearXNG.
 
 ### Limits
 

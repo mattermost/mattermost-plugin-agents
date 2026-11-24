@@ -240,8 +240,8 @@ test.describe('MCP OAuth Authentication', () => {
 
         await oauthRow.first().click();
 
-        const description = page.getByText('You must authenticate to fetch this server');
+        const description = page.getByText('Sign in to fetch tools and configure policies.');
         await expect(description).toBeVisible();
-        await expect(description).toContainText('each user must authenticate separately');
+        await expect(description).toContainText('each user signs in separately');
     });
 });
