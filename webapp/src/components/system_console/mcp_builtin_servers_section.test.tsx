@@ -119,7 +119,7 @@ describe('BuiltInPluginServersSection', () => {
             </IntlProvider>,
         );
 
-        expect(screen.queryByText(/Denying access to the built-in Mattermost server/) !== null).toBe(shown);
+        expect(screen.queryByText(/Denying access removes nearly all built-in Mattermost tools/) !== null).toBe(shown);
         useABACSupport.mockReturnValue({supported: true, loading: false});
     });
 });

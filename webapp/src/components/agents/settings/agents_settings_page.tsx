@@ -310,7 +310,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                         <FormattedMessage defaultMessage='Settings'/>
                     </PageTitle>
                     <Subtitle>
-                        <FormattedMessage defaultMessage='AI services, tools, search and other settings that apply to every agent in the workspace.'/>
+                        <FormattedMessage defaultMessage='Workspace-wide settings for AI services, tools, and search.'/>
                     </Subtitle>
                 </PageHeader>
                 <PageBody>{body}</PageBody>

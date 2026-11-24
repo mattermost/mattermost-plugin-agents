@@ -8,11 +8,6 @@ import {IntlProvider} from 'react-intl';
 import ToolCard from './tool_card';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     return {
         id: 'tool_1',

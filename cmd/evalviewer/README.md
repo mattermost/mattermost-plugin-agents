@@ -87,7 +87,9 @@ evalviewer report --results eval-results --baseline eval-baseline \
 
 The report writes:
 - `comment.md`: only checks that fail on this change but not on the baseline. With `--previous` (the comment already on the pull request) it also says when the earlier failures are fixed. It is empty when the existing comment should be left as it is, and CI changes nothing in that case.
-- `summary.md`: every provider's status, including pre-existing failures, flaky checks, providers that could not run (missing credentials, retired models), and failures of providers that have no usable baseline while other providers do. CI adds it to the workflow run summary.
+- `summary.md`: every provider's status, including pre-existing failures, flaky checks, providers that could not run (missing credentials, retired models), and failures of providers that have no usable baseline while other providers do. It also shows each provider's token usage and its cost at list prices, split between the model under test and the grader. CI adds it to the workflow run summary.
+
+Each trial records its token usage on its last line in `evals.jsonl`. Cost is computed from the prices in `evals/usage.go` for the default eval models, at half price for requests served at OpenAI's flex tier; usage of a model without a known price is reported with a `+` after the cost.
 
 A rubric is graded from the agent's response alone, so it should check only what the response says. State the response cannot show, such as who received a DM or which tools ran, belongs in the eval's code assertions.
 
@@ -98,9 +100,12 @@ A listed check is dropped only on evidence that it is not the change's problem. 
 Repeated runs (`GOEVALS=N`) are combined by majority vote, so a check that fails one run out of three is reported as flaky rather than failing. A run that errors before grading (for example, the provider rejects the request) is recorded with its error, with credential values redacted.
 
 ### How CI uses the evals
-- `make evals-ci` runs every test whose name ends in `Eval` in `conversations`, `threads`, `channels`, `react`, and `mcpserver`. The `mcpserver` evals start Mattermost containers and need Docker.
+- `make evals-ci` runs every test whose name ends in `Eval` in `conversations`, `threads`, `channels`, `react`, and `mcpserver`. The `mcpserver` evals start Mattermost containers and need Docker. Set `EVAL_PACKAGES` to run a subset, for example `EVAL_PACKAGES=./react make evals-ci`.
 - Before the first eval, each provider and the grader get one small request. If a model is unusable (bad key, no access to the model, missing deployment), every eval for that provider is recorded with that error instead of failing one by one.
-- Evals run on pull requests that change more than `webapp/`, `e2e/`, `docs/`, `loadtest/`, images, or Markdown, and on every push to `master`.
+- Evals run on every push to `master` (`ci.yml`), which gives pull requests their baseline.
+- On pull requests, evals run only while the pull request has the **Run Evals** label (`pr-evals.yml`): when the label is added and on every later push. A new push, or removing the label, cancels the evals still running.
+- Pull request runs include the `mcpserver` evals, which cost the most by far, only when the pull request changes a file in a package their test binary depends on, or `go.mod`, `go.sum`, the `Makefile`, or the eval workflows (`.github/scripts/eval-deps-changed.sh`). A run of only some packages sets `EVALS_PARTIAL=1`, so `check` does not mark it complete and the report never takes a skipped eval for a removed one.
+- OpenAI requests use the flex processing tier, which costs half as much and is slower. A request that flex has no capacity for is retried at the standard tier. Set the `OPENAI_SERVICE_TIER` repository variable to `default` to turn it off.
 - The `evals-comment` job compares pull request results with the latest `master` results and comments only when a check newly fails. When a later push fixes them, the comment is replaced with a short resolved note. It runs even when the eval job failed, so a crashed run never looks like a fix.
 - Set the `EVAL_RUNS` repository variable to run each eval several times per CI run.
 
@@ -131,6 +136,7 @@ The evalviewer and evaluation tests support multiple LLM providers. Configure wh
 
 - **`OPENAI_API_KEY`**: Your OpenAI API key (required for OpenAI)
 - **`OPENAI_MODEL`**: Model to use (overrides code default)
+- **`OPENAI_SERVICE_TIER`**: OpenAI processing tier for eval requests, for example `flex` (half price, slower). Unset uses the standard tier.
 
 ### Anthropic Configuration
 
@@ -145,7 +151,7 @@ The evalviewer and evaluation tests support multiple LLM providers. Configure wh
 
 ### Grader Configuration
 
-The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI with `DefaultGraderModel` from `evals/evals.go`, which is pinned separately from the model under test. `TestLLMRubricEval` in `evals/graders_test.go` checks the grader against outputs with known verdicts; run it after changing the grader prompt or model. You can configure a different provider or model for grading:
+The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI with `DefaultGraderModel` from `evals/evals.go`, which is pinned separately from the model under test, at reasoning effort `low`. All rubrics for one output are graded in a single request. `TestLLMRubricEval` in `evals/graders_test.go` checks the grader against outputs with known verdicts; run it after changing the grader prompt or model. You can configure a different provider or model for grading:
 
 - **`GRADER_LLM_PROVIDER`**: Provider to use for grading (e.g., `openai`, `anthropic`, `azure`)
   - Default: `openai`
@@ -169,7 +175,7 @@ LLM_PROVIDER=openai,azure evalviewer run ./conversations
 evalviewer run ./conversations
 
 # Use a specific model for OpenAI
-OPENAI_MODEL=gpt-5.6-sol evalviewer run ./conversations
+OPENAI_MODEL=gpt-6.2-sol evalviewer run ./conversations
 
 # Use Anthropic for the main LLM and OpenAI for grading (default grader)
 LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... evalviewer run ./conversations
@@ -178,7 +184,7 @@ LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... evalvi
 LLM_PROVIDER=openai GRADER_LLM_PROVIDER=anthropic OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... evalviewer run ./conversations
 
 # Use a specific model for grading
-GRADER_LLM_MODEL=gpt-5.6-sol evalviewer run ./conversations
+GRADER_LLM_MODEL=gpt-6.1-terra evalviewer run ./conversations
 ```
 
 If a provider's API key is not set, an error will be thrown.

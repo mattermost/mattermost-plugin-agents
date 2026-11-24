@@ -43,9 +43,9 @@ The summary is emitted **once per bot service initialization**, not per chat req
 
 ## Configure Tool Auto-Run
 
-Mattermost MCP tools respect channel/user policy in the System Console. For unattended load tests, tool calls must not block on approval prompts.
+Mattermost MCP tools respect channel/user policy configured in **Agents > Settings > MCP servers**. For unattended load tests, tool calls must not block on approval prompts.
 
-Configure MCP tool policies so relevant tools use **`auto_run_everywhere`** (see `webapp` System Console components such as `mcp_tool_config_row.tsx`). Without this, simulations may stall waiting for approval while the mock LLM still completes streams.
+Configure MCP tool policies so relevant tools use **`auto_run_everywhere`** (see `webapp` components such as `mcp_tool_config_row.tsx`). Without this, simulations may stall waiting for approval while the mock LLM still completes streams.
 
 ## Enable Agents in mattermost-load-test-ng
 

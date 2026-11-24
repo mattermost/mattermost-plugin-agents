@@ -30,21 +30,6 @@ jest.mock('react-intl', () => ({
     }),
 }));
 
-// react-bootstrap and react-router-dom are webpack externals supplied by the
-// host webapp, so they are not installed here; the entrypoint's component tree
-// imports them at module load.
-jest.mock('react-bootstrap', () => ({OverlayTrigger: () => null, Tooltip: () => null}), {virtual: true});
-jest.mock('react-router-dom', () => ({
-    Link: () => null,
-    Redirect: () => null,
-    Route: () => null,
-    Switch: () => null,
-    useHistory: () => ({push: jest.fn()}),
-    useLocation: () => ({pathname: '/'}),
-    useParams: () => ({}),
-    useRouteMatch: () => ({url: '/'}),
-}), {virtual: true});
-
 // @/client is the real HTTP boundary; stub the calls initialize() makes.
 const mockGetAIBots = jest.fn();
 const mockSetSiteURL = jest.fn();

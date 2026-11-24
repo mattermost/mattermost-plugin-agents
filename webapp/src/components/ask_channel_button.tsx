@@ -1,11 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useRef, useState, useEffect} from 'react';
+import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
+import ReactDOM from 'react-dom';
 import {useSelector, useDispatch} from 'react-redux';
+import styled from 'styled-components';
 import {GlobalState} from '@mattermost/types/store';
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {Overlay} from 'react-bootstrap';
 import {useIntl} from 'react-intl';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
@@ -21,52 +21,30 @@ import {useBotlist} from '@/bots';
 
 import IconAI from './assets/icon_ai';
 import {ChannelSummarizePopover} from './channel_summarize_popover';
+import {isDialogOpen} from './animated_modal_shell';
+import {OPEN_POPUP_ATTRIBUTE} from './dropdown';
 
-const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
-    const {
-        style,
-        className,
-        positionTop,
-        positionLeft,
-        children,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        arrowOffsetLeft,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        arrowOffsetTop,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        placement,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        arrowRef,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        arrowStyle,
-        ...rest
-    } = props;
+const POPOVER_FALLBACK_WIDTH = 328;
+const POPOVER_GAP = 8;
+const VIEWPORT_PADDING = 8;
 
-    return (
-        <div
-            ref={ref}
-            className={className}
-            style={{
-                ...style,
-                position: 'absolute',
-                top: positionTop,
-                left: positionLeft,
-                zIndex: 1000,
-                marginTop: '8px',
-                marginLeft: '148px',
-            }}
-            {...rest}
-        >
-            {children}
-        </div>
-    );
-});
+const PopoverPortal = styled.div.attrs<{$top: number; $left: number}>((props) => ({
+    style: {
+        top: `${props.$top}px`,
+        left: `${props.$left}px`,
+    },
+}))<{$top: number; $left: number}>`
+    position: fixed;
+    z-index: 1000;
+`;
 
 const AskChannelButton = () => {
     const intl = useIntl();
     const dispatch = useDispatch();
     const [showPopover, setShowPopover] = useState(false);
+    const [popoverPos, setPopoverPos] = useState({top: 0, left: 0});
     const target = useRef<HTMLButtonElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
     const channelSummarizationLicensed = useIsLicensedFor('channel_summarization');
 
@@ -82,6 +60,31 @@ const AskChannelButton = () => {
     }, [currentChannelId]);
 
     const channelName = currentChannel?.display_name || 'Current Channel';
+
+    const updatePosition = useCallback(() => {
+        if (!target.current) {
+            return;
+        }
+        const rect = target.current.getBoundingClientRect();
+        const popoverWidth = popoverRef.current?.offsetWidth || POPOVER_FALLBACK_WIDTH;
+        const maxLeft = Math.max(VIEWPORT_PADDING, window.innerWidth - popoverWidth - VIEWPORT_PADDING);
+        const top = rect.bottom + POPOVER_GAP;
+        const left = Math.min(Math.max(VIEWPORT_PADDING, rect.left), maxLeft);
+        setPopoverPos((prev) => (prev.top === top && prev.left === left ? prev : {top, left}));
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!showPopover) {
+            return () => { /* empty */ };
+        }
+        updatePosition();
+        window.addEventListener('resize', updatePosition);
+        window.addEventListener('scroll', updatePosition, true);
+        return () => {
+            window.removeEventListener('resize', updatePosition);
+            window.removeEventListener('scroll', updatePosition, true);
+        };
+    }, [showPopover, updatePosition]);
 
     const handleSummarize = async (options: any) => {
         if (!activeBot) {
@@ -100,25 +103,45 @@ const AskChannelButton = () => {
         dispatch({type: 'SELECT_AI_POST', postId: result.postid});
     };
 
-    // Handle clicking outside to close
     useEffect(() => {
+        if (!showPopover) {
+            return () => { /* empty */ };
+        }
+
         const handleDocumentClick = (e: MouseEvent) => {
-            if (target.current && !target.current.contains(e.target as Node)) {
-                // Check if the click is inside the popover
-                const popover = document.querySelector('.channel-summarize-popover');
-                if (popover && popover.contains(e.target as Node)) {
-                    return;
-                }
-                setShowPopover(false);
+            const node = e.target as Node | null;
+            if (!node) {
+                return;
             }
+            if (
+                target.current?.contains(node) ||
+                popoverRef.current?.contains(node) ||
+                (node instanceof Element && Boolean(node.closest(`[${OPEN_POPUP_ATTRIBUTE}], [role="dialog"]`)))
+            ) {
+                return;
+            }
+            setShowPopover(false);
         };
 
-        if (showPopover) {
-            document.addEventListener('mousedown', handleDocumentClick);
-        }
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') {
+                return;
+            }
+
+            // Let nested dropdown menus or visible modals handle Escape first.
+            const hasOpenDialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).some(isDialogOpen);
+            if (document.querySelector(`[${OPEN_POPUP_ATTRIBUTE}]`) || hasOpenDialog) {
+                return;
+            }
+            setShowPopover(false);
+        };
+
+        document.addEventListener('mousedown', handleDocumentClick);
+        document.addEventListener('keydown', handleKeyDown);
 
         return () => {
             document.removeEventListener('mousedown', handleDocumentClick);
+            document.removeEventListener('keydown', handleKeyDown);
         };
     }, [showPopover]);
 
@@ -146,14 +169,13 @@ const AskChannelButton = () => {
                     data-testid='ask-channel-button'
                 />
             </WithTooltip>
-            <Overlay
-                target={() => target.current}
-                show={showPopover}
-                placement='bottom'
-                rootClose={true}
-                onHide={() => setShowPopover(false)}
-            >
-                <PopoverWrapper className='channel-summarize-popover'>
+            {showPopover && ReactDOM.createPortal(
+                <PopoverPortal
+                    ref={popoverRef}
+                    className='channel-summarize-popover in'
+                    $top={popoverPos.top}
+                    $left={popoverPos.left}
+                >
                     <ChannelSummarizePopover
                         bots={bots || []}
                         activeBot={activeBot}
@@ -162,8 +184,9 @@ const AskChannelButton = () => {
                         onSummarize={handleSummarize}
                         lastViewedAt={initialLastViewedAt}
                     />
-                </PopoverWrapper>
-            </Overlay>
+                </PopoverPortal>,
+                document.body,
+            )}
         </>
     );
 };
