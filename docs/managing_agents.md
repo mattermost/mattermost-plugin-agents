@@ -64,6 +64,7 @@ Saving creates the Mattermost bot account, stores the agent, and updates every n
 | **AI Service** | Required. Shows the services from the Agents settings. A deleted service appears as "Unknown service (deleted)" until you pick another. Below Enterprise only the first service can be chosen. |
 | **Model** | Optional. Overrides the service's default model. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, Vertex AI, and Cohere North the field offers a live list from the provider. |
 | **Custom instructions** | Added to every request as part of the system prompt. Up to 100,000 characters. Use it for role, tone, vocabulary, and workflow. |
+| **Reference documents** | Optional. PDF and text files whose text is added to every request right after the custom instructions. See [Reference documents](#reference-documents). |
 
 Switching services always clears **Model**. Switching to a service of a different type also resets native tools and reasoning to their defaults. A same-type switch keeps them.
 
@@ -135,6 +136,24 @@ Changing **Agent username** renames the existing bot. It keeps its user ID, dire
 
 The default agent setting selects an agent by bot user ID, so it keeps working after a rename. A rename fails with "This username is already taken" if any user or bot, including a deactivated one, holds the name. You can't rename agents defined only in a configuration file.
 
+## Reference documents
+
+Reference documents give an agent background material, such as a handbook or FAQ. On every request, the text of the agent's documents is added to its system prompt, right after the custom instructions, as reference material from the agent's administrators rather than instructions from the user. This works with any model and with tools disabled.
+
+Manage them in the **Reference documents** section of the **Configuration** tab, below **Custom instructions**: upload, rename, remove, and download. Changes are part of the editor draft and take effect on **Save**, which creates a new version. Saved documents can't be edited in place; remove one and upload the new file to replace it.
+
+| Limit | Value |
+|---|---|
+| File types | `.pdf`, `.txt`, `.md`, `.markdown`, `.csv`, `.json` (text files must be UTF-8) |
+| One file | 10 MiB |
+| Documents per agent | 20 |
+| All documents of an agent | 25 MiB |
+| Extracted text per agent | 100,000 characters in total |
+
+The server extracts text on upload and shows how many characters each document adds. A PDF without a text layer, such as a scan, is rejected. PDFs are read in a short-lived helper process of the plugin binary with a time limit. On Linux the helper also gets a 2 GiB address-space limit, which is best-effort: if the system doesn't apply it, the helper runs without it. On other platforms only the time limit applies. A damaged or hostile PDF that exceeds the time limit is rejected, but its memory use before then isn't limited on non-Linux platforms. A save over the text budget is rejected with the total.
+
+Only people who can manage an agent can list, download, or read the text of its documents; everyone else sees the agent without them. Each version records its documents, the history window lists them with download links, and a restore brings them back, subject to the same limits. Stored files are immutable and never deleted. Uploads are audited as `uploadAgentDocument` with the document ID, type, and size only.
+
 ## Version history
 
 Every save creates a numbered version. The agent always runs its latest version. There are no drafts. Creating, editing, and restoring each add a version. Some automatic changes, such as migrations, add a version labeled **System**. Agents from before version history get an **Initial version**.
@@ -162,11 +181,11 @@ Restores and version deletions are recorded in the audit log. See [Monitor Agent
 
 Export copies an agent's purpose and tool setup to another server.
 
-**Export.** In the editor header or the row menu, select **Export**. It downloads `<username>-v<version>.agent.json` for the current version. The file holds the suggested username and display name, custom instructions, **Enable Tools**, **Max tool turns**, dynamic tool loading, **Automatically enable all MCP tools**, the skill settings, and the granted MCP tools, each identified by its server URL. It doesn't hold the service, model, reasoning, native tools, vision, access rules, admins, the service account setting, the avatar, any IDs, or credentials. Treat the file like the instructions, since they're included.
+**Export.** In the editor header or the row menu, select **Export**. It downloads `<username>-v<version>.agent.json` for the current version. The file holds the suggested username and display name, custom instructions, **Enable Tools**, **Max tool turns**, dynamic tool loading, **Automatically enable all MCP tools**, the skill settings, and the granted MCP tools, each identified by its server URL. It doesn't hold the service, model, reasoning, native tools, vision, access rules, admins, the service account setting, the avatar, any IDs, or credentials. Version 2 files also carry the [reference documents](#reference-documents), each with its name, type, size, SHA-256, and base64 content, so treat the file like the instructions and documents themselves. Version 1 files from older servers can still be imported.
 
 **Import.** Select **Import** on the **Agents** page to start a new agent from a file, or in the editor to load a file into an existing agent. Nothing is saved until you select **Save**, and the save goes through the usual checks. Review the imported instructions first, because they become the agent's instructions. Importing into an existing agent replaces its instructions, tool settings, MCP tools, and skill settings. It keeps the existing username and display name, which the file only suggests for a new agent, and every setting the file doesn't carry.
 
-MCP tools in the file are matched to your servers by URL, ignoring surrounding whitespace and a trailing `/`. Tools of servers you haven't configured are left out, and the editor names those servers. Files over 2 MiB, files that aren't agent exports, and unsupported versions are rejected.
+MCP tools in the file are matched to your servers by URL, ignoring surrounding whitespace and a trailing `/`. Tools of servers you haven't configured are left out, and the editor names those servers. The editor checks each document's size when it reads the file. It checks the SHA-256 only in a secure context (HTTPS or `localhost`), because the browser provides `crypto.subtle` only there; elsewhere a document with the right size and a wrong checksum is still listed. Documents are listed as waiting to upload, and are uploaded, with text extracted again here, when you select **Save**. A version 2 file replaces the agent's documents; a version 1 file leaves them alone. Files over 40 MiB, files that aren't agent exports, and unsupported versions are rejected.
 
 ## Delete an agent
 

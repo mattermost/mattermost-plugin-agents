@@ -111,6 +111,10 @@ You have skills: packaged instructions for specific kinds of requests. When a re
 {{.CustomInstructions}}
 {{- end}}
 
+{{- if .ReferenceDocuments}}
+{{.ReferenceDocuments}}
+{{- end}}
+
 {{- if .RequestingUser}}
 The following is information about the user. {{.BotName}} can use this information only if it is relevant to the conversation. Don't mention it unless it is necessary.
 The user making the request username is '{{.RequestingUser.Username}}'.

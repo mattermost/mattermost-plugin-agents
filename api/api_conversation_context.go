@@ -53,7 +53,11 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	// Same assembly the runtime uses so providers see the same shape (e.g.
 	// Anthropic's alternating-role requirement, which CountTokens enforces).
 	enableVision, maxFileSize := a.attachmentConfigForBot(conv.BotID)
-	llmCtx := a.buildContextForConversation(c.Request.Context(), userID, conv)
+	llmCtx, err := a.buildContextForConversation(c.Request.Context(), userID, conv)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to build context: %w", err))
+		return
+	}
 	req, err := conversation.AssembleRequest(conv, turns, llmCtx, a.mmClient, enableVision, maxFileSize, conversation.BuildOptions{
 		SessionID: auth.SessionIDFromContext(c.Request.Context()),
 	})
@@ -75,18 +79,19 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 // buildContextForConversation populates llm.Context with the same Tools the
 // runtime would attach for this user+bot+channel, so AssembleRequest emits
 // tool_defs composition rows. Returns an empty Context when prerequisites
-// aren't wired (unit tests, missing bot/user/channel).
-func (a *API) buildContextForConversation(ctx context.Context, userID string, conv *store.Conversation) *llm.Context {
+// aren't wired (unit tests, missing bot/user/channel), and an error when the
+// agent's reference documents cannot be loaded.
+func (a *API) buildContextForConversation(ctx context.Context, userID string, conv *store.Conversation) (*llm.Context, error) {
 	if a.contextBuilder == nil || a.bots == nil {
-		return &llm.Context{}
+		return &llm.Context{}, nil
 	}
 	bot := a.bots.GetBotByID(conv.BotID)
 	if bot == nil {
-		return &llm.Context{}
+		return &llm.Context{}, nil
 	}
 	user, err := a.pluginAPI.User.Get(userID)
 	if err != nil {
-		return &llm.Context{}
+		return &llm.Context{}, nil
 	}
 	var channel *model.Channel
 	if conv.ChannelID != nil {
@@ -100,6 +105,7 @@ func (a *API) buildContextForConversation(ctx context.Context, userID string, co
 	// adds DM-only servers only when channel is the viewer's DM with the
 	// agent, as a DM turn there would.
 	return a.contextBuilder.BuildLLMContextUserRequest(
+		ctx,
 		bot,
 		user,
 		channel,

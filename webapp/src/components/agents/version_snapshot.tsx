@@ -1,20 +1,25 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {DefaultMaxToolTurns, ServiceInfo, UserAgent, normalizeSkillsConfig} from '@/types/agents';
+import {AgentDocument, DefaultMaxToolTurns, ServiceInfo, UserAgent, normalizeSkillsConfig} from '@/types/agents';
+import {downloadAgentDocument} from '@/utils/download_agent_document';
 
+import {formatDocumentSize} from './agent_documents';
 import {changedFieldLabels} from './agent_version_labels';
 
 type Props = {
     config: Partial<UserAgent>;
     services: ServiceInfo[];
+
+    /** Needed to download the snapshot's documents. */
+    agentId?: string;
 
     /** BotConfig keys this version changed; their rows are marked. */
     changedFields?: string[] | null;
@@ -31,6 +36,7 @@ const FIELD_GROUPS = {
     dynamicToolLoading: ['mcpDynamicToolLoading'],
     mcpTools: ['enabledMCPTools', 'autoEnableNewMCPTools'],
     skills: ['skills'],
+    documents: ['documents'],
     vision: ['enableVision'],
     reasoning: ['reasoningEnabled', 'reasoningEffort', 'thinkingBudget'],
     nativeTools: ['enabledNativeTools'],
@@ -40,10 +46,38 @@ const FIELD_GROUPS = {
 
 const SHOWN_FIELDS = new Set(Object.values(FIELD_GROUPS).flat());
 
+const DocumentLink = ({agentId, document}: {agentId: string; document: AgentDocument}) => {
+    const intl = useIntl();
+    const [error, setError] = useState('');
+
+    const handleClick = async () => {
+        setError('');
+        try {
+            await downloadAgentDocument(agentId, document.id, document.name);
+        } catch (err) {
+            const message = (err as {message?: unknown})?.message;
+            setError(typeof message === 'string' && message.trim() ? message.trim() : intl.formatMessage({defaultMessage: 'Failed to download the document. Please try again.'}));
+        }
+    };
+
+    return (
+        <>
+            <DocumentButton
+                type='button'
+                onClick={handleClick}
+            >
+                {document.name}
+            </DocumentButton>
+            <ToolOrigin>{formatDocumentSize(intl, document.size)}</ToolOrigin>
+            {error && <DocumentError role='alert'>{error}</DocumentError>}
+        </>
+    );
+};
+
 /**
  * Read-only rendering of a stored agent version snapshot (llm.BotConfig JSON).
  */
-const VersionSnapshot = ({config, services, changedFields}: Props) => {
+const VersionSnapshot = ({config, services, agentId, changedFields}: Props) => {
     const intl = useIntl();
 
     const changed = new Set(changedFields ?? []);
@@ -138,6 +172,30 @@ const VersionSnapshot = ({config, services, changedFields}: Props) => {
         );
     }
 
+    const documents = config.documents ?? [];
+    let documentsValue: React.ReactNode = none;
+    if (documents.length > 0) {
+        documentsValue = (
+            <ToolList data-testid='version-snapshot-documents'>
+                {documents.map((doc) => (
+                    <li key={doc.id}>
+                        {agentId ? (
+                            <DocumentLink
+                                agentId={agentId}
+                                document={doc}
+                            />
+                        ) : (
+                            <>
+                                {doc.name}
+                                <ToolOrigin>{formatDocumentSize(intl, doc.size)}</ToolOrigin>
+                            </>
+                        )}
+                    </li>
+                ))}
+            </ToolList>
+        );
+    }
+
     return (
         <>
             <Grid data-testid='version-snapshot'>
@@ -196,6 +254,12 @@ const VersionSnapshot = ({config, services, changedFields}: Props) => {
                     changed={isChanged('mcpTools')}
                 >
                     {mcpToolsValue}
+                </Row>
+                <Row
+                    label={intl.formatMessage({defaultMessage: 'Reference documents'})}
+                    changed={isChanged('documents')}
+                >
+                    {documentsValue}
                 </Row>
                 <Row
                     label={intl.formatMessage({defaultMessage: 'Skills'})}
@@ -321,6 +385,24 @@ const ToolOrigin = styled.span`
     margin-left: var(--spacing-xs);
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+const DocumentButton = styled.button`
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--link-color);
+    cursor: pointer;
+    text-align: left;
+
+    &:hover {
+        text-decoration: underline;
+    }
+`;
+
+const DocumentError = styled.div`
+    font-size: 12px;
+    color: var(--dnd-indicator);
 `;
 
 export default VersionSnapshot;

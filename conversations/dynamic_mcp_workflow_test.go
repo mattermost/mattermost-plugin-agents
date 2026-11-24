@@ -137,12 +137,14 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 			builder := newChannelFollowUpTestBuilder(t, []llm.Tool{jiraTool}, &channelFollowUpTestConfig{})
 			lm := &dynamicWorkflowLLM{}
 			bot := loadedStateBot(lm)
-			llmContext := builder.BuildLLMContextUserRequest(
+			llmContext, err := builder.BuildLLMContextUserRequest(
+				context.Background(),
 				bot,
 				&model.User{Id: testRequesterID, Username: "user", Locale: "en"},
 				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__" + testRequesterID},
 				builder.WithLLMContextTools(context.Background(), bot),
 			)
+			require.NoError(t, err)
 			c := &Conversations{
 				convService:    conversation.NewService(convStore, nil, nil, nil),
 				licenseChecker: enterprisetest.CheckerAt(enterprise.LevelEnterprise),

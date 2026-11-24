@@ -318,7 +318,10 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
-	llmContext := p.c.buildConversationContextWithTools(ctx, p.bot, p.user, p.channel, prefsLogMessage, opts...)
+	llmContext, err := p.c.buildConversationContextWithTools(ctx, p.bot, p.user, p.channel, prefsLogMessage, opts...)
+	if err != nil {
+		return nil, err
+	}
 	skillsCfg := p.bot.GetConfig()
 	if !p.interactive {
 		skillsCfg.Skills.AllowPersonal = false

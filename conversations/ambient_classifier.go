@@ -115,12 +115,15 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 
 	// The posting user attributes the request so provider fallbacks are limited
 	// to services that user may use; thread content must not reach others.
-	llmCtx := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel,
+	llmCtx, err := c.contextBuilder.BuildLLMContextUserRequest(classifyCtx, bot, postingUser, channel,
 		c.contextBuilder.WithLLMContextParameters(map[string]any{
 			"Instructions": setting.Instructions,
 			"ThreadScoped": setting.Mode == autoreply.ModeAmbientThreads,
 		}),
 	)
+	if err != nil {
+		return warnFail("failed to build context", err)
+	}
 
 	prompt, err := c.prompts.Format(prompts.PromptAmbientClassifierSystem, llmCtx)
 	if err != nil {

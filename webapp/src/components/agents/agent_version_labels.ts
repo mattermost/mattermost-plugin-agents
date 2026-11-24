@@ -86,6 +86,8 @@ export function changedFieldLabel(intl: IntlShape, field: string): string {
         return intl.formatMessage({defaultMessage: 'Display name'});
     case 'customInstructions':
         return intl.formatMessage({defaultMessage: 'Custom instructions'});
+    case 'documents':
+        return intl.formatMessage({defaultMessage: 'Reference documents'});
     case 'serviceID':
         return intl.formatMessage({defaultMessage: 'AI service'});
     case 'model':

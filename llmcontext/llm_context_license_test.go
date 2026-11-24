@@ -116,7 +116,7 @@ func TestUnlicensedBuilderDropsRemoteMCPTools(t *testing.T) {
 				AutoEnableNewMCPTools: true,
 			})
 
-			context := buildToolsContext(builder, bot)
+			context := buildToolsContext(t, builder, bot)
 
 			want := []string{"builtin", "mattermost__read_channel"}
 			if level >= enterprise.LevelEnterprise {
@@ -139,7 +139,7 @@ func TestUnlicensedBuilderDropsRemoteMCPTools(t *testing.T) {
 			AutoEnableNewMCPTools: true,
 		})
 
-		context := buildToolsContext(builder, bot)
+		context := buildToolsContext(t, builder, bot)
 		require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel"}, toolNames(context.Tools))
 	})
 }
@@ -172,7 +172,7 @@ func TestUnlicensedBuilderDropsRemoteMCPToolsFromDynamicRegistry(t *testing.T) {
 				MCPDynamicToolLoading: true,
 			})
 
-			context := buildToolsContext(builder, bot)
+			context := buildToolsContext(t, builder, bot)
 
 			require.Equal(t, tc.wantRemoteInfo, context.Tools.IsUnloadedMCPTool("jira__get_issue"),
 				"remote tool availability in the dynamic loading registry")
@@ -216,7 +216,7 @@ func TestServiceAccountCatalogLicenseGate(t *testing.T) {
 				UseServiceAccountAuth: true,
 			})
 
-			context := buildToolsContext(builder, bot)
+			context := buildToolsContext(t, builder, bot)
 
 			if level >= enterprise.LevelEnterprise {
 				require.Empty(t, provider.userCalls)
@@ -251,7 +251,7 @@ func TestServiceAccountCatalogLicenseGate(t *testing.T) {
 			UseServiceAccountAuth: true,
 		})
 
-		context := buildToolsContext(builder, bot)
+		context := buildToolsContext(t, builder, bot)
 		require.Equal(t, []string{"user-id"}, provider.userCalls)
 		require.Empty(t, provider.saCalls)
 		require.Empty(t, context.ToolAuthMode)
@@ -292,7 +292,7 @@ func TestUnlicensedBuilderDropsRemoteMCPAuthErrors(t *testing.T) {
 				AutoEnableNewMCPTools: true,
 			})
 
-			context := buildToolsContext(builder, bot)
+			context := buildToolsContext(t, builder, bot)
 
 			require.Len(t, context.Tools.GetAuthErrors(), tc.wantAuthErrors)
 		})
