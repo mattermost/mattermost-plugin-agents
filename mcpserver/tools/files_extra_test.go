@@ -140,6 +140,12 @@ func TestToolCopyFileToChannel(t *testing.T) {
 			wantUploadedName: "bug-shot.png",
 		},
 		{
+			name:             "copies zero-byte file via multipart upload",
+			sourceInfo:       &model.FileInfo{Name: "empty.txt", MimeType: "text/plain", Size: 0},
+			fileBody:         []byte{},
+			wantUploadedName: "empty.txt",
+		},
+		{
 			name:             "uses optional filename override",
 			filenameOverride: "renamed.png",
 			sourceInfo:       &model.FileInfo{Name: "bug-shot.png", MimeType: "image/png", Size: int64(len(pngBytes))},
@@ -231,9 +237,30 @@ func TestToolCopyFileToChannel(t *testing.T) {
 			})
 			mux.HandleFunc("/api/v4/files", func(w http.ResponseWriter, r *http.Request) {
 				uploaded = true
-				uploadedChannel = r.URL.Query().Get("channel_id")
-				uploadedFilename = r.URL.Query().Get("filename")
-				uploadedBody, _ = io.ReadAll(r.Body)
+				if r.ContentLength == 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(&model.AppError{Message: "Content-Length should not be 0", StatusCode: http.StatusBadRequest})
+					return
+				}
+				if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+					if !assert.NoError(t, r.ParseMultipartForm(1<<20)) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					uploadedChannel = r.FormValue("channel_id")
+					file, header, formErr := r.FormFile("files")
+					if !assert.NoError(t, formErr) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					defer file.Close()
+					uploadedFilename = header.Filename
+					uploadedBody, _ = io.ReadAll(file)
+				} else {
+					uploadedChannel = r.URL.Query().Get("channel_id")
+					uploadedFilename = r.URL.Query().Get("filename")
+					uploadedBody, _ = io.ReadAll(r.Body)
+				}
 
 				if tt.uploadStatus != 0 {
 					w.WriteHeader(tt.uploadStatus)

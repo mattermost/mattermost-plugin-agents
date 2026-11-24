@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -282,7 +283,13 @@ func (p *MattermostToolProvider) toolCopyFileToChannel(mcpContext *MCPToolContex
 		return "", fmt.Errorf("source file %q is too large (%d bytes; max %d bytes)", fileName, len(data), maxMCPFetchBytes)
 	}
 
-	uploadResp, _, err := client.UploadFileAsRequestBody(ctx, data, args.TargetChannelID, fileName)
+	var uploadResp *model.FileUploadResponse
+	if len(data) == 0 {
+		// Mattermost's raw-body upload rejects Content-Length: 0; multipart handles empty files.
+		uploadResp, _, err = client.UploadFile(ctx, data, args.TargetChannelID, fileName)
+	} else {
+		uploadResp, _, err = client.UploadFileAsRequestBody(ctx, data, args.TargetChannelID, fileName)
+	}
 	if err != nil {
 		return "", fmt.Errorf("error uploading copied file to channel %s: %w", args.TargetChannelID, err)
 	}

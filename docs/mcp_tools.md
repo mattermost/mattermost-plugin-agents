@@ -171,7 +171,7 @@ The 125 tools of the built-in Mattermost MCP server, each marked read-only or st
 | `get_file_link` | Read-only | Get a public link to a file. The link bypasses normal file access checks |
 | `search_files` | Read-only | Search file attachments by filename/content within a team |
 | `upload_file` | Changes state | Upload a file from a local path or URL. Listed on every server, but works only on the standalone stdio server (local access mode). Elsewhere it returns an error. Use `files` on `create_post` instead |
-| `copy_file_to_channel` | Changes state | Copy an existing Mattermost file into another channel (or board) as the signed-in user and return the new file ID |
+| `copy_file_to_channel` | Changes state | Copy an existing Mattermost file (up to 100 MiB) into another channel (or board) as the signed-in user and return the new file ID |
 
 ## Search
 
