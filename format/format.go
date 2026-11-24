@@ -828,6 +828,44 @@ func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
 	w.WriteString("\n")
 }
 
+// InlineFileContent formats an inlined text file attachment with its File ID
+// so the model can pass it to file tools (for example copy_file_to_channel).
+func InlineFileContent(fileInfo *model.FileInfo, content string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "File Name: %s\n", fileInfo.Name)
+	if fileInfo.Id != "" {
+		fmt.Fprintf(&b, "File ID: %s\n", fileInfo.Id)
+	}
+	fmt.Fprintf(&b, "Content: %s", content)
+	return b.String()
+}
+
+// AttachedImage formats a one-line metadata note for an image attachment so
+// the model knows its name and File ID for tools that operate on Mattermost
+// files. When visionEnabled is false it also explains that the model cannot
+// inspect the image contents.
+func AttachedImage(fileInfo *model.FileInfo, visionEnabled bool) string {
+	name := sanitizeAttachmentName(fileInfo.Name)
+	id := sanitizeAttachmentName(fileInfo.Id)
+
+	var subject string
+	switch {
+	case name != "" && id != "":
+		subject = fmt.Sprintf("Image attached: %s (File ID: %s)", name, id)
+	case name != "":
+		subject = fmt.Sprintf("Image attached: %s", name)
+	case id != "":
+		subject = fmt.Sprintf("An image is attached (File ID: %s)", id)
+	default:
+		subject = "An image is attached"
+	}
+
+	if !visionEnabled {
+		return fmt.Sprintf("[%s. Image input is disabled for this agent, so you cannot see it.]", subject)
+	}
+	return fmt.Sprintf("[%s]", subject)
+}
+
 // UnavailableAttachmentReason says why an attachment's content is not in the
 // conversation.
 type UnavailableAttachmentReason int

@@ -192,7 +192,7 @@ func BlocksToPost(
 				continue
 			}
 			if !opts.EnableVision {
-				notices = append(notices, format.UnavailableAttachment(fileInfo.Name, format.AttachmentImageInputDisabled))
+				notices = append(notices, format.AttachedImage(fileInfo, false))
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -200,6 +200,7 @@ func BlocksToPost(
 					MimeType: fileInfo.MimeType,
 					Size:     fileInfo.Size,
 				})
+				notices = append(notices, format.AttachedImage(fileInfo, true))
 				continue
 			}
 			reader, err := opts.MMClient.GetFile(block.FileID)
@@ -221,6 +222,7 @@ func BlocksToPost(
 				Data:     data,
 				Reader:   bytes.NewReader(data),
 			})
+			notices = append(notices, format.AttachedImage(fileInfo, true))
 
 		case BlockTypeFile:
 			if opts.MMClient == nil {
@@ -278,7 +280,7 @@ func BlocksToPost(
 				content = string(body)
 			}
 
-			fileContents = append(fileContents, "File Name: "+fileInfo.Name+"\nContent: "+content)
+			fileContents = append(fileContents, format.InlineFileContent(fileInfo, content))
 
 		case BlockTypeAnnotations:
 			// Not mapped to llm.Post
