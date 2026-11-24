@@ -279,15 +279,19 @@ export function computeRenderedRounds(params: {
         return out;
     }
 
+    // The persisted copy can land before the end event, so the refetch the end
+    // triggers would show it next to the identical live text. The persisted
+    // turn already holds every live round too; keeping any would leave stale
+    // tool rounds after the answer and fold it into the activity area.
+    const persistedHoldsLiveAnswer = !generating && currentRound !== null && currentRound.text !== '' &&
+        persistedRounds[persistedRounds.length - 1]?.text === currentRound.text;
+    if (persistedHoldsLiveAnswer) {
+        return [...persistedRounds];
+    }
+
     const out: Round[] = [...persistedRounds, ...liveRounds];
     if ((generating || pendingRefetch || !hasConversation || persistedRounds.length === 0) && currentRound) {
-        // The persisted copy can land before the end event, so the refetch the
-        // end triggers keeps showing it next to the identical live text.
-        const alreadyPersisted = !generating && currentRound.text !== '' &&
-            persistedRounds[persistedRounds.length - 1]?.text === currentRound.text;
-        if (!alreadyPersisted) {
-            out.push(currentRound);
-        }
+        out.push(currentRound);
     }
     return out;
 }
