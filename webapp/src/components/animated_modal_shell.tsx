@@ -10,7 +10,7 @@ import {OPEN_POPUP_ATTRIBUTE} from './dropdown';
 const SHELL_ATTRIBUTE = 'data-mm-ai-modal-shell';
 
 // Ignores hidden dialogs and ones mid exit animation (bootstrap drops `in`/`show` first).
-const isDialogOpen = (el: HTMLElement) => {
+export const isDialogOpen = (el: HTMLElement) => {
     if (el.closest('[aria-hidden="true"]') || el.getClientRects().length === 0) {
         return false;
     }

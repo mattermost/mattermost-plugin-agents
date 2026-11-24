@@ -4,8 +4,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,8 +94,9 @@ func legacySourcePluginHandler() http.Handler {
 }
 
 // newKnownPluginServerManager returns a manager that restored one known plugin
-// server from the KV store, as after a restart.
-func newKnownPluginServerManager(t *testing.T, router *sourcePluginRouter, remoteAllowed func() bool) *ClientManager {
+// server from the KV store, as after a restart, along with its mock API for
+// inspecting log calls.
+func newKnownPluginServerManager(t *testing.T, router *sourcePluginRouter, remoteAllowed func() bool) (*ClientManager, *plugintest.API) {
 	t.Helper()
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -107,7 +110,7 @@ func newKnownPluginServerManager(t *testing.T, router *sourcePluginRouter, remot
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, router, remoteAllowed, nil)
 	t.Cleanup(m.Close)
 	require.False(t, m.IsPluginRegistered(reconcilePluginID))
-	return m
+	return m, pluginTestAPI
 }
 
 func TestReconcileKnownPluginServer(t *testing.T) {
@@ -116,10 +119,12 @@ func TestReconcileKnownPluginServer(t *testing.T) {
 		state         int
 		source        func(t *testing.T, bridge *agentsBridge) http.Handler
 		remoteAllowed func() bool
+		timeout       time.Duration
 		wantPromoted  bool
 		wantErr       bool
 		wantContacted bool
 		wantRegisters int
+		wantAuthDebug bool
 	}{
 		{
 			name:  "current library registers again",
@@ -150,13 +155,79 @@ func TestReconcileKnownPluginServer(t *testing.T) {
 			wantContacted: true,
 		},
 		{
-			name:  "legacy library that fails the probe stays known",
+			name:  "legacy library rejecting anonymous probe with 403 stays known without error",
+			state: model.PluginStateRunning,
+			source: func(*testing.T, *agentsBridge) http.Handler {
+				mcpHandler := legacySourcePluginHandler()
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get(MMUserIDHeader) == "" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					mcpHandler.ServeHTTP(w, r)
+				})
+			},
+			wantContacted: true,
+			wantAuthDebug: true,
+		},
+		{
+			name:  "legacy library rejecting anonymous probe with 401 stays known without error",
+			state: model.PluginStateRunning,
+			source: func(*testing.T, *agentsBridge) http.Handler {
+				mcpHandler := legacySourcePluginHandler()
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get(MMUserIDHeader) == "" {
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
+					mcpHandler.ServeHTTP(w, r)
+				})
+			},
+			wantContacted: true,
+			wantAuthDebug: true,
+		},
+		{
+			name:  "legacy library that fails the probe with 5xx stays known with error",
 			state: model.PluginStateRunning,
 			source: func(*testing.T, *agentsBridge) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusInternalServerError)
 				})
 			},
+			wantErr:       true,
+			wantContacted: true,
+		},
+		{
+			name:  "legacy library returning invalid protocol payload stays known with error",
+			state: model.PluginStateRunning,
+			source: func(*testing.T, *agentsBridge) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("not valid json"))
+				})
+			},
+			wantErr:       true,
+			wantContacted: true,
+		},
+		{
+			name:  "legacy library that times out on probe stays known with error",
+			state: model.PluginStateRunning,
+			source: func(*testing.T, *agentsBridge) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get(pluginmcp.ReregisterHeader) != "" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					body, _ := io.ReadAll(r.Body)
+					if bytes.Contains(body, []byte("notifications/cancelled")) { //nolint:misspell // MCP protocol method name
+						w.WriteHeader(http.StatusAccepted)
+						return
+					}
+					<-r.Context().Done()
+				})
+			},
+			timeout:       50 * time.Millisecond,
 			wantErr:       true,
 			wantContacted: true,
 		},
@@ -180,9 +251,15 @@ func TestReconcileKnownPluginServer(t *testing.T) {
 			if remoteAllowed == nil {
 				remoteAllowed = RemoteMCPAlwaysAllowed
 			}
-			m := newKnownPluginServerManager(t, router, remoteAllowed)
+			m, pluginTestAPI := newKnownPluginServerManager(t, router, remoteAllowed)
 
-			promoted, err := m.ReconcileKnownPluginServer(context.Background(), reconcilePluginID)
+			ctx := context.Background()
+			if tt.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.timeout)
+				defer cancel()
+			}
+			promoted, err := m.ReconcileKnownPluginServer(ctx, reconcilePluginID)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -193,13 +270,25 @@ func TestReconcileKnownPluginServer(t *testing.T) {
 			require.Equal(t, tt.wantPromoted, m.IsPluginRegistered(reconcilePluginID))
 			require.Equal(t, tt.wantContacted, router.requestCount() > 0)
 			require.Eventually(t, func() bool { return bridge.registerCount() == tt.wantRegisters }, time.Second, 5*time.Millisecond)
+
+			var sawAuthDebug, sawWarn bool
+			for _, call := range pluginTestAPI.Calls {
+				if call.Method == "LogWarn" {
+					sawWarn = true
+				}
+				if call.Method == "LogDebug" && len(call.Arguments) > 0 && call.Arguments[0] == "Plugin MCP server probe requires user authentication; waiting for plugin registration" {
+					sawAuthDebug = true
+				}
+			}
+			require.Equal(t, tt.wantAuthDebug, sawAuthDebug)
+			require.False(t, sawWarn)
 		})
 	}
 }
 
 func TestReconcileKnownPluginServerIgnoresLiveEntries(t *testing.T) {
 	router := &sourcePluginRouter{state: model.PluginStateRunning, handler: legacySourcePluginHandler()}
-	m := newKnownPluginServerManager(t, router, RemoteMCPAlwaysAllowed)
+	m, _ := newKnownPluginServerManager(t, router, RemoteMCPAlwaysAllowed)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: reconcilePluginID, Name: "Source", Path: "/mcp", Enabled: true})
 
 	promoted, err := m.ReconcileKnownPluginServer(context.Background(), reconcilePluginID)

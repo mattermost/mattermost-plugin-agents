@@ -24,14 +24,14 @@ export const ReindexConfirmation = ({show, onConfirm, onCancel, embeddingProvide
                         <FormattedMessage defaultMessage='Are you sure you want to reindex all posts?'/>
                     </p>
                     <p>
-                        <FormattedMessage defaultMessage='This will clear the current index and rebuild it from scratch. The process will:'/>
+                        <FormattedMessage defaultMessage='This clears the index and rebuilds it from scratch:'/>
                     </p>
                     <ul>
-                        <li><FormattedMessage defaultMessage='Index all existing posts in the database'/></li>
-                        <li><FormattedMessage defaultMessage='Take a significant amount of time for large installations'/></li>
-                        <li><FormattedMessage defaultMessage='Increase database load during the reindexing process'/></li>
+                        <li><FormattedMessage defaultMessage='Re-embeds all existing posts'/></li>
+                        <li><FormattedMessage defaultMessage='Takes significant time on large workspaces'/></li>
+                        <li><FormattedMessage defaultMessage='Increases database load while running'/></li>
                         {(embeddingProviderType === 'openai' || embeddingProviderType === 'openai-compatible') && (
-                            <li><FormattedMessage defaultMessage='Incur API costs from your embedding provider for re-embedding all posts'/></li>
+                            <li><FormattedMessage defaultMessage='Incurs embedding provider API costs'/></li>
                         )}
                     </ul>
                 </>

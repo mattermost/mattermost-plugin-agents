@@ -203,7 +203,7 @@ test.describe('MCP add server wizard', () => {
         await dialog.getByRole('button', {name: 'Skip connecting'}).click();
 
         await expect(dialog.getByText('Save without reviewing tools?')).toBeVisible();
-        await expect(dialog.getByText(/ask for approval before every run/)).toBeVisible();
+        await expect(dialog.getByText(/Unreviewed tools default to Ask Every Time/)).toBeVisible();
         await shot(dialog, 'add4');
 
         await dialog.getByRole('button', {name: 'Save without connecting'}).click();
@@ -305,7 +305,7 @@ editTest.describe('MCP server editing', () => {
         await dialog.getByRole('button', {name: 'Save', exact: true}).click();
         await expect(dialog.getByText(`Users will have to sign in to ${renamed} again`)).toBeVisible();
         await expect(page.getByRole('dialog', {name: `Edit ${PLAIN_SERVER_NAME}`})).toBeVisible();
-        await expect(dialog.getByText(/Renaming the server/)).toBeVisible();
+        await expect(dialog.getByText(/Renaming removes saved sign-ins/)).toBeVisible();
         await shot(dialog, 'shot3');
 
         await dialog.getByRole('button', {name: 'Save and sign in again'}).click();
