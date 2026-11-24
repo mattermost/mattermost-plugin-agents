@@ -14,6 +14,7 @@ A regular Mattermost database backup covers everything below. The plugin has no 
 | Skills (custom prompts) and pins | `LLM_CustomPrompts`, `LLM_CustomPromptPins` | |
 | Conversations | `LLM_Conversations`, `LLM_Turns` | Messages, tool calls, and tool results. A conversation is soft-deleted when its post is deleted. |
 | Channel auto-reply settings | `Agents_ChannelAutoReply` | |
+| Channel instructions and agent-context pins | `Agents_ChannelInstructions`, `Agents_ChannelContextPosts` | Pins store post IDs only; the post content is read live. |
 | Migration state | `Agents_System` | Flags such as which one-time migrations ran. |
 | Semantic search vectors | `llm_posts_embeddings` | Can be rebuilt with a Full Reindex. Back it up separately for large deployments to avoid a long reindex. |
 | MCP OAuth tokens, plugin MCP registrations | Mattermost plugin key-value store | |

@@ -112,6 +112,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Meeting summaries | No | No | Yes | Yes |
 | Shared skills | No | No | Yes | Yes |
 | Channel auto-reply | No | No | No | Yes |
+| Channel agent instructions and pinned context | No | No | No | Yes |
 | Attribute-based access control | No | No | No | Yes |
 
 ### Limits by level

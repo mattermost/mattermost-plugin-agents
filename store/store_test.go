@@ -183,6 +183,17 @@ func TestRunMigrations(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_AgentVersions table should exist")
 
+				for _, table := range []string{"agents_channelinstructions", "agents_channelcontextposts"} {
+					err = s.db.Get(&exists, `
+						SELECT EXISTS (
+							SELECT 1 FROM information_schema.tables
+							WHERE table_name = $1
+							AND table_schema = current_schema()
+						)`, table)
+					require.NoError(t, err)
+					assert.True(t, exists, "%s table should exist", table)
+				}
+
 				// Check Agents_DB_Migrations tracking table exists
 				err = s.db.Get(&exists, `
 					SELECT EXISTS (
@@ -209,7 +220,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 17, count, "Should have 17 migration records")
+				assert.Equal(t, 18, count, "Should have 18 migration records")
 			},
 		},
 		{

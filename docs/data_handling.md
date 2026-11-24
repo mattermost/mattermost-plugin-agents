@@ -25,6 +25,7 @@ Each request also carries the definitions (name, description, and parameters) of
 | @mention in a channel, not in a thread | The mentioning message, its attachments, and the channel and team names. |
 | @mention in a thread | The thread's messages up to the mention, with each author's username and attachment file names. Replies after the mention aren't included. |
 | Channel auto-reply | The same as an @mention. |
+| Mentions, auto-replies, thread analysis, and channel summaries in a public or private channel at Enterprise Advanced | The channel's instructions and the text of its pinned agent-context posts (the first 4,000 characters of each), in the system prompt. The context is captured when a conversation starts and stored with it, so changes apply to new conversations, not to follow-ups or regenerated replies in an existing one. |
 | Ambient auto-reply | Each new message and its thread go to a classification request on the agent's model, with the channel's ambient instructions. If it decides to reply, the reply is an ordinary mention. |
 | Summarize Thread, Find action items, Find open questions | The thread's messages with their authors. |
 | Ask Agents about this channel, Ask AI, `/summarize-channel` | The channel's posts for the range you chose, with their authors. |
@@ -58,6 +59,7 @@ In channels, a result the initiator keeps private isn't sent to the LLM for the 
 | Conversations | Plugin tables in the Mattermost database | Messages, tool calls and results, and titles. A conversation is soft-deleted when its root post is deleted. |
 | Semantic search index | Plugin table in the database | Post text chunks and their vectors. Deleting a post removes its embeddings. |
 | Configuration and agents | Plugin tables | Service credentials, MCP server settings, agent instructions, and version history. |
+| Channel instructions and agent-context pins | `Agents_ChannelInstructions`, `Agents_ChannelContextPosts` | Instruction text, and the IDs of pinned posts with who pinned them and when. Pinned post content isn't copied. It's read from Mattermost when a conversation starts. |
 | Token usage log | `logs/agents/token_usage.log`, if enabled | Counts and identifiers. No message content. |
 | Audit records | The server audit log | Identifiers and outcomes. No prompts, messages, tool arguments, or results. |
 | Traces | Server log or an OTLP collector, if enabled | Identifiers and sizes. No prompts or tool results. |
