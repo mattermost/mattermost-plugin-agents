@@ -380,3 +380,26 @@ func TestStoreAddVersionRacingPurgeLeavesNoOrphanRows(t *testing.T) {
 		WHERE NOT EXISTS (SELECT 1 FROM Agents_ChannelArtifacts a WHERE a.ID = v.ArtifactID)`))
 	assert.Zero(t, orphans)
 }
+
+func TestStoreHeadChangesRefuseContentAnotherArtifactHas(t *testing.T) {
+	db := testDB(t)
+	s := channelartifacts.NewStore(db)
+	channelID := model.NewId()
+	user := model.NewId()
+	a, b := model.NewId(), model.NewId()
+	require.NoError(t, s.Create(a, channelID, "A", newVersion(t, db, sha(1)), 5))
+	require.NoError(t, s.AddVersion(a, newVersion(t, db, sha(2)), 5))
+	require.NoError(t, s.Create(b, channelID, "B", newVersion(t, db, sha(1)), 5))
+
+	var dup *channelartifacts.DuplicateError
+	require.ErrorAs(t, s.SetHead(a, 1, user, 100), &dup, "rollback to content another artifact has as current")
+	assert.Equal(t, b, dup.ArtifactID)
+	require.ErrorAs(t, s.DeleteVersion(a, 2, user, 100), &dup, "deleting the head would expose that content")
+
+	entry, err := s.Get(a)
+	require.NoError(t, err)
+	assert.Equal(t, 2, entry.Version, "a refused head change leaves the artifact alone")
+	versions, err := s.Versions(a)
+	require.NoError(t, err)
+	assert.Len(t, versions, 2, "a refused delete keeps the version")
+}
