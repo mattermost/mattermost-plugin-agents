@@ -343,27 +343,6 @@ func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap) {
 		}
 	}
 
-	if listErr != nil && a.bots != nil {
-		oldOrigins := make(map[string]struct{}, len(remaps))
-		for _, r := range remaps {
-			if norm := llm.NormalizeMCPServerOrigin(r.OldURL); norm != "" {
-				oldOrigins[norm] = struct{}{}
-			}
-		}
-		for _, bot := range a.bots.GetAllBots() {
-			cfg := bot.GetConfig()
-			if cfg.ID == "" {
-				continue
-			}
-			for _, t := range cfg.EnabledMCPTools {
-				if _, ok := oldOrigins[llm.NormalizeMCPServerOrigin(t.ServerOrigin)]; ok {
-					affectedIDs = append(affectedIDs, cfg.ID)
-					break
-				}
-			}
-		}
-	}
-
 	if len(affectedIDs) == 0 && listErr == nil {
 		return
 	}

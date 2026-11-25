@@ -212,6 +212,44 @@ func TestRemapUserPreferencesConvergingConcurrentEdits(t *testing.T) {
 			want: []string{urlC},
 		},
 		{
+			name: "overlapping origin across two servers: X(A->B->D) does not collide with settled Y(B->C)",
+			run: func(t *testing.T, kv *atomicMockKVService) {
+				const urlD = "https://mcp.atlassian.com/v2/mcp?tools=custom"
+				var mu sync.Mutex
+				servers := []ServerConfig{
+					{ID: "srv-x", Name: "X", BaseURL: urlB},
+					{ID: "srv-y", Name: "Y", BaseURL: urlC},
+				}
+				load := func() ([]ServerConfig, error) {
+					mu.Lock()
+					defer mu.Unlock()
+					return append([]ServerConfig(nil), servers...), nil
+				}
+
+				advancedOnce := false
+				hookedKV := &hookAtomicKV{
+					atomicMockKVService: kv,
+					beforeWrite: func() {
+						mu.Lock()
+						if advancedOnce {
+							mu.Unlock()
+							return
+						}
+						advancedOnce = true
+						servers[0].BaseURL = urlD
+						mu.Unlock()
+					},
+				}
+
+				_, err := RemapUserPreferencesConverging(context.Background(), hookedKV, []config.MCPServerURLRemap{
+					{ServerID: "srv-x", ServerName: "X", OldURL: urlA, NewURL: urlB},
+					{ServerID: "srv-y", ServerName: "Y", OldURL: urlB, NewURL: urlC},
+				}, load)
+				require.NoError(t, err)
+			},
+			want: []string{"https://mcp.atlassian.com/v2/mcp?tools=custom"},
+		},
+		{
 			name: "concurrent cross-origin host move stops remapping",
 			run: func(t *testing.T, kv *atomicMockKVService) {
 				load := func() ([]ServerConfig, error) {

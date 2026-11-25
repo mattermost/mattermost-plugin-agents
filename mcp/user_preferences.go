@@ -285,10 +285,14 @@ func RemapUserPreferencesConverging(
 			}
 			if !ok || cur.BaseURL == "" || originChanged(t.originRef, cur.BaseURL) {
 				t.targetURL = ""
+				t.oldNorms = nil
 				continue
 			}
 			if cur.BaseURL != t.targetURL {
 				if prevNorm := llm.NormalizeMCPServerOrigin(t.targetURL); prevNorm != "" {
+					if t.oldNorms == nil {
+						t.oldNorms = make(map[string]struct{})
+					}
 					t.oldNorms[prevNorm] = struct{}{}
 				}
 				t.targetURL = cur.BaseURL
@@ -305,13 +309,21 @@ func RemapUserPreferencesConverging(
 	totalUpdated := 0
 	for range maxUserPreferencesConvergePasses {
 		active := make(map[string]string)
+		ambiguous := make(map[string]bool)
 		for _, t := range tracked {
 			if t.targetURL == "" {
 				continue
 			}
 			for oldNorm := range t.oldNorms {
+				if existing, seen := active[oldNorm]; seen && existing != t.targetURL {
+					ambiguous[oldNorm] = true
+					continue
+				}
 				active[oldNorm] = t.targetURL
 			}
+		}
+		for oldNorm := range ambiguous {
+			delete(active, oldNorm)
 		}
 		if len(active) == 0 {
 			break
@@ -321,6 +333,13 @@ func RemapUserPreferencesConverging(
 		totalUpdated += n
 		if err != nil {
 			return totalUpdated, err
+		}
+
+		// Clear already-remapped origins before checking for concurrent
+		// advances so a settled server's historical origin cannot collide
+		// with another server that moved onto it in a subsequent pass.
+		for _, t := range tracked {
+			t.oldNorms = nil
 		}
 
 		if loadServers == nil {
