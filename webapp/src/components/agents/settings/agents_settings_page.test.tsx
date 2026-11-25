@@ -122,7 +122,10 @@ async function clickSave(): Promise<PluginConfig> {
     return (savePluginConfig as jest.Mock).mock.calls.at(-1)?.[0] as PluginConfig;
 }
 
-function radioFor(label: string, value: 'true' | 'false'): HTMLInputElement {
+// The dictation toggle's name also carries its EXPERIMENTAL tag.
+const ENABLE_DICTATION = /^Enable dictation/;
+
+function radioFor(label: string | RegExp, value: 'true' | 'false'): HTMLInputElement {
     const group = screen.getByRole('radiogroup', {name: label});
     return group.querySelector(`input[value="${value}"]`) as HTMLInputElement;
 }
@@ -475,5 +478,85 @@ describe('AgentsSettingsPage agent version retention', () => {
         renderPage();
         await waitFor(() => expect(limitRadio('True').checked).toBe(true));
         expect((screen.getByLabelText('Versions to keep per agent') as HTMLInputElement).value).toBe('25');
+    });
+});
+
+describe('AgentsSettingsPage dictation', () => {
+    const savedServices = [
+        {id: 'svc-anthropic', name: 'Claude', type: 'anthropic', apiKey: '********************************'},
+        {id: 'svc-openai', name: 'Whisper', type: 'openai', apiKey: '********************************'},
+    ];
+    const invalid = Object.assign(new Error('invalid dictation configuration: transcription service "svc-openai" is not configured'), {server_error_id: 'invalid_dictation'});
+
+    it('keeps the dictation fields read-only while a save is pending', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation: {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'}});
+        renderPage('dictation');
+        const language = await screen.findByPlaceholderText('en') as HTMLInputElement;
+        fireEvent.change(language, {target: {value: 'de'}});
+
+        (savePluginConfig as jest.Mock).mockImplementation(() => new Promise(() => { /* never resolves */ }));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(language.disabled).toBe(true));
+        expect(radioFor(ENABLE_DICTATION, 'false').disabled).toBe(true);
+        expect((screen.getByRole('combobox', {name: 'Transcription service'}) as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByRole('combobox', {name: 'Transcription model'}) as HTMLInputElement).disabled).toBe(true);
+    });
+
+    it('has its own section', async () => {
+        renderPage('dictation');
+        expect(await screen.findByRole('tab', {name: 'Dictation'})).toBeTruthy();
+        expect(screen.getByRole('radiogroup', {name: ENABLE_DICTATION})).toBeTruthy();
+    });
+
+    it('pre-fills the model for a server that has never saved dictation settings', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices});
+        renderPage('dictation');
+        await waitFor(() => expect(radioFor(ENABLE_DICTATION, 'true')).toBeTruthy());
+
+        fireEvent.click(radioFor(ENABLE_DICTATION, 'true'));
+        const saved = await clickSave();
+        expect(saved.dictation).toEqual({enabled: true, serviceID: '', model: 'gpt-live-transcribe', language: ''});
+    });
+
+    it('saves dictation on an OpenAI service while agents use another service', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation: {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'}});
+        renderPage('dictation');
+        const language = await screen.findByPlaceholderText('en');
+        fireEvent.change(language, {target: {value: 'de'}});
+
+        const saved = await clickSave();
+        expect(saved.dictation).toEqual({enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe', language: 'de'});
+    });
+
+    it('shows the server\'s reason for refusing the dictation settings, until they are edited', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation: {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'}});
+        renderPage('dictation');
+        const language = await screen.findByPlaceholderText('en');
+        fireEvent.change(language, {target: {value: 'de'}});
+
+        (savePluginConfig as jest.Mock).mockRejectedValue(invalid);
+        await clickSave();
+
+        expect(screen.getByText('The Dictation settings were not saved')).toBeTruthy();
+        expect(screen.getAllByText(invalid.message).length).toBeGreaterThanOrEqual(1);
+
+        fireEvent.change(language, {target: {value: 'fr'}});
+        expect(screen.queryByText('The Dictation settings were not saved')).toBeNull();
+    });
+
+    it('shows the dictation reason in the save bar on another section, such as after removing the transcription service', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: savedServices, dictation: {enabled: true, serviceID: 'svc-openai', model: 'gpt-live-transcribe'}});
+        renderPage('services');
+        await screen.findByText('service:Whisper:svc-openai');
+        act(() => {
+            mockServices.onChange?.([savedServices[0]]);
+        });
+
+        (savePluginConfig as jest.Mock).mockRejectedValue(invalid);
+        await clickSave();
+
+        expect(screen.getByText(invalid.message)).toBeTruthy();
+        expect(screen.queryByText('Failed to save configuration.')).toBeNull();
     });
 });

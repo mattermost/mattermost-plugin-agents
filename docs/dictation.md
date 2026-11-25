@@ -96,5 +96,12 @@ Dictation isn't included in [token usage logging](observability.md#token-usage-l
 | No microphone button | Dictation is on, the transcription service is a saved OpenAI service, the license is Enterprise or above, the user isn't a guest and has access to the service, and the formatting bar is shown. |
 | "Microphone access is blocked" | The user denied the browser's permission prompt, or a `Permissions-Policy` header blocks the microphone. |
 | "The speech service could not be reached" | The server log has the reason when OpenAI refused to create the session or the control connection couldn't be opened. Otherwise the browser can't reach OpenAI over WebRTC. See [Network requirements](#network-requirements). |
-| "Dictation was started too often" | The user already has 2 sessions, or started 10 in the last 60 seconds. Ending a session or waiting a minute clears it. |
-| Dictation stops by itself | The session reached 10 minutes, its settings were changed, or the plugin restarted. The server log records which. |
+| "Dictation can't start right now" | The user already has 2 active sessions, for example in other windows, or started 10 sessions in the last 60 seconds. Stopping dictation in another window frees an active session at once. The start limit clears once fewer than 10 starts fall in the last 60 seconds. A session the plugin couldn't hang up keeps its slot for up to 11 minutes. See [Cost and limits](#cost-and-limits). |
+| "You don't have access to dictation" | The license is below Enterprise, or the user can't dictate. See [Who can dictate](#who-can-dictate). |
+| "Dictation is not available right now" | Dictation was turned off, or its transcription service is missing or misconfigured. |
+| "Your browser's connection request was too large" | The browser's WebRTC offer was over 64 KiB. Reloading the page usually fixes it. |
+| "Your browser didn't start audio processing" | The browser kept its audio engine suspended, so the plugin couldn't hear when the user speaks. Reloading the page usually fixes it. |
+| "The connection to the speech service was lost" | The WebRTC connection to OpenAI dropped. See [Network requirements](#network-requirements). |
+| "Dictation stopped at its time limit" | The session reached 10 minutes. Starting again opens a new session. |
+| "Dictation stopped because its session settings were changed" | The session's settings changed away from the configured ones, which only a modified client does. The server log records it. |
+| "Dictation stopped because the Agents plugin restarted" | The plugin was stopped, upgraded or restarted while the user was dictating. |
