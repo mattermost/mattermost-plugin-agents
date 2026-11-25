@@ -284,11 +284,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	a.configUpdater.Update(&saved)
 
+	notifyErr := a.clusterNotifier.PublishConfigUpdate()
+
 	if len(urlRemaps) > 0 {
 		a.refreshRemappedMCPAgents(urlRemaps)
 	}
-
-	notifyErr := a.clusterNotifier.PublishConfigUpdate()
 
 	// Remove saved sign-ins the change orphaned or that were issued for a
 	// server's old origin. Grants are only used by the server they were
@@ -343,6 +343,27 @@ func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap) {
 		}
 	}
 
+	if listErr != nil && a.bots != nil {
+		oldOrigins := make(map[string]struct{}, len(remaps))
+		for _, r := range remaps {
+			if norm := llm.NormalizeMCPServerOrigin(r.OldURL); norm != "" {
+				oldOrigins[norm] = struct{}{}
+			}
+		}
+		for _, bot := range a.bots.GetAllBots() {
+			cfg := bot.GetConfig()
+			if cfg.ID == "" {
+				continue
+			}
+			for _, t := range cfg.EnabledMCPTools {
+				if _, ok := oldOrigins[llm.NormalizeMCPServerOrigin(t.ServerOrigin)]; ok {
+					affectedIDs = append(affectedIDs, cfg.ID)
+					break
+				}
+			}
+		}
+	}
+
 	if len(affectedIDs) == 0 && listErr == nil {
 		return
 	}
@@ -353,18 +374,23 @@ func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap) {
 				a.pluginAPI.Log.Warn("Failed to refresh agent after MCP server URL remap", "agent_id", id, "error", err)
 			}
 		}
+		if listErr != nil {
+			a.bots.ForceRefreshOnNextEnsure()
+			if err := a.bots.EnsureBots(); err != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to ensure bots after MCP server URL remap", "error", err)
+			}
+		}
 	}
 
 	if a.clusterAgentNotifier != nil {
-		if len(affectedIDs) == 0 {
+		for _, id := range affectedIDs {
+			if err := a.clusterAgentNotifier.PublishAgentUpdate(id); err != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "agent_id", id, "error", err)
+			}
+		}
+		if listErr != nil {
 			if err := a.clusterAgentNotifier.PublishAgentUpdate(""); err != nil && a.pluginAPI != nil {
 				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "error", err)
-			}
-		} else {
-			for _, id := range affectedIDs {
-				if err := a.clusterAgentNotifier.PublishAgentUpdate(id); err != nil && a.pluginAPI != nil {
-					a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "agent_id", id, "error", err)
-				}
 			}
 		}
 	}
