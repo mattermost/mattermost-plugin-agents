@@ -250,6 +250,35 @@ func TestRemapUserPreferencesConvergingConcurrentEdits(t *testing.T) {
 			want: []string{"https://mcp.atlassian.com/v2/mcp?tools=custom"},
 		},
 		{
+			name: "pre-pass advance with overlapping origin: X(A->B already at D) does not block Y(B->C)",
+			run: func(t *testing.T, kv *atomicMockKVService) {
+				const urlD = "https://mcp.atlassian.com/v2/mcp?tools=custom"
+				// Seed carol disabled at B (Y's old URL) alongside bob disabled at A (X's old URL).
+				_, err := kv.Set(userPreferencesKVKey("carol"), UserToolProviderPreferences{DisabledServers: []string{urlB}})
+				require.NoError(t, err)
+
+				// Before pass 0 runs, X has already advanced from B to D while Y settled at C.
+				load := func() ([]ServerConfig, error) {
+					return []ServerConfig{
+						{ID: "srv-x", Name: "X", BaseURL: urlD},
+						{ID: "srv-y", Name: "Y", BaseURL: urlC},
+					}, nil
+				}
+
+				updated, err := RemapUserPreferencesConverging(context.Background(), kv, []config.MCPServerURLRemap{
+					{ServerID: "srv-x", ServerName: "X", OldURL: urlA, NewURL: urlB},
+					{ServerID: "srv-y", ServerName: "Y", OldURL: urlB, NewURL: urlC},
+				}, load)
+				require.NoError(t, err)
+				require.Equal(t, 2, updated)
+
+				var carol UserToolProviderPreferences
+				require.NoError(t, json.Unmarshal(kv.store[userPreferencesKVKey("carol")], &carol))
+				require.Equal(t, []string{urlC}, carol.DisabledServers, "Y's settled B->C remap must not be dropped")
+			},
+			want: []string{"https://mcp.atlassian.com/v2/mcp?tools=custom"},
+		},
+		{
 			name: "concurrent cross-origin host move stops remapping",
 			run: func(t *testing.T, kv *atomicMockKVService) {
 				load := func() ([]ServerConfig, error) {

@@ -252,7 +252,7 @@ func RemapUserPreferencesConverging(
 		return 0, nil
 	}
 
-	resolveLatest := func() (bool, error) {
+	resolveLatest := func(recordPreviousTarget bool) (bool, error) {
 		if loadServers == nil {
 			return false, nil
 		}
@@ -289,11 +289,13 @@ func RemapUserPreferencesConverging(
 				continue
 			}
 			if cur.BaseURL != t.targetURL {
-				if prevNorm := llm.NormalizeMCPServerOrigin(t.targetURL); prevNorm != "" {
-					if t.oldNorms == nil {
-						t.oldNorms = make(map[string]struct{})
+				if recordPreviousTarget {
+					if prevNorm := llm.NormalizeMCPServerOrigin(t.targetURL); prevNorm != "" {
+						if t.oldNorms == nil {
+							t.oldNorms = make(map[string]struct{})
+						}
+						t.oldNorms[prevNorm] = struct{}{}
 					}
-					t.oldNorms[prevNorm] = struct{}{}
 				}
 				t.targetURL = cur.BaseURL
 				advanced = true
@@ -302,7 +304,10 @@ func RemapUserPreferencesConverging(
 		return advanced, nil
 	}
 
-	if _, err := resolveLatest(); err != nil {
+	// Before the first pass we have not written any intermediate targetURL to
+	// KV yet, so only update targetURL without folding the unwritten target
+	// into oldNorms (another server in the same save may own that origin).
+	if _, err := resolveLatest(false); err != nil {
 		return 0, err
 	}
 
@@ -345,7 +350,7 @@ func RemapUserPreferencesConverging(
 		if loadServers == nil {
 			break
 		}
-		advanced, err := resolveLatest()
+		advanced, err := resolveLatest(true)
 		if err != nil {
 			return totalUpdated, err
 		}
