@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,6 +321,13 @@ func (f *FakeRealtime) CallCount() int {
 
 // SessionUpdated builds a session.updated event as OpenAI sends it for a
 // transcription session.
+// WithEventType returns a copy of event with its type replaced.
+func WithEventType(event map[string]any, eventType string) map[string]any {
+	renamed := maps.Clone(event)
+	renamed["type"] = eventType
+	return renamed
+}
+
 func SessionUpdated(model string, languages []string, prompt *string, turnDetection any) map[string]any {
 	transcription := map[string]any{"model": model, "language": nil, "prompt": prompt}
 	if languages != nil {

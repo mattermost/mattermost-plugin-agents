@@ -416,6 +416,7 @@ func TestDictationSessionClosedOnPolicyChange(t *testing.T) {
 		{name: "turn detection turned on", event: llmtest.SessionUpdated("gpt-live-transcribe", []string{"en"}, nil, map[string]any{"type": "server_vad"})},
 		{name: "session type changed", event: map[string]any{"type": "session.updated", "session": map[string]any{"type": "realtime", "model": "gpt-realtime"}}},
 		{name: "response generated", event: map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1"}}},
+		{name: "unknown event type with a changed session", event: llmtest.WithEventType(llmtest.SessionUpdated("gpt-4o-transcribe", []string{"en"}, nil, nil), "session.reported")},
 	}
 
 	for _, tt := range tests {
@@ -429,6 +430,30 @@ func TestDictationSessionClosedOnPolicyChange(t *testing.T) {
 			require.NoError(t, e.fake.SendEvent(callID, tt.event))
 
 			assert.Equal(t, sessionEnd{testUserID, sessionID, dictation.EndReasonPolicy}, e.waitEnd(t))
+			assert.Equal(t, []string{callID}, e.fake.Hangups())
+		})
+	}
+}
+
+func TestDictationSessionKeptOnAllowedEvents(t *testing.T) {
+	tests := []struct {
+		name  string
+		event any
+	}{
+		{name: "known event type with the admin session", event: llmtest.SessionUpdated("gpt-live-transcribe", []string{"en"}, nil, nil)},
+		{name: "unknown event type with the admin session", event: llmtest.WithEventType(llmtest.SessionUpdated("gpt-live-transcribe", []string{"en"}, nil, nil), "session.reported")},
+		{name: "event without a session", event: map[string]any{"type": "conversation.item.input_audio_transcription.delta", "delta": "hello"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupDictationEnv(t, enterprise.LevelEnterprise, dictation.WithMaxSessionDuration(300*time.Millisecond))
+			defer e.Cleanup(t)
+			sessionID, callID := e.startSession(t)
+
+			require.NoError(t, e.fake.SendEvent(callID, tt.event))
+			// The session runs until the cap instead of closing for policy.
+			assert.Equal(t, sessionEnd{testUserID, sessionID, dictation.EndReasonDurationLimit}, e.waitEnd(t))
 			assert.Equal(t, []string{callID}, e.fake.Hangups())
 		})
 	}

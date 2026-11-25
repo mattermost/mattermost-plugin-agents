@@ -19,7 +19,7 @@ Skills were called custom prompts before. Existing custom prompts are now skills
 
 4. Select **Save**.
 
-![The Skills window with the All Skills and Your Skills tabs.](img/custom-prompts-modal.png)
+![The Skills page with the All Skills and Your Skills tabs.](img/skills-page.png)
 
 Use the **Context Variables** button above the **Instructions** field to insert variables. Switching a public skill back to private is always allowed.
 
@@ -67,7 +67,7 @@ In the **Skills** window:
 
 - **All Skills** shows your skills and public skills from others. **Your Skills** shows only yours.
 - Search filters by title and description.
-- The pin icon pins a skill. Pinned skills are listed first in the composer's **Skills** menu. Pins are personal, and you can pin a public skill someone else wrote.
+- The pin icon pins a skill. Pinned skills appear on the new-chat screen in the Agents workspace and Agents pane for one-click launch, and are listed first in the composer's **Skills** menu. Pins are personal, and you can pin a public skill someone else wrote.
 - A public skill from someone else opens read-only. Only the creator can edit or delete a skill. To change someone else's skill, copy its instructions into a new skill.
 - Deleting a skill removes it from everyone's lists and pins, and agents stop loading it.
 

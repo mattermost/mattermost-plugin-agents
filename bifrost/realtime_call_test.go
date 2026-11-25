@@ -212,6 +212,9 @@ func TestSessionEventMatches(t *testing.T) {
 		{name: "session type changed", expected: live, event: map[string]any{"type": "session.updated", "session": map[string]any{"type": "realtime", "model": "gpt-realtime"}}},
 		{name: "unreadable event", expected: live, event: "not an object"},
 		{name: "response generated", expected: live, event: map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1"}}},
+		{name: "unknown event type with the admin session", expected: live, event: llmtest.WithEventType(llmtest.SessionUpdated("gpt-live-transcribe", []string{"en"}, nil, nil), "session.reported"), want: true},
+		{name: "unknown event type with a changed session", expected: live, event: llmtest.WithEventType(llmtest.SessionUpdated("gpt-4o-transcribe", []string{"en"}, nil, nil), "session.reported")},
+		{name: "unknown event type with an empty session", expected: live, event: map[string]any{"type": "rate_limits.updated", "session": map[string]any{}}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

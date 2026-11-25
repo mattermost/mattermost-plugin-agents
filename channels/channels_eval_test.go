@@ -99,9 +99,7 @@ func TestChannelSummarizationEval(t *testing.T) {
 			assert.NotEmpty(t, summary, "Expected a non-empty channel summary")
 
 			// Evaluate the summary against rubrics
-			for _, rubric := range config.expectedRubrics {
-				evals.LLMRubricT(t, rubric, summary)
-			}
+			evals.LLMRubricsT(t, config.expectedRubrics, summary)
 		})
 	}
 }

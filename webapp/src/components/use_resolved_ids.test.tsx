@@ -11,11 +11,6 @@ import ToolCard from './tool_card';
 import {ToolCall, ToolCallStatus} from './tool_types';
 import {clearResolvedIdsForTest} from './use_resolved_ids';
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 jest.mock('@/client', () => ({
     getChannel: jest.fn(),
     getPost: jest.fn(),

@@ -55,12 +55,6 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
     ),
 }));
 
-// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 // The component reads SiteURL via useSelector; null falls back to window.location.origin.
 jest.mock('react-redux', () => ({
     __esModule: true,
@@ -282,7 +276,7 @@ describe('MCPServers remote server list', () => {
 
         fireEvent.click(screen.getByRole('button', {name: 'Delete Jira'}));
         expect(onDeleteServer).not.toHaveBeenCalled();
-        expect(await screen.findByText(/users’ saved sign-ins to it are removed/)).not.toBeNull();
+        expect(await screen.findByText(/all users’ saved sign-ins/)).not.toBeNull();
         fireEvent.click(await screen.findByRole('button', {name: 'Delete'}));
 
         await waitFor(() => expect(onDeleteServer).toHaveBeenCalledWith(STABLE_ID));

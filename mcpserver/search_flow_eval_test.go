@@ -164,9 +164,7 @@ func TestSearchBarFlowEval(t *testing.T) {
 				assert.True(e, slices.Contains(result.citedIDs, id), "the answer must cite post %s (cited: %v)", id, result.citedIDs)
 			}
 
-			for _, rubric := range tt.rubrics {
-				evals.LLMRubricT(e, rubric, result.response)
-			}
+			evals.LLMRubricsT(e, tt.rubrics, result.response)
 		})
 	}
 }
@@ -256,9 +254,7 @@ func TestAskChannelSearchFlowEval(t *testing.T) {
 			for _, id := range result.citedIDs {
 				assert.True(e, knownPostIDs[id], "citation references post %s, which does not exist", id)
 			}
-			for _, rubric := range tt.rubrics {
-				evals.LLMRubricT(e, rubric, result.response)
-			}
+			evals.LLMRubricsT(e, tt.rubrics, result.response)
 		})
 	}
 }
