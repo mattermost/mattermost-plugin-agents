@@ -593,14 +593,25 @@ export async function getAIBots() {
     });
 }
 
+// getDictationAvailability reports whether the current user can dictate. A
+// failure without a usable response throws a ClientError with status_code 0.
 export async function getDictationAvailability(): Promise<DictationAvailability> {
     const url = `${baseRoute()}/dictation/availability`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'GET',
-    }));
+    let response: Response;
+    try {
+        response = await fetch(url, Client4.getOptions({
+            method: 'GET',
+        }));
+    } catch {
+        throw new ClientError(Client4.url, {message: '', status_code: 0, url});
+    }
 
     if (response.ok) {
-        return response.json();
+        try {
+            return await response.json();
+        } catch {
+            throw new ClientError(Client4.url, {message: '', status_code: 0, url});
+        }
     }
 
     throw new ClientError(Client4.url, {

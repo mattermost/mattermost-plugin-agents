@@ -12,6 +12,7 @@ import {
     artifactPath,
     artifactURL,
     createDictationSession,
+    getDictationAvailability,
     endDictationSession,
     doChannelAnalysis,
     doLoopInAgent,
@@ -565,6 +566,24 @@ describe('getAIThreads', () => {
 
         await expect(request).rejects.toThrow('aborted');
         timeoutSpy.mockRestore();
+    });
+});
+
+describe('getDictationAvailability', () => {
+    test('returns the availability from the plugin route', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({available: true})} as unknown as Response);
+
+        await expect(getDictationAvailability()).resolves.toEqual({available: true});
+        expect(mockFetch.mock.calls[0][0]).toBe(`${siteURL}/plugins/${manifest.id}/dictation/availability`);
+    });
+
+    test.each([
+        {name: 'an error status', mock: () => mockFetch.mockResolvedValue({ok: false, status: 503} as unknown as Response), status: 503},
+        {name: 'a network failure', mock: () => mockFetch.mockRejectedValue(new TypeError('offline')), status: 0},
+        {name: 'an unreadable body', mock: () => mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.reject(new SyntaxError('bad json'))} as unknown as Response), status: 0},
+    ])('$name rejects with status $status', async ({mock, status}) => {
+        mock();
+        await expect(getDictationAvailability()).rejects.toMatchObject({status_code: status});
     });
 });
 
