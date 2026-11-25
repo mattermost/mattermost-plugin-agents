@@ -10,9 +10,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -860,4 +863,348 @@ func TestInitiateOAuthFlowFallsBackFromNonMatchingChallengeMetadata(t *testing.T
 			assert.Equal(t, serverURL, parsed.Query().Get("resource"))
 		})
 	}
+}
+
+// TestProtectedResourceMetadataWithQueryString covers the Atlassian v2 MCP
+// topology: the configured server URL carries a query string (e.g.
+// /v2/mcp?tools=all), PRM at /.well-known/oauth-protected-resource/v2/mcp
+// advertises the query-less URL as its "resource" and points to a distinct
+// authorization server, while the MCP origin itself serves a legacy v1 AS
+// metadata document at /.well-known/oauth-authorization-server. Discovery must
+// accept the query-less PRM resource, prefer an exact match when the server
+// includes the query in "resource", and keep rejecting mismatched paths,
+// hosts, ports, or queries.
+func TestProtectedResourceMetadataWithQueryString(t *testing.T) {
+	newAuthServer := func(t *testing.T, authPath string) *httptest.Server {
+		t.Helper()
+		var issuer string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/.well-known/oauth-authorization-server" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                        issuer,
+				AuthorizationEndpoint:         issuer + authPath,
+				TokenEndpoint:                 issuer + "/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
+			}))
+		}))
+		t.Cleanup(srv.Close)
+		issuer = srv.URL
+		return srv
+	}
+
+	tests := []struct {
+		name             string
+		serverPathQuery  string
+		challengePath    string
+		prmResource      func(origin string) string
+		wantPRMSuccess   bool
+		wantResource     func(origin string) string
+		wantAuthPath     string
+		wantAuthOnV2Host bool
+	}{
+		{
+			name:             "PRM resource omits query string (Atlassian v2)",
+			serverPathQuery:  "/v2/mcp?tools=all",
+			prmResource:      func(origin string) string { return origin + "/v2/mcp" },
+			wantPRMSuccess:   true,
+			wantResource:     func(origin string) string { return origin + "/v2/mcp" },
+			wantAuthPath:     "/v2/authorize",
+			wantAuthOnV2Host: true,
+		},
+		{
+			name:             "PRM resource omits query and fragment",
+			serverPathQuery:  "/v2/mcp?tools=all#section",
+			prmResource:      func(origin string) string { return origin + "/v2/mcp" },
+			wantPRMSuccess:   true,
+			wantResource:     func(origin string) string { return origin + "/v2/mcp" },
+			wantAuthPath:     "/v2/authorize",
+			wantAuthOnV2Host: true,
+		},
+		{
+			name:             "PRM resource includes exact query string",
+			serverPathQuery:  "/v2/mcp?tools=all",
+			prmResource:      func(origin string) string { return origin + "/v2/mcp?tools=all" },
+			wantPRMSuccess:   true,
+			wantResource:     func(origin string) string { return origin + "/v2/mcp?tools=all" },
+			wantAuthPath:     "/v2/authorize",
+			wantAuthOnV2Host: true,
+		},
+		{
+			name:             "challenge metadata URL with query-less PRM resource",
+			serverPathQuery:  "/v2/mcp?tools=all",
+			challengePath:    "/.well-known/oauth-protected-resource/custom-challenge",
+			prmResource:      func(origin string) string { return origin + "/v2/mcp" },
+			wantPRMSuccess:   true,
+			wantResource:     func(origin string) string { return origin + "/v2/mcp" },
+			wantAuthPath:     "/v2/authorize",
+			wantAuthOnV2Host: true,
+		},
+		{
+			name:            "negative: PRM resource with different path is rejected",
+			serverPathQuery: "/v2/mcp?tools=all",
+			prmResource:     func(origin string) string { return origin + "/v1/mcp" },
+			wantPRMSuccess:  false,
+			wantAuthPath:    "/v1/authorize",
+		},
+		{
+			name:            "negative: PRM resource with trailing slash mismatch is rejected",
+			serverPathQuery: "/v2/mcp?tools=all",
+			prmResource:     func(origin string) string { return origin + "/v2/mcp/" },
+			wantPRMSuccess:  false,
+			wantAuthPath:    "/v1/authorize",
+		},
+		{
+			name:            "negative: PRM resource with different host is rejected",
+			serverPathQuery: "/v2/mcp?tools=all",
+			prmResource:     func(_ string) string { return "https://evil.example.com/v2/mcp" },
+			wantPRMSuccess:  false,
+			wantAuthPath:    "/v1/authorize",
+		},
+		{
+			name:            "negative: PRM resource with different port is rejected",
+			serverPathQuery: "/v2/mcp?tools=all",
+			prmResource:     func(_ string) string { return "http://127.0.0.1:1/v2/mcp" },
+			wantPRMSuccess:  false,
+			wantAuthPath:    "/v1/authorize",
+		},
+		{
+			name:            "negative: PRM resource with different query is rejected",
+			serverPathQuery: "/v2/mcp?tools=all",
+			prmResource:     func(origin string) string { return origin + "/v2/mcp?tools=readonly" },
+			wantPRMSuccess:  false,
+			wantAuthPath:    "/v1/authorize",
+		},
+		{
+			name:            "negative: query-less server URL rejects PRM resource that adds a query",
+			serverPathQuery: "/v2/mcp",
+			prmResource:     func(origin string) string { return origin + "/v2/mcp?tools=all" },
+			wantPRMSuccess:  false,
+			wantAuthPath:    "/v1/authorize",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v2AS := newAuthServer(t, "/v2/authorize")
+
+			var origin string
+			resourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/oauth-protected-resource/v2/mcp", "/.well-known/oauth-protected-resource/custom-challenge":
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+						Resource:             tt.prmResource(origin),
+						AuthorizationServers: []string{v2AS.URL},
+					}))
+				case "/.well-known/oauth-authorization-server":
+					// Fallback legacy v1 AS metadata served on the resource origin.
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+						Issuer:                        origin,
+						AuthorizationEndpoint:         origin + "/v1/authorize",
+						TokenEndpoint:                 origin + "/v1/token",
+						CodeChallengeMethodsSupported: []string{"S256"},
+					}))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(resourceServer.Close)
+			origin = resourceServer.URL
+
+			serverURL := origin + tt.serverPathQuery
+			metadataURL := ""
+			if tt.challengePath != "" {
+				metadataURL = origin + tt.challengePath
+			}
+
+			manager, _ := newStatefulKVManager(t, nil, http.DefaultClient)
+
+			prm, prmErr := manager.fetchProtectedResourceMetadata(context.Background(), serverURL, metadataURL)
+			if tt.wantPRMSuccess {
+				require.NoError(t, prmErr)
+				require.Equal(t, tt.wantResource(origin), prm.Resource)
+				require.Equal(t, []string{v2AS.URL}, prm.AuthorizationServers)
+			} else {
+				require.Error(t, prmErr)
+			}
+
+			authURL, err := manager.InitiateOAuthFlowForServerWithMetadata(context.Background(), "user-1", ServerConfig{
+				ID:           "atlassian-id",
+				Name:         "Atlassian",
+				BaseURL:      serverURL,
+				ClientID:     "static-client",
+				ClientSecret: "static-secret",
+			}, metadataURL, "")
+			require.NoError(t, err)
+
+			parsedAuthURL, err := url.Parse(authURL)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantAuthPath, parsedAuthURL.Path)
+			if tt.wantAuthOnV2Host {
+				v2Parsed, parseErr := url.Parse(v2AS.URL)
+				require.NoError(t, parseErr)
+				assert.Equal(t, v2Parsed.Host, parsedAuthURL.Host, "authorization URL must target the PRM authorization server")
+				assert.Equal(t, tt.wantResource(origin), parsedAuthURL.Query().Get("resource"))
+			} else {
+				originParsed, parseErr := url.Parse(origin)
+				require.NoError(t, parseErr)
+				assert.Equal(t, originParsed.Host, parsedAuthURL.Host, "rejected PRM must fall back to the origin AS")
+			}
+		})
+	}
+}
+
+// TestOAuthFullFlowWithQueryStringServerURL verifies the complete OAuth + MCP
+// flow when the configured server URL carries ?tools=all while PRM advertises
+// the query-less URL as its resource and points to a separate v2 authorization
+// server (with a legacy v1 AS at the resource origin). It confirms that:
+//   - authorization, code exchange, stored grant, and refresh all use the
+//     query-less PRM resource and the PRM authorization server;
+//   - MCP HTTP requests themselves still carry ?tools=all.
+func TestOAuthFullFlowWithQueryStringServerURL(t *testing.T) {
+	const userID = "query-flow-user"
+	const serverName = "Atlassian"
+	const callbackURL = "http://localhost:3333/plugins/mattermost-ai/oauth/callback"
+
+	ctx := context.Background()
+	oauthServer := newFullFlowOAuthServer(t)
+
+	// Separate resource server origin that serves v2 PRM pointing at oauthServer
+	// (the v2 AS), plus a decoy v1 AS metadata document on its own origin so any
+	// PRM failure falls back to v1 and fails the test.
+	var mcpOrigin string
+	var observedMCPQueries []string
+	var queryMu sync.Mutex
+
+	v2MCP := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "atlassian-v2", Version: "1.0"}, nil)
+	type pingIn struct{}
+	type pingOut struct {
+		OK bool `json:"ok"`
+	}
+	sdkmcp.AddTool(v2MCP, &sdkmcp.Tool{Name: "getJiraIssue", Description: "Fetch Jira issue"},
+		func(_ context.Context, _ *sdkmcp.CallToolRequest, _ pingIn) (*sdkmcp.CallToolResult, pingOut, error) {
+			return nil, pingOut{OK: true}, nil
+		})
+	streamable := sdkmcp.NewStreamableHTTPHandler(
+		func(*http.Request) *sdkmcp.Server { return v2MCP },
+		&sdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+	)
+
+	var v2ResourceURL string
+	resourceMux := http.NewServeMux()
+	resourceServer := httptest.NewServer(resourceMux)
+	t.Cleanup(resourceServer.Close)
+	mcpOrigin = resourceServer.URL
+	v2ResourceURL = mcpOrigin + "/v2/mcp"
+
+	// Override the fake AS's expected RFC 8707 resource to the query-less v2 URL.
+	oauthServer.mu.Lock()
+	oauthServer.expectedResource = v2ResourceURL
+	oauthServer.mu.Unlock()
+
+	verifier := func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+		oauthServer.mu.Lock()
+		defer oauthServer.mu.Unlock()
+		expiry, ok := oauthServer.accessTokens[token]
+		if !ok {
+			return nil, auth.ErrInvalidToken
+		}
+		oauthServer.lastAuthorizedToken = token
+		return &auth.TokenInfo{Expiration: expiry, Extra: map[string]any{"token": token}}, nil
+	}
+
+	resourceMux.Handle("/v2/mcp", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queryMu.Lock()
+		observedMCPQueries = append(observedMCPQueries, r.URL.RawQuery)
+		queryMu.Unlock()
+		auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{
+			ResourceMetadataURL: mcpOrigin + "/.well-known/oauth-protected-resource/v2/mcp",
+		})(streamable).ServeHTTP(w, r)
+	}))
+	resourceMux.HandleFunc("/.well-known/oauth-protected-resource/v2/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              v2ResourceURL,
+			"authorization_servers": []string{oauthServer.baseURL},
+		})
+	})
+	resourceMux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			Issuer:                        mcpOrigin,
+			AuthorizationEndpoint:         mcpOrigin + "/v1/authorize",
+			TokenEndpoint:                 mcpOrigin + "/v1/token",
+			RegistrationEndpoint:          mcpOrigin + "/v1/register",
+			CodeChallengeMethodsSupported: []string{"S256"},
+		})
+	})
+
+	serverConfig := ServerConfig{
+		ID:      "atlassian-srv-id",
+		Name:    serverName,
+		Enabled: true,
+		BaseURL: v2ResourceURL + "?tools=all",
+	}
+
+	kv := newStatefulKVClient(t)
+	httpClient := &http.Client{Transport: http.DefaultTransport}
+	manager := NewOAuthManager(kv.mockClient(t), callbackURL, httpClient, func(id string) (ServerConfig, bool) {
+		if id == serverName {
+			return serverConfig, true
+		}
+		return ServerConfig{}, false
+	})
+
+	// Step 1: unauthenticated connect challenges with the v2 PRM URL.
+	_, err := NewClient(ctx, userID, serverConfig, newTestLogService(), manager, httpClient, nil, false)
+	require.Error(t, err)
+	var oauthNeeded *OAuthNeededError
+	require.ErrorAs(t, err, &oauthNeeded)
+
+	// Step 2: initiate OAuth — must target the v2 AS (oauthServer), NOT the v1 fallback on mcpOrigin.
+	authURL, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL(), "")
+	require.NoError(t, err)
+	parsedAuth, err := url.Parse(authURL)
+	require.NoError(t, err)
+	v2ASURL, err := url.Parse(oauthServer.baseURL)
+	require.NoError(t, err)
+	require.Equal(t, v2ASURL.Host, parsedAuth.Host, "auth URL must point at PRM authorization server")
+	require.Equal(t, "/authorize", parsedAuth.Path)
+	require.Equal(t, v2ResourceURL, parsedAuth.Query().Get("resource"), "auth URL must carry query-less PRM resource")
+
+	// Step 3: complete consent redirect and callback exchange.
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noRedirect.Get(authURL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	loc, err := resp.Location()
+	require.NoError(t, err)
+
+	_, err = manager.ProcessCallback(ctx, userID, loc.Query().Get("state"), loc.Query().Get("code"), loc.Query().Get("iss"))
+	require.NoError(t, err)
+
+	storedEnv := kv.storedEnvelope(t, userID, serverName)
+	require.NotNil(t, storedEnv)
+	require.Equal(t, v2ResourceURL, storedEnv.Resource, "stored grant Resource must be the query-less PRM resource")
+
+	// Step 4: authenticated connect and tool call hit the full URL with ?tools=all.
+	client, err := NewClient(ctx, userID, serverConfig, newTestLogService(), manager, httpClient, nil, false)
+	require.NoError(t, err)
+	result, err := client.CallTool(ctx, "getJiraIssue", map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, result, "true")
+	require.NoError(t, client.Close())
+
+	queryMu.Lock()
+	require.NotEmpty(t, observedMCPQueries)
+	for _, q := range observedMCPQueries {
+		require.Equal(t, "tools=all", q, "MCP traffic must carry the full configured query string")
+	}
+	queryMu.Unlock()
 }
