@@ -341,6 +341,37 @@ describe('WebRTCTranscriber', () => {
         expect(onTranscript).toHaveBeenLastCalledWith({text: 'first. second.'});
     });
 
+    test('with server VAD, a leftover commit for an earlier phrase doesn\'t end the wait for the stop\'s own commit', async () => {
+        const {deps, pc, advance} = setup({createSession: jest.fn(async () => session({model: 'gpt-4o-transcribe', turnDetection: 'server_vad'}))});
+        const transcriber = new WebRTCTranscriber(deps);
+        const onTranscript = jest.fn();
+        transcriber.onTranscript(onTranscript);
+        await transcriber.start();
+        advance(0.3, 1000);
+
+        jest.useFakeTimers();
+        try {
+            const stopped = transcriber.stop();
+            expect(commits(pc)).toBe(1);
+
+            // The provider's own commit of the earlier phrase lands first.
+            pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'a', previous_item_id: null});
+            pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'a', transcript: 'first.'});
+            await jest.advanceTimersByTimeAsync(100);
+            expect(pc.close).not.toHaveBeenCalled();
+
+            pc.channel.receive({type: 'input_audio_buffer.committed', item_id: 'b', previous_item_id: 'a'});
+            pc.channel.receive({type: 'conversation.item.input_audio_transcription.completed', item_id: 'b', transcript: 'second.'});
+            await jest.advanceTimersByTimeAsync(1500);
+            await stopped;
+
+            expect(onTranscript).toHaveBeenLastCalledWith({text: 'first. second.'});
+            expect(pc.close).toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     test.each([
         {name: 'nothing arrives within the wait', silenceMs: 2100, waitForFinal: true, waits: true},
         {name: 'the final text is discarded', silenceMs: 2100, waitForFinal: false, waits: false},
