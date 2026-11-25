@@ -139,6 +139,7 @@ func TestCapabilityMatrix(t *testing.T) {
 		{CapMeetings, LevelEnterprise},
 		{CapMCPServiceAccount, LevelEnterprise},
 		{CapSharedPrompts, LevelEnterprise},
+		{CapDictation, LevelEnterprise},
 		{CapChannelAutoReply, LevelEnterpriseAdvanced},
 		{CapAttributeBasedAccess, LevelEnterpriseAdvanced},
 		{Capability("unknown_capability"), LevelEnterpriseAdvanced},

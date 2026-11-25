@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -78,6 +79,11 @@ type testConfigImpl struct {
 	defaultBotUserID                string
 	defaultBotName                  string
 	settingsAccess                  config.SettingsAccess
+	dictation                       config.DictationConfig
+}
+
+func (tc *testConfigImpl) Config() *config.Config {
+	return &config.Config{Services: slices.Clone(tc.services), Dictation: tc.dictation}
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {
@@ -178,6 +184,7 @@ type mockMCPClientManager struct {
 	oauthNeededCalls              []mcpDisconnectCall
 	refreshErr                    error
 	refreshCalls                  []string
+	lastCatalogRequest            mcp.CatalogRequest
 	getContexts                   []context.Context
 	getServiceAccountCalls        []string
 	getServiceAccountInvokerCalls []string
@@ -270,6 +277,7 @@ func (m *mockMCPClientManager) GetToolsWithSelection(ctx context.Context, _ mcp.
 }
 
 func (m *mockMCPClientManager) catalogAccess(req mcp.CatalogRequest) mcp.CatalogAccess {
+	m.lastCatalogRequest = req
 	pluginSnapshot := m.accessPluginServers
 	if pluginSnapshot == nil {
 		pluginSnapshot = m.ListPluginServers()
@@ -1098,6 +1106,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		autoReplyStore,
 		newPassthroughAccessChecker(),
 	)
+	api.SetDictationService(dictation.New(cfg, enterprise.NewLicenseChecker(client), api.accessChecker, pluginUserGetter{client}, newMemoryLeaseStore(), &client.Log))
 
 	return &TestEnvironment{
 		api:               api,

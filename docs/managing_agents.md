@@ -94,8 +94,10 @@ Selected-user lists accept users and teams. Channel access applies to channels o
 
 Available only when **Enable Tools** is on.
 
-- **Automatically enable all MCP tools.** The agent can use any MCP tool the requesting user can use, including tools added later. MCP server access policies, servers the user turned off, and license limits still apply.
-- With it off, pick the specific tools. Tools that no longer exist are removed when you save.
+- **Automatically enable all MCP tools.** The agent can use any MCP tool the requesting user can use, including tools added later. MCP server access policies, servers the user turned off, tools disabled by an administrator, and license limits still apply.
+- With it off, pick the specific tools. Tools are grouped into **Read-only tools** and **Write tools** when the server reports `readOnlyHint` annotations, with bulk toggles for **All tools** and each group. Tools that no longer exist are removed when you save.
+- Search filters servers and tools by name or description, including while **Automatically enable all MCP tools** is on. Name searches match any length; description searches require at least 3 characters.
+- Each tool shows its effective approval policy and expands to show its full description and input schema. Tools disabled globally by an administrator appear as **Disabled by admin** and can't be enabled for the agent. Select **Refresh Tools** to reload the catalog.
 - For an OAuth-backed server, select **Connect** here to sign in. Turning on a server that isn't connected yet grants the agent every tool the server exposes once someone connects.
 - **Use service accounts for authentication.** Switches the agent's external MCP servers from per-user OAuth to shared admin-configured credentials. Only System Admins can turn it on. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 

@@ -1,0 +1,127 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+export type DictationProvider = 'openai' | 'azure';
+
+// "unavailable" covers a misconfigured service and a user who may not use it
+// (including guests, bots and deactivated accounts), without saying which.
+export type DictationUnavailableReason = 'disabled' | 'license' | 'unavailable';
+
+// GET /dictation/availability
+export type DictationAvailability = {
+    enabled: boolean;
+    available: boolean;
+    provider: DictationProvider | '';
+    model: string;
+    transport: 'webrtc';
+
+    // Omitted when available.
+    reason?: DictationUnavailableReason;
+};
+
+// POST /dictation/session with the browser's SDP offer. The server
+// exchanges it with the provider and keeps a control channel to the session;
+// the browser never holds a provider credential.
+export type DictationSession = {
+
+    // The provider's SDP answer.
+    sdp: string;
+    sessionId: string;
+    provider: DictationProvider;
+    model: string;
+
+    // "none" means the provider does no turn detection and the client
+    // commits each segment itself (gpt-live-transcribe).
+    turnDetection: 'none' | 'server_vad';
+    maxDurationSeconds: number;
+};
+
+// Why the server ended a session (custom_mattermost-ai_dictation_session_ended).
+export type DictationSessionEndReason = 'duration_limit' | 'policy' | 'shutdown';
+
+export type DictationErrorReason =
+    | 'mic_blocked'
+    | 'no_mic'
+    | 'rate_limited'
+    | 'forbidden'
+    | 'unavailable'
+    | 'provider_unreachable'
+    | 'provider_error'
+    | 'connection_lost'
+    | 'audio_blocked'
+    | 'offer_too_large'
+    | 'session_time_limit'
+    | 'session_policy'
+    | 'session_shutdown';
+
+// errorReasonForStatus maps a POST /dictation/session failure to an error
+// state. No status means the request never got an answer.
+export function errorReasonForStatus(status: number | undefined): DictationErrorReason {
+    switch (status ?? 0) {
+    case 403:
+        return 'forbidden';
+    case 413:
+        return 'offer_too_large';
+    case 429:
+        return 'rate_limited';
+    case 0:
+    case 502:
+        return 'provider_unreachable';
+    default:
+        return 'unavailable';
+    }
+}
+
+export function errorReasonForSessionEnd(reason: DictationSessionEndReason): DictationErrorReason {
+    switch (reason) {
+    case 'duration_limit':
+        return 'session_time_limit';
+    case 'policy':
+        return 'session_policy';
+    default:
+        return 'session_shutdown';
+    }
+}
+
+export class DictationError extends Error {
+    readonly reason: DictationErrorReason;
+
+    constructor(reason: DictationErrorReason, message?: string) {
+        super(message || reason);
+        this.reason = reason;
+    }
+}
+
+// The transcript so far in speaking order: finalized segments, and streamed
+// text for segments not finalized yet.
+export type TranscriptUpdate = {
+    text: string;
+};
+
+// A live speech-to-text connection. WebRTC is the only implementation today;
+// a WebSocket transport or a server relay can implement the same interface.
+export interface DictationTransport {
+
+    // Resolves once audio is flowing to the provider. Rejects with a DictationError.
+    start(): Promise<void>;
+
+    // Releases the microphone at once. With waitForFinal, it then finalizes
+    // the last segment and waits briefly for its transcript before closing
+    // the connection; without, it closes right away. Safe to call at any time.
+    stop(options?: {waitForFinal?: boolean}): Promise<void>;
+
+    // The microphone is granted and the connection is being made.
+    onConnecting(handler: () => void): void;
+
+    // Every change to the transcript, partial or final.
+    onTranscript(handler: (update: TranscriptUpdate) => void): void;
+
+    // An error after start resolved. The transport has already torn down.
+    onError(handler: (error: DictationError) => void): void;
+
+    // No speech for the silence cap; the caller should stop.
+    onIdle(handler: () => void): void;
+
+    // The microphone's RMS level (0 to 1), sampled while listening.
+    onLevel(handler: (level: number) => void): void;
+}

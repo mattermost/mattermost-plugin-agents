@@ -107,9 +107,7 @@ func TestDirectMessageConversationsEval(t *testing.T) {
 			}, post)
 			assert.NotEmpty(t, response, "Expected a non-empty DM response")
 
-			for _, rubric := range config.rubrics {
-				evals.LLMRubricT(t, rubric, response)
-			}
+			evals.LLMRubricsT(t, config.rubrics, response)
 		})
 	}
 }
