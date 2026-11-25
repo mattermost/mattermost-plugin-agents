@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -109,6 +110,51 @@ func originChanged(before, after string) bool {
 // sameServerOrigin reports whether two server URLs share an origin.
 func sameServerOrigin(a, b string) bool {
 	return !originChanged(a, b)
+}
+
+// ServerURLRemaps returns a map from NormalizeMCPServerOrigin(oldURL) to newURL
+// for remote MCP servers that kept their identity and origin (scheme, host, port)
+// across a config save from prev to next while changing their BaseURL (for
+// example, adding, changing, or removing a query string or path). Callers use
+// this to keep URL-keyed references (agent tool allowlists, user preferences)
+// following the same server.
+func ServerURLRemaps(prev, next []ServerConfig) map[string]string {
+	nextByID := make(map[string]int, len(next))
+	nextByName := make(map[string]int, len(next))
+	for i, s := range next {
+		if s.ID != "" {
+			nextByID[s.ID] = i
+		}
+		nextByName[s.Name] = i
+	}
+
+	var remaps map[string]string
+	for _, old := range prev {
+		lookup, key := nextByID, old.ID
+		if old.ID == "" {
+			lookup, key = nextByName, old.Name
+		}
+		i, kept := lookup[key]
+		if !kept {
+			continue
+		}
+		updated := next[i]
+		if old.BaseURL == "" || updated.BaseURL == "" || old.BaseURL == updated.BaseURL {
+			continue
+		}
+		if originChanged(old.BaseURL, updated.BaseURL) {
+			continue
+		}
+		oldNorm := llm.NormalizeMCPServerOrigin(old.BaseURL)
+		if oldNorm == "" {
+			continue
+		}
+		if remaps == nil {
+			remaps = make(map[string]string)
+		}
+		remaps[oldNorm] = updated.BaseURL
+	}
+	return remaps
 }
 
 // ClearServerOAuthState deletes every user's stored OAuth grant and

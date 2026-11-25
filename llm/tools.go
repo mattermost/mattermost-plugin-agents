@@ -722,6 +722,50 @@ func NormalizeMCPServerOrigins(origins []string) []string {
 	return normalized
 }
 
+// RemapEnabledMCPTools rewrites any EnabledMCPTool whose normalized ServerOrigin
+// appears in remaps (keyed by NormalizeMCPServerOrigin(oldURL) -> newURL) and
+// deduplicates resulting (normalized origin, tool name) pairs. It returns the
+// original slice and false when no entry matched remaps.
+func RemapEnabledMCPTools(tools []EnabledMCPTool, remaps map[string]string) ([]EnabledMCPTool, bool) {
+	if len(tools) == 0 || len(remaps) == 0 {
+		return tools, false
+	}
+
+	matched := false
+	for _, t := range tools {
+		if nextOrigin, ok := remaps[NormalizeMCPServerOrigin(t.ServerOrigin)]; ok && t.ServerOrigin != nextOrigin {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return tools, false
+	}
+
+	remapped := make([]EnabledMCPTool, 0, len(tools))
+	type toolKey struct {
+		origin string
+		name   string
+	}
+	seen := make(map[toolKey]struct{}, len(tools))
+	for _, t := range tools {
+		origin := t.ServerOrigin
+		if nextOrigin, ok := remaps[NormalizeMCPServerOrigin(origin)]; ok && origin != nextOrigin {
+			origin = nextOrigin
+		}
+		k := toolKey{origin: NormalizeMCPServerOrigin(origin), name: t.ToolName}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		remapped = append(remapped, EnabledMCPTool{
+			ServerOrigin: origin,
+			ToolName:     t.ToolName,
+		})
+	}
+	return remapped, true
+}
+
 // RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
 // any of the provided origins. This is used for user-disabled provider
 // filtering in Copilot DM contexts.

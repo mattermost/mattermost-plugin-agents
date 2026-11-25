@@ -475,3 +475,94 @@ func (s *Store) DeleteAgent(id string) (err error) {
 	}
 	return nil
 }
+
+// RemapAgentMCPServerOrigins rewrites EnabledMCPTools entries on active agents
+// whose normalized ServerOrigin appears in remaps (old normalized origin ->
+// new origin). Each matching agent is locked, re-read, updated, and versioned
+// with SystemAgentVersionMeta inside its own transaction so concurrent edits
+// are not overwritten. Returns the IDs of agents that were updated.
+func (s *Store) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, error) {
+	if len(remaps) == 0 {
+		return nil, nil
+	}
+
+	agents, err := s.ListAgents()
+	if err != nil {
+		return nil, err
+	}
+
+	var updatedIDs []string
+	var errs []error
+	for _, agent := range agents {
+		if _, changed := llm.RemapEnabledMCPTools(agent.EnabledMCPTools, remaps); !changed {
+			continue
+		}
+		updated, updateErr := s.remapAgentMCPServerOriginsTx(agent.ID, remaps)
+		if updateErr != nil {
+			errs = append(errs, updateErr)
+			continue
+		}
+		if updated {
+			updatedIDs = append(updatedIDs, agent.ID)
+		}
+	}
+	return updatedIDs, errors.Join(errs...)
+}
+
+func (s *Store) remapAgentMCPServerOriginsTx(agentID string, remaps map[string]string) (updated bool, err error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return false, fmt.Errorf("failed to begin agent MCP origin remap transaction: %w", err)
+	}
+	defer func() {
+		if err != nil || !updated {
+			_ = tx.Rollback()
+		}
+	}()
+
+	current, err := lockActiveAgentTx(tx, agentID)
+	if err != nil {
+		return false, err
+	}
+	if current == nil {
+		return false, nil
+	}
+
+	remapped, changed := llm.RemapEnabledMCPTools(current.EnabledMCPTools, remaps)
+	if !changed {
+		return false, nil
+	}
+
+	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)
+	if err != nil {
+		return false, err
+	}
+
+	now := model.GetMillis()
+	if now <= current.UpdateAt {
+		now = current.UpdateAt + 1
+	}
+	current.EnabledMCPTools = remapped
+	current.UpdateAt = now
+
+	if _, err = tx.Exec(
+		`UPDATE Agents_UserAgents SET EnabledTools = $1, UpdateAt = $2 WHERE ID = $3 AND DeleteAt = 0`,
+		marshalJSONSlice(current.EnabledMCPTools),
+		current.UpdateAt,
+		current.ID,
+	); err != nil {
+		return false, fmt.Errorf("failed to remap MCP server origins on agent %q: %w", current.ID, err)
+	}
+
+	snapshot := agentVersionSnapshot(current)
+	if _, err = insertAgentVersionTx(tx, current.ID, latest+1, snapshot, SystemAgentVersionMeta(), changedVersionFields(latestConfig, snapshot), now); err != nil {
+		return false, err
+	}
+	if err = s.pruneAgentVersionsTx(tx, current.ID, latest+1); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit agent MCP origin remap: %w", err)
+	}
+	return true, nil
+}

@@ -222,6 +222,13 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 				normalized.Bots = prev.Bots
 			}
 		}
+		if remaps := mcp.ServerURLRemaps(prevServers, normalized.MCP.Servers); len(remaps) > 0 {
+			for i := range normalized.Bots {
+				if remapped, changed := llm.RemapEnabledMCPTools(normalized.Bots[i].EnabledMCPTools, remaps); changed {
+					normalized.Bots[i].EnabledMCPTools = remapped
+				}
+			}
+		}
 		if err := normalized.ValidateDictation(); err != nil {
 			return config.Config{}, err
 		}
@@ -269,9 +276,34 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
+	// Follow same-origin MCP server URL edits (such as adding or removing a
+	// query string) on DB-backed agents before updating runtime config and
+	// notifying peers, so EnsureBots on every cluster node loads the remapped
+	// allowlists immediately.
+	urlRemaps := mcp.ServerURLRemaps(prevServers, saved.MCP.Servers)
+	var remappedAgentIDs []string
+	if len(urlRemaps) > 0 && a.agentStore != nil {
+		var remapErr error
+		remappedAgentIDs, remapErr = a.agentStore.RemapAgentMCPServerOrigins(urlRemaps)
+		if remapErr != nil && a.pluginAPI != nil {
+			a.pluginAPI.Log.Warn("Failed to remap agent MCP tool references after server URL change", "error", remapErr)
+		}
+	}
+
 	a.configUpdater.Update(&saved)
 
 	notifyErr := a.clusterNotifier.PublishConfigUpdate()
+
+	if len(remappedAgentIDs) > 0 {
+		if a.clusterAgentNotifier != nil {
+			if agentNotifyErr := a.clusterAgentNotifier.PublishAgentUpdate(""); agentNotifyErr != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "error", agentNotifyErr)
+			}
+		}
+		if a.mmClient != nil {
+			a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
+		}
+	}
 
 	// Remove saved sign-ins the change orphaned or that were issued for a
 	// server's old origin. Grants are only used by the server they were
@@ -280,6 +312,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// made unusable rather than guarding against misuse. It runs after the
 	// change is applied so a slow sweep never delays that.
 	a.clearMCPServerOAuthState(c, prevServers, saved.MCP.Servers)
+	a.remapMCPUserPreferences(c, urlRemaps)
 
 	if notifyErr != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of config update: %w", notifyErr))
@@ -287,6 +320,25 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, adminConfigResponse(saved))
+}
+
+// remapMCPUserPreferences updates per-user disabled MCP server preferences in
+// KV so same-origin URL edits (such as adding or removing a query string) keep
+// users' existing provider toggles pointing at the edited server.
+func (a *API) remapMCPUserPreferences(c *gin.Context, remaps map[string]string) {
+	if len(remaps) == 0 || a.pluginAPI == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), mcpSignInClearTimeout)
+	defer cancel()
+	updated, err := mcp.RemapUserPreferencesOrigins(ctx, &a.pluginAPI.KV, remaps)
+	if err != nil {
+		a.pluginAPI.Log.Warn("Failed to remap per-user MCP provider preferences after server URL change", "updated", updated, "error", err)
+		return
+	}
+	if updated > 0 {
+		a.pluginAPI.Log.Info("Remapped per-user MCP provider preferences after server URL change", "updated", updated)
+	}
 }
 
 // clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP

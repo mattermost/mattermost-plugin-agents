@@ -4,12 +4,16 @@
 package mcp
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // ErrUserPreferencesInvalid indicates normalized preferences violate size or count limits.
@@ -29,8 +33,10 @@ type UserToolProviderPreferences struct {
 	DisabledServers []string `json:"disabled_servers"`
 }
 
+const userPreferencesKVPrefix = "user_tool_providers_"
+
 func userPreferencesKVKey(userID string) string {
-	return fmt.Sprintf("user_tool_providers_%s", userID)
+	return userPreferencesKVPrefix + userID
 }
 
 // LoadUserPreferences loads the user's tool provider preferences from KV.
@@ -101,4 +107,101 @@ func normalizePreferences(prefs *UserToolProviderPreferences) {
 		cleaned = []string{}
 	}
 	prefs.DisabledServers = cleaned
+}
+
+var errUserPreferencesUnchanged = errors.New("user preferences unchanged")
+
+// UserPreferencesKVStore is the subset of pluginapi.KVService needed to remap
+// persisted per-user provider preferences when a server URL changes.
+type UserPreferencesKVStore interface {
+	ListKeys(page, count int, options ...pluginapi.ListKeysOption) ([]string, error)
+	SetAtomicWithRetries(key string, valueFunc func(oldValue []byte) (newValue any, err error)) error
+}
+
+func remapDisabledServers(disabled []string, remaps map[string]string) ([]string, bool) {
+	if len(disabled) == 0 || len(remaps) == 0 {
+		return disabled, false
+	}
+
+	matched := false
+	for _, s := range disabled {
+		if nextOrigin, ok := remaps[llm.NormalizeMCPServerOrigin(s)]; ok && s != nextOrigin {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return disabled, false
+	}
+
+	out := make([]string, len(disabled))
+	for i, s := range disabled {
+		if nextOrigin, ok := remaps[llm.NormalizeMCPServerOrigin(s)]; ok && s != nextOrigin {
+			out[i] = nextOrigin
+		} else {
+			out[i] = s
+		}
+	}
+	return out, true
+}
+
+// RemapUserPreferencesOrigins updates every user's stored disabled-server
+// preference that matches an old normalized origin in remaps to the server's
+// new URL, using compare-and-set so concurrent user toggles are preserved.
+func RemapUserPreferencesOrigins(ctx context.Context, kv UserPreferencesKVStore, remaps map[string]string) (int, error) {
+	if len(remaps) == 0 || kv == nil {
+		return 0, nil
+	}
+
+	var keys []string
+	for page := 0; ; page++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		pageKeys, err := kv.ListKeys(page, listKeysPageSize)
+		if err != nil {
+			return 0, fmt.Errorf("failed to list user preference KV keys: %w", err)
+		}
+		for _, key := range pageKeys {
+			if strings.HasPrefix(key, userPreferencesKVPrefix) && len(key) > len(userPreferencesKVPrefix) {
+				keys = append(keys, key)
+			}
+		}
+		if len(pageKeys) < listKeysPageSize {
+			break
+		}
+	}
+
+	updated := 0
+	var errs []error
+	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return updated, errors.Join(append(errs, err)...)
+		}
+		err := kv.SetAtomicWithRetries(key, func(oldValue []byte) (any, error) {
+			if len(oldValue) == 0 {
+				return nil, errUserPreferencesUnchanged
+			}
+			var prefs UserToolProviderPreferences
+			if unmarshalErr := json.Unmarshal(oldValue, &prefs); unmarshalErr != nil {
+				return nil, fmt.Errorf("failed to decode user preferences: %w", unmarshalErr)
+			}
+			remapped, changed := remapDisabledServers(prefs.DisabledServers, remaps)
+			if !changed {
+				return nil, errUserPreferencesUnchanged
+			}
+			prefs.DisabledServers = remapped
+			normalizePreferences(&prefs)
+			return &prefs, nil
+		})
+		if errors.Is(err, errUserPreferencesUnchanged) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to remap user preferences: %w", err))
+			continue
+		}
+		updated++
+	}
+	return updated, errors.Join(errs...)
 }

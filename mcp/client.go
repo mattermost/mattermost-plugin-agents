@@ -478,7 +478,7 @@ func (c *Client) connectAndDiscover(ctx context.Context, serverConfig ServerConf
 
 	// Try to get tools from global cache first.
 	if c.toolsCache != nil && sharedToolsCache && !forceRefresh {
-		cachedTools := c.toolsCache.GetTools(serverID)
+		cachedTools := c.toolsCache.GetToolsForURL(serverID, serverConfig.BaseURL)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
 			c.toolsMu.Lock()

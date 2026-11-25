@@ -527,3 +527,55 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)
 	assert.GreaterOrEqual(t, fetched.UpdateAt, originalCreateAt)
 }
+
+func TestRemapAgentMCPServerOrigins(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	const (
+		oldURL   = "https://mcp.atlassian.com/v2/mcp"
+		newURL   = "https://mcp.atlassian.com/v2/mcp?tools=all"
+		otherURL = "https://github.example.com/mcp"
+	)
+
+	matching := testAgent("creator-1", "match", "Matching")
+	matching.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: oldURL, ToolName: "getJiraIssue"},
+		{ServerOrigin: otherURL, ToolName: "list_prs"},
+	}
+	require.NoError(t, s.CreateAgent(matching, SystemAgentVersionMeta()))
+
+	untouched := testAgent("creator-1", "keep", "Untouched")
+	untouched.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: otherURL, ToolName: "list_prs"},
+	}
+	require.NoError(t, s.CreateAgent(untouched, SystemAgentVersionMeta()))
+
+	deleted := testAgent("creator-1", "del", "Deleted")
+	deleted.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: oldURL, ToolName: "getJiraIssue"},
+	}
+	require.NoError(t, s.CreateAgent(deleted, SystemAgentVersionMeta()))
+	require.NoError(t, s.DeleteAgent(deleted.ID))
+
+	updatedIDs, err := s.RemapAgentMCPServerOrigins(map[string]string{oldURL: newURL})
+	require.NoError(t, err)
+	assert.Equal(t, []string{matching.ID}, updatedIDs)
+
+	gotMatching, err := s.GetAgent(matching.ID)
+	require.NoError(t, err)
+	require.Equal(t, []llm.EnabledMCPTool{
+		{ServerOrigin: newURL, ToolName: "getJiraIssue"},
+		{ServerOrigin: otherURL, ToolName: "list_prs"},
+	}, gotMatching.EnabledMCPTools)
+
+	// Remapping records a system version for the updated agent only.
+	matchingVersions, err := s.ListAgentVersions(matching.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, matchingVersions.Versions, 2)
+	assert.Equal(t, AgentVersionSourceSystem, matchingVersions.Versions[0].Source)
+
+	untouchedVersions, err := s.ListAgentVersions(untouched.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, untouchedVersions.Versions, 1)
+}

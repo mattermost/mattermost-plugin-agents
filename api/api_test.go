@@ -893,6 +893,32 @@ func (m *mockAgentStore) DeleteAgent(id string) error {
 	return nil
 }
 
+func (m *mockAgentStore) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, error) {
+	if len(remaps) == 0 {
+		return nil, nil
+	}
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
+	var updatedIDs []string
+	for id, agent := range m.agents {
+		if agent.DeleteAt != 0 {
+			continue
+		}
+		remapped, changed := llm.RemapEnabledMCPTools(agent.EnabledMCPTools, remaps)
+		if !changed {
+			continue
+		}
+		prev := cloneBotConfig(agent)
+		agent.EnabledMCPTools = remapped
+		agent.UpdateAt = time.Now().UnixMilli()
+		m.recordVersion(agent, prev, store.SystemAgentVersionMeta())
+		updatedIDs = append(updatedIDs, id)
+	}
+	slices.Sort(updatedIDs)
+	return updatedIDs, nil
+}
+
 func (e *TestEnvironment) Cleanup(t *testing.T) {
 	if e.mockAPI != nil {
 		e.mockAPI.AssertExpectations(t)
