@@ -71,23 +71,23 @@ People with read and write access see **Settings** in the Agents sidebar. Access
 
 Everything is under **Agents > Settings**, in the **General**, **AI services**, **MCP servers**, **Embedding search**, **Web search**, **Dictation**, and **Debug** sections. **System Console > Plugins > Agents** has an **Open Agents settings** button and the **Settings access** lists below. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
 
-| Panel | Setting | Config key | Default | Details |
+| Section | Setting | Config key | Default | Details |
 |---|---|---|---|---|
-| AI Services | Services | `services` | none | [Configure LLM services](llm_services.md) |
-| AI Bots | Limit agent version history, Versions to keep per agent | `agentVersionsToKeep` | Off (`0`, keep all). Turning it on sets 50. | [Create and manage agents](managing_agents.md#keep-a-limited-history) |
-| AI Functions | Default bot | `defaultBotUserID` | The first agent, until you pick one | [Create and manage agents](managing_agents.md) |
-| AI Functions | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
-| AI Functions | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
-| AI Functions | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
-| AI Functions | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
-| AI Functions | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
-| AI Functions | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
+| AI services | Services | `services` | none | [Configure LLM services](llm_services.md) |
+| General | Limit agent version history, Versions to keep per agent | `agentVersionsToKeep` | Off (`0`, keep all). Turning it on sets 50. | [Create and manage agents](managing_agents.md#keep-a-limited-history) |
+| General | Default bot | `defaultBotUserID` | The first agent, until you pick one | [Create and manage agents](managing_agents.md) |
+| General | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
+| General | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
+| General | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
+| General | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
+| General | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
+| General | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
 | Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
 | Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |
-| Embedding Search (experimental) | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
+| Embedding search | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
 | Dictation | Enable dictation (experimental), Transcription service, Transcription model, Language, Use channel context to improve accuracy | `dictation` | Off, model `gpt-live-transcribe`, channel context on (sends channel and people's names to OpenAI) | [Set up dictation](dictation.md) |
-| Web Search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
-| Model Context Protocol (MCP) | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
+| Web search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
+| MCP servers | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
 
 ## License requirements
 
@@ -106,7 +106,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Provider-native web search | No | Yes | Yes | Yes |
 | Agent access controls (users, teams, channels) | No | Yes | Yes | Yes |
 | Token usage logging | No | Yes | Yes | Yes |
-| Built-in web search (Brave, Google, SearXNG) | No | No | Yes | Yes |
+| Built-in web search (Brave, SearXNG) | No | No | Yes | Yes |
 | Tool approval policies | No | No | Yes | Yes |
 | Remote and external MCP servers, HTTP MCP endpoint | No | No | Yes | Yes |
 | MCP service account authentication | No | No | Yes | Yes |
@@ -131,4 +131,4 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 - Reading configuration is never blocked.
 - Turning something off is never blocked. You can disable, clear, or delete a gated setting after a license downgrade.
 - License changes apply without restarting the plugin.
-- A System Console or REST API request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`. LLM Bridge completions, MCP tools, and channel mentions report licensing differently. See [LLM Bridge](llm_bridge.md#permissions-and-licensing).
+- An Agents settings or REST API request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`. LLM Bridge completions, MCP tools, and channel mentions report licensing differently. See [LLM Bridge](llm_bridge.md#permissions-and-licensing).

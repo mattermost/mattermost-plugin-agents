@@ -229,6 +229,11 @@ func TestSessionEventMatches(t *testing.T) {
 		{name: "server context keywords reordered", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &hint, []string{"Søren Larsen", "Dictation Team"}, nil)},
 		{name: "server context keywords dropped", expected: hinted, event: llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &hint, nil, nil)},
 		{name: "context on a model without it", expected: TranscriptionSessionRequest{Model: "gpt-realtime-whisper", Prompt: hint, Keywords: hintKeywords}, event: llmtest.SessionUpdatedWithKeywords("gpt-realtime-whisper", nil, &hint, hintKeywords, nil)},
+		{name: "unknown event type with the admin session", expected: live, event: llmtest.WithEventType(llmtest.SessionUpdated("gpt-live-transcribe", []string{"en"}, nil, nil), "session.reported"), want: true},
+		{name: "unknown event type with a changed session", expected: live, event: llmtest.WithEventType(llmtest.SessionUpdated("gpt-4o-transcribe", []string{"en"}, nil, nil), "session.reported")},
+		{name: "unknown event type with an empty session", expected: live, event: map[string]any{"type": "rate_limits.updated", "session": map[string]any{}}, want: true},
+		{name: "unknown event type with the server context", expected: hinted, event: llmtest.WithEventType(llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &hint, hintKeywords, nil), "session.reported"), want: true},
+		{name: "unknown event type with a changed prompt", expected: hinted, event: llmtest.WithEventType(llmtest.SessionUpdatedWithKeywords("gpt-live-transcribe", []string{"en"}, &prompt, hintKeywords, nil), "session.reported")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

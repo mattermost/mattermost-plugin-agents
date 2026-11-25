@@ -414,15 +414,36 @@ func TestWebSearchService(t *testing.T) {
 		require.Nil(t, tool, "Should return nil when web search is disabled")
 	})
 
-	t.Run("returns tool when properly configured", func(t *testing.T) {
+	t.Run("returns nil tools for the removed google provider", func(t *testing.T) {
 		cfgGetter := func() *config.Config {
 			return &config.Config{
 				WebSearch: config.WebSearchConfig{
 					Enabled:  true,
 					Provider: "google",
-					Google: config.WebSearchGoogleConfig{
-						APIKey:         "test-key",
-						SearchEngineID: "test-engine-id",
+				},
+			}
+		}
+
+		service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
+		mockBot := bots.NewBot(
+			llm.BotConfig{Name: "mockbot"},
+			llm.ServiceConfig{Type: "mock"},
+			&model.Bot{Username: "mockbot"},
+			&mockLanguageModel{},
+		)
+
+		require.Nil(t, service.Tool())
+		require.Nil(t, service.SourceTool(mockBot))
+	})
+
+	t.Run("returns tool when properly configured", func(t *testing.T) {
+		cfgGetter := func() *config.Config {
+			return &config.Config{
+				WebSearch: config.WebSearchConfig{
+					Enabled:  true,
+					Provider: "brave",
+					Brave: config.WebSearchBraveConfig{
+						APIKey: "test-key",
 					},
 				},
 			}
@@ -443,10 +464,9 @@ func configuredWebSearchGetter() func() *config.Config {
 		return &config.Config{
 			WebSearch: config.WebSearchConfig{
 				Enabled:  true,
-				Provider: "google",
-				Google: config.WebSearchGoogleConfig{
-					APIKey:         "test-key",
-					SearchEngineID: "test-engine-id",
+				Provider: "brave",
+				Brave: config.WebSearchBraveConfig{
+					APIKey: "test-key",
 				},
 			},
 		}
@@ -652,7 +672,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 			return &config.Config{
 				WebSearch: config.WebSearchConfig{
 					Enabled:        true,
-					Provider:       "google",
+					Provider:       "brave",
 					DomainDenylist: []string{},
 				},
 			}

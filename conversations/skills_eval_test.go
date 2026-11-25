@@ -134,9 +134,7 @@ func TestSkillsEval(t *testing.T) {
 			} else {
 				assert.NotContains(t, response, skillEvalMarker, "the agent should not have loaded the skill")
 			}
-			for _, rubric := range config.wantRubrics {
-				evals.LLMRubricT(t, rubric, response)
-			}
+			evals.LLMRubricsT(t, config.wantRubrics, response)
 		})
 	}
 }

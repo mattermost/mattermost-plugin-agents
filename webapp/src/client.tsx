@@ -34,6 +34,8 @@ export type UserMCPToolInfo = {
     description: string;
     enabled: boolean;
     policy: MCPToolPolicy;
+    inputSchema?: Record<string, unknown> | null;
+    readOnlyHint?: boolean;
 };
 export type MCPServerKind = 'remote' | 'embedded' | 'plugin';
 
@@ -1076,13 +1078,16 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
-export async function getUserMCPTools(opts?: {
+export type UserMCPToolsRequestOptions = {
     agentId?: string;
     serviceAccount?: boolean;
 
-    // Agent editor catalog: system admins also see servers whose access policy denies them.
+    // Agent editor catalog: system admins also see servers whose access policy denies them,
+    // and admin-disabled tools are returned with enabled=false.
     agentConfig?: boolean;
-}): Promise<UserMCPToolsResponse> {
+};
+
+function userMCPToolsQuery(opts?: UserMCPToolsRequestOptions): string {
     const params = new URLSearchParams();
     if (opts?.serviceAccount) {
         params.set('catalog', 'service_account');
@@ -1094,7 +1099,11 @@ export async function getUserMCPTools(opts?: {
         params.set('agent_id', opts.agentId);
     }
     const query = params.toString();
-    const url = `${baseRoute()}/mcp/tools${query ? `?${query}` : ''}`;
+    return query ? `?${query}` : '';
+}
+
+export async function getUserMCPTools(opts?: UserMCPToolsRequestOptions): Promise<UserMCPToolsResponse> {
+    const url = `${baseRoute()}/mcp/tools${userMCPToolsQuery(opts)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -1110,8 +1119,8 @@ export async function getUserMCPTools(opts?: {
     });
 }
 
-export async function refreshUserMCPTools(): Promise<UserMCPToolsResponse> {
-    const url = `${baseRoute()}/mcp/tools/refresh`;
+export async function refreshUserMCPTools(opts?: UserMCPToolsRequestOptions): Promise<UserMCPToolsResponse> {
+    const url = `${baseRoute()}/mcp/tools/refresh${userMCPToolsQuery(opts)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
     }));

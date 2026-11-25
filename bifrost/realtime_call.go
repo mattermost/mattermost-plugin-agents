@@ -685,6 +685,11 @@ type observedSession struct {
 
 // sessionEventMatches reports whether a sideband event leaves the session as
 // configured. Events other than session reports are not inspected.
+func hasSessionObject(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	return json.Unmarshal(raw, &fields) == nil && len(fields) > 0
+}
+
 func sessionEventMatches(data []byte, expected TranscriptionSessionRequest) bool {
 	var ev sessionEvent
 	if err := json.Unmarshal(data, &ev); err != nil {
@@ -695,6 +700,9 @@ func sessionEventMatches(data []byte, expected TranscriptionSessionRequest) bool
 		// A transcription session never generates responses.
 		return false
 	case ev.Type == "session.created", ev.Type == "session.updated", ev.Type == "transcription_session.created", ev.Type == "transcription_session.updated":
+	case hasSessionObject(ev.Session):
+		// Checked whatever the event is called, so a renamed or new
+		// session event can't carry a change past the check.
 	default:
 		return true
 	}

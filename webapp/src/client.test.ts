@@ -29,6 +29,7 @@ import {
     getConversation,
     getConversationContext,
     getUserMCPTools,
+    refreshUserMCPTools,
     normalizeConversationResponse,
     renderCustomPrompt,
     searchAllChannels,
@@ -514,6 +515,23 @@ describe('getUserMCPTools', () => {
 
         const url = new URL(mockFetch.mock.calls[0][0]);
         expect(`${url.origin}${url.pathname}`).toBe(`${siteURL}/plugins/${manifest.id}/mcp/tools`);
+        expect(Object.fromEntries(url.searchParams)).toEqual(params);
+    });
+});
+
+describe('refreshUserMCPTools', () => {
+    test.each([
+        {name: 'default refresh sends no query', opts: undefined, params: {}}, // eslint-disable-line no-undefined
+        {name: 'agent editor refresh forwards agentConfig and service account params', opts: {agentId: 'a1', serviceAccount: true, agentConfig: true}, params: {catalog: 'service_account', purpose: 'agent_config', agent_id: 'a1'}},
+    ])('$name', async ({opts, params}) => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({servers: []})} as unknown as Response);
+
+        await refreshUserMCPTools(opts);
+
+        const [rawUrl, init] = mockFetch.mock.calls[0];
+        const url = new URL(rawUrl);
+        expect(init?.method).toBe('POST');
+        expect(`${url.origin}${url.pathname}`).toBe(`${siteURL}/plugins/${manifest.id}/mcp/tools/refresh`);
         expect(Object.fromEntries(url.searchParams)).toEqual(params);
     });
 });

@@ -33,6 +33,8 @@ type providerSummary struct {
 	Error     string `json:"error,omitempty"`
 	Checks    int    `json:"checks"`
 	Passing   int    `json:"passing"`
+	// Usage is absent from summaries written before usage was recorded.
+	Usage *providerUsage `json:"usage,omitempty"`
 }
 
 type checkSummary struct {
@@ -55,6 +57,9 @@ func (r report) runSummary(now time.Time, commit, runURL string) runSummary {
 	}
 	for _, p := range r.providers {
 		ps := providerSummary{Name: p.name, Available: !p.unavailable()}
+		if !p.usage.empty() {
+			ps.Usage = &p.usage
+		}
 		if !ps.Available {
 			ps.Error = p.firstError()
 		}
@@ -135,8 +140,8 @@ func trendMarkdown(history []runSummary, limit int) string {
 	fmt.Fprintf(&sb, "## Eval trend (last %d %s)\n", len(history), plural(len(history), "run", "runs"))
 	for _, name := range names {
 		fmt.Fprintf(&sb, "\n### %s\n\n", providerDisplayName(name))
-		sb.WriteString("| Date | Commit | Checks passing |\n")
-		sb.WriteString("|------|--------|----------------|\n")
+		sb.WriteString("| Date | Commit | Checks passing | Cost |\n")
+		sb.WriteString("|------|--------|----------------|------|\n")
 		for _, s := range slices.Backward(history) {
 			i := slices.IndexFunc(s.Providers, func(p providerSummary) bool { return p.Name == name })
 			if i < 0 {
@@ -148,11 +153,15 @@ func trendMarkdown(history []runSummary, limit int) string {
 				date = fmt.Sprintf("[%s](%s)", date, s.RunURL)
 			}
 			commit := cmp.Or(shortCommit(s.Commit), "–")
+			cost := "–"
+			if p.Usage != nil {
+				cost = p.Usage.costCell()
+			}
 			if !p.Available {
-				fmt.Fprintf(&sb, "| %s | %s | ⚪ Unavailable: %s |\n", date, commit, tableCell(truncateString(oneLine(p.Error), 120)))
+				fmt.Fprintf(&sb, "| %s | %s | ⚪ Unavailable: %s | %s |\n", date, commit, tableCell(truncateString(oneLine(p.Error), 120)), cost)
 				continue
 			}
-			fmt.Fprintf(&sb, "| %s | %s | %d/%d |\n", date, commit, p.Passing, p.Checks)
+			fmt.Fprintf(&sb, "| %s | %s | %d/%d | %s |\n", date, commit, p.Passing, p.Checks, cost)
 		}
 	}
 	return sb.String()
