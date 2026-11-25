@@ -117,7 +117,7 @@ func (s *Store) UpdateConfig(transform func(prev *config.Config) (config.Config,
 
 	if prev != nil {
 		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
-			if _, err = s.remapAgentMCPServerOriginsInTx(tx, remaps); err != nil {
+			if _, err = s.remapAgentMCPServerOriginsInTx(tx, remaps, int64(max(next.AgentVersionsToKeep, 0))); err != nil {
 				return next, err
 			}
 		}

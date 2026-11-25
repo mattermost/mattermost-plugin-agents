@@ -496,7 +496,7 @@ func (s *Store) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, 
 		}
 	}()
 
-	updatedIDs, err := s.remapAgentMCPServerOriginsInTx(tx, remaps)
+	updatedIDs, err := s.remapAgentMCPServerOriginsInTx(tx, remaps, s.agentVersionsToKeep.Load())
 	if err != nil {
 		return nil, err
 	}
@@ -508,9 +508,9 @@ func (s *Store) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, 
 
 // remapAgentMCPServerOriginsInTx locks and updates every active agent matching
 // remaps inside the caller's transaction (ascending ID order to prevent lock
-// cycles). Any error fails the caller's transaction so config and agent state
-// never diverge.
-func (s *Store) remapAgentMCPServerOriginsInTx(tx *sqlx.Tx, remaps map[string]string) ([]string, error) {
+// cycles), pruning history against versionsToKeep. Any error fails the caller's
+// transaction so config and agent state never diverge.
+func (s *Store) remapAgentMCPServerOriginsInTx(tx *sqlx.Tx, remaps map[string]string, versionsToKeep int64) ([]string, error) {
 	if len(remaps) == 0 {
 		return nil, nil
 	}
@@ -573,7 +573,7 @@ func (s *Store) remapAgentMCPServerOriginsInTx(tx *sqlx.Tx, remaps map[string]st
 		if _, err = insertAgentVersionTx(tx, current.ID, latest+1, snapshot, SystemAgentVersionMeta(), changedVersionFields(latestConfig, snapshot), now); err != nil {
 			return nil, err
 		}
-		if err = s.pruneAgentVersionsTx(tx, current.ID, latest+1); err != nil {
+		if err = pruneAgentVersionsWithLimitTx(tx, current.ID, latest+1, versionsToKeep); err != nil {
 			return nil, err
 		}
 		updatedIDs = append(updatedIDs, current.ID)

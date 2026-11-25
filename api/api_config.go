@@ -219,7 +219,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		if !systemAdmin {
 			normalized.Bots = nil
 			if prev != nil {
-				normalized.Bots = prev.Bots
+				normalized.Bots = slices.Clone(prev.Bots)
 			}
 		}
 		if remaps := mcp.ServerURLRemaps(prevServers, normalized.MCP.Servers); len(remaps) > 0 {
@@ -284,18 +284,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	a.configUpdater.Update(&saved)
 
-	notifyErr := a.clusterNotifier.PublishConfigUpdate()
-
 	if len(urlRemaps) > 0 {
-		if a.clusterAgentNotifier != nil {
-			if agentNotifyErr := a.clusterAgentNotifier.PublishAgentUpdate(""); agentNotifyErr != nil && a.pluginAPI != nil {
-				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "error", agentNotifyErr)
-			}
-		}
-		if a.mmClient != nil {
-			a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
-		}
+		a.refreshRemappedMCPAgents(urlRemaps)
 	}
+
+	notifyErr := a.clusterNotifier.PublishConfigUpdate()
 
 	// Remove saved sign-ins the change orphaned or that were issued for a
 	// server's old origin. Grants are only used by the server they were
@@ -312,6 +305,73 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, adminConfigResponse(saved))
+}
+
+// refreshRemappedMCPAgents refreshes each active DB agent whose EnabledMCPTools
+// now references a remapped MCP server URL, locally via RefreshAgent and across
+// HA peers via PublishAgentUpdate(agentID), so a failing unrelated agent in
+// EnsureBots cannot leave remapped allowlists stale.
+func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap) {
+	newOrigins := make(map[string]struct{}, len(remaps))
+	for _, r := range remaps {
+		if norm := llm.NormalizeMCPServerOrigin(r.NewURL); norm != "" {
+			newOrigins[norm] = struct{}{}
+		}
+	}
+	if len(newOrigins) == 0 {
+		return
+	}
+
+	var affectedIDs []string
+	var listErr error
+	if a.agentStore != nil {
+		agents, err := a.agentStore.ListAgents()
+		if err != nil {
+			listErr = err
+			if a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to list agents to refresh after MCP server URL remap", "error", err)
+			}
+		} else {
+			for _, ag := range agents {
+				for _, t := range ag.EnabledMCPTools {
+					if _, ok := newOrigins[llm.NormalizeMCPServerOrigin(t.ServerOrigin)]; ok {
+						affectedIDs = append(affectedIDs, ag.ID)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if len(affectedIDs) == 0 && listErr == nil {
+		return
+	}
+
+	if a.bots != nil {
+		for _, id := range affectedIDs {
+			if err := a.bots.RefreshAgent(id); err != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to refresh agent after MCP server URL remap", "agent_id", id, "error", err)
+			}
+		}
+	}
+
+	if a.clusterAgentNotifier != nil {
+		if len(affectedIDs) == 0 {
+			if err := a.clusterAgentNotifier.PublishAgentUpdate(""); err != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "error", err)
+			}
+		} else {
+			for _, id := range affectedIDs {
+				if err := a.clusterAgentNotifier.PublishAgentUpdate(id); err != nil && a.pluginAPI != nil {
+					a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "agent_id", id, "error", err)
+				}
+			}
+		}
+	}
+
+	if a.mmClient != nil {
+		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
+	}
 }
 
 // remapMCPUserPreferences updates per-user disabled MCP server preferences in

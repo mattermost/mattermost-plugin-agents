@@ -737,3 +737,45 @@ func TestUpdateConfigConcurrentSameOriginURLRemapsConverge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []llm.EnabledMCPTool{{ServerOrigin: urlC, ToolName: "getJiraIssue"}}, finalAgent.EnabledMCPTools)
 }
+
+func TestUpdateConfigRemapUsesSavedAgentVersionsToKeep(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	const (
+		serverID = "atlassian-server-id"
+		oldURL   = "https://mcp.atlassian.com/v2/mcp"
+		newURL   = "https://mcp.atlassian.com/v2/mcp?tools=all"
+	)
+
+	// Store currently enforces keep=2, and the agent already has 2 versions.
+	s.SetAgentVersionsToKeep(2)
+	require.NoError(t, s.SaveConfig(config.Config{
+		AgentVersionsToKeep: 2,
+		MCP: config.MCPConfig{
+			Enabled: true,
+			Servers: []config.MCPServerConfig{{ID: serverID, Name: "Atlassian", Enabled: true, BaseURL: oldURL}},
+		},
+	}))
+
+	agent := testAgent("creator-1", "ret", "Retention")
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: oldURL, ToolName: "getJiraIssue"}}
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	agent.DisplayName = "Retention v2"
+	require.NoError(t, s.UpdateAgent(agent, SystemAgentVersionMeta()))
+
+	// Admin saves both the URL change AND AgentVersionsToKeep=0 (keep all).
+	// The remap's version write must honor the newly saved 0 limit rather than
+	// pruning version 1 using the stale in-memory limit of 2.
+	_, err := s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		next := *prev.Clone()
+		next.AgentVersionsToKeep = 0
+		next.MCP.Servers[0].BaseURL = newURL
+		return next, nil
+	})
+	require.NoError(t, err)
+
+	versions, err := s.ListAgentVersions(agent.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, versions.Versions, 3, "version 1 must be preserved when the same save sets AgentVersionsToKeep=0")
+}

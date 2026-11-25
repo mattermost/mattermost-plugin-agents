@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1178,7 +1179,10 @@ func TestOAuthFullFlowWithQueryStringServerURL(t *testing.T) {
 	require.Equal(t, v2ResourceURL, parsedAuth.Query().Get("resource"), "auth URL must carry query-less PRM resource")
 
 	// Step 3: complete consent redirect and callback exchange.
-	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	noRedirect := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	resp, err := noRedirect.Get(authURL)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -1200,6 +1204,24 @@ func TestOAuthFullFlowWithQueryStringServerURL(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, result, "true")
 	require.NoError(t, client.Close())
+
+	// Step 5: expire the access token and reconnect; refresh must send the
+	// query-less PRM resource and preserve ?tools=all on MCP traffic.
+	expired := *kv.storedToken(t, userID, serverName)
+	expired.Expiry = time.Now().Add(-time.Hour)
+	kv.overwriteToken(t, userID, serverName, &expired)
+
+	client, err = NewClient(ctx, userID, serverConfig, newTestLogService(), manager, httpClient, nil, false)
+	require.NoError(t, err)
+	result, err = client.CallTool(ctx, "getJiraIssue", map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, result, "true")
+	require.NoError(t, client.Close())
+
+	_, refreshCalls, _, lastToken := oauthServer.counters()
+	require.Equal(t, 1, refreshCalls)
+	require.Equal(t, "access-token-2", lastToken)
+	require.Equal(t, v2ResourceURL, kv.storedEnvelope(t, userID, serverName).Resource)
 
 	queryMu.Lock()
 	require.NotEmpty(t, observedMCPQueries)

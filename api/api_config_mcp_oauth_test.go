@@ -742,7 +742,10 @@ func TestMCPServerQueryEditEndToEndThroughAdminConfigSave(t *testing.T) {
 			require.Equal(t, "/v2/authorize", parsedAuthRedirect.Path, "must use v2 PRM authorization server")
 			require.Equal(t, v2ResourceURL, parsedAuthRedirect.Query().Get("resource"))
 
-			noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			noRedirect := &http.Client{
+				Timeout:       10 * time.Second,
+				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			}
 			consentResp, err := noRedirect.Get(authRedirectURL)
 			require.NoError(t, err)
 			defer consentResp.Body.Close()
@@ -792,7 +795,7 @@ func TestMCPServerQueryEditEndToEndThroughAdminConfigSave(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, []llm.EnabledMCPTool{{ServerOrigin: editedURL, ToolName: "whoami"}}, updatedAgent.EnabledMCPTools)
 			require.Equal(t, []llm.EnabledMCPTool{{ServerOrigin: editedURL, ToolName: "whoami"}}, cfgStore.cfg.Bots[0].EnabledMCPTools)
-			require.Equal(t, []string{""}, agentNotifier.published, "HA peers must be notified when agents are remapped")
+			require.Equal(t, []string{agent.ID}, agentNotifier.published, "HA peers must be notified per remapped agent ID")
 
 			bobPrefs, err := mcp.LoadUserPreferences(mmClient, bobID)
 			require.NoError(t, err)
