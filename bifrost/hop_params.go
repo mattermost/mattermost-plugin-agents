@@ -102,6 +102,7 @@ func (b *LLM) chatHopParams(params schemas.ChatParameters, name schemas.ModelPro
 	cfg = b.configForHop(cfg, name, model)
 	params.MaxCompletionTokens = maxTokensParam(cfg)
 	params.Reasoning = b.chatReasoningFor(name, cfg)
+	params.ServiceTier = b.serviceTierFor(name, cfg)
 	return &params
 }
 
@@ -110,7 +111,17 @@ func (b *LLM) responsesHopParams(params schemas.ResponsesParameters, name schema
 	cfg = b.configForHop(cfg, name, model)
 	params.MaxOutputTokens = maxTokensParam(cfg)
 	params.Reasoning = b.responsesReasoningFor(name, cfg)
+	params.ServiceTier = b.serviceTierFor(name, cfg)
 	return &params
+}
+
+// serviceTierFor returns the requested processing tier for an OpenAI hop.
+// Other providers define their own tier values, so they get none.
+func (b *LLM) serviceTierFor(name schemas.ModelProvider, cfg llm.LanguageModelConfig) *schemas.BifrostServiceTier {
+	if cfg.ServiceTier == "" || b.baseProvider(name) != schemas.OpenAI {
+		return nil
+	}
+	return new(schemas.BifrostServiceTier(cfg.ServiceTier))
 }
 
 // configForHop returns cfg for model on the provider registered as name, with

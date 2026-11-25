@@ -127,7 +127,7 @@ const MCPRemoteServerList = ({servers, toolsData, onEdit, onDelete}: Props) => {
                 show={pendingDelete !== null}
                 titleId={DELETE_DIALOG_TITLE_ID}
                 title={intl.formatMessage({defaultMessage: 'Delete {name}?'}, {name: pendingDelete?.name ?? ''})}
-                message={<FormattedMessage defaultMessage='Agents and users lose access to the server’s tools, its tool policies are removed, and users’ saved sign-ins to it are removed. This takes effect right away.'/>}
+                message={<FormattedMessage defaultMessage='Immediately removes access to this server’s tools, its policies, and all users’ saved sign-ins.'/>}
                 confirmButtonText={deleting ? <FormattedMessage defaultMessage='Deleting...'/> : <FormattedMessage defaultMessage='Delete'/>}
                 onConfirm={confirmDelete}
                 onCancel={() => setPendingDelete(null)}
