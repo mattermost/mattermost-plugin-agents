@@ -61,9 +61,9 @@ Every save creates a version. Open the version history and select **Restore this
 
 ## Dictate a message
 
-If your System Admin turned on dictation, a microphone button appears in the formatting bar of every message box: channels, threads, the Agents pane, and when you edit a message. You don't need to be talking to an agent.
+If your System Admin turned on dictation, a microphone button appears in the formatting bar of every message box: channels, threads, the Agents pane, and when you edit a message. You don't need to be talking to an agent. Dictation needs an Enterprise license, and guest accounts can't use it. If you don't see the button, ask your System Admin.
 
-1. Place the cursor where the text should go and select the microphone button. The first time, your browser asks for microphone access.
+1. Place the cursor where the text should go and select the microphone button. In the WYSIWYG editor, dictated text is added at the end of the message instead. The first time, your browser asks for microphone access.
 2. Wait while a spinner shows in the button: dictation is getting ready. This usually takes a second or two, and what you say before it's ready may be missed.
 3. Speak once the tooltip says **Listening. Speak now.** A ring around the button grows and shrinks with your voice, so you can see the microphone hears you. Your words appear at the cursor as you talk and are corrected as each phrase is finalized.
 4. Select the button again or press Esc to stop. The text stays in the message box for you to edit and send.
