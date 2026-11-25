@@ -115,6 +115,14 @@ func (s *Store) UpdateConfig(transform func(prev *config.Config) (config.Config,
 		return next, err
 	}
 
+	if prev != nil {
+		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
+			if _, err = s.remapAgentMCPServerOriginsInTx(tx, remaps); err != nil {
+				return next, err
+			}
+		}
+	}
+
 	if err = tx.Commit(); err != nil {
 		return next, fmt.Errorf("failed to commit config update: %w", err)
 	}

@@ -276,25 +276,17 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
-	// Follow same-origin MCP server URL edits (such as adding or removing a
-	// query string) on DB-backed agents before updating runtime config and
-	// notifying peers, so EnsureBots on every cluster node loads the remapped
-	// allowlists immediately.
-	urlRemaps := mcp.ServerURLRemaps(prevServers, saved.MCP.Servers)
-	var remappedAgentIDs []string
-	if len(urlRemaps) > 0 && a.agentStore != nil {
-		var remapErr error
-		remappedAgentIDs, remapErr = a.agentStore.RemapAgentMCPServerOrigins(urlRemaps)
-		if remapErr != nil && a.pluginAPI != nil {
-			a.pluginAPI.Log.Warn("Failed to remap agent MCP tool references after server URL change", "error", remapErr)
-		}
-	}
+	// DB-backed agents whose EnabledMCPTools referenced an edited server's old
+	// URL were remapped atomically inside UpdateConfig under the config save
+	// advisory lock. Updating local runtime config and publishing config +
+	// agent updates reloads bots and invalidates clients on every HA node.
+	urlRemaps := config.MCPServerURLRemaps(prevServers, saved.MCP.Servers)
 
 	a.configUpdater.Update(&saved)
 
 	notifyErr := a.clusterNotifier.PublishConfigUpdate()
 
-	if len(remappedAgentIDs) > 0 {
+	if len(urlRemaps) > 0 {
 		if a.clusterAgentNotifier != nil {
 			if agentNotifyErr := a.clusterAgentNotifier.PublishAgentUpdate(""); agentNotifyErr != nil && a.pluginAPI != nil {
 				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "error", agentNotifyErr)
@@ -324,14 +316,29 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 // remapMCPUserPreferences updates per-user disabled MCP server preferences in
 // KV so same-origin URL edits (such as adding or removing a query string) keep
-// users' existing provider toggles pointing at the edited server.
-func (a *API) remapMCPUserPreferences(c *gin.Context, remaps map[string]string) {
+// users' existing provider toggles pointing at the edited server. It resolves
+// each edited server's latest saved URL from configStore so concurrent edits
+// (for example A->B racing with B->C) converge on the final URL.
+func (a *API) remapMCPUserPreferences(c *gin.Context, remaps []config.MCPServerURLRemap) {
 	if len(remaps) == 0 || a.pluginAPI == nil {
 		return
 	}
+	var loadServers func() ([]mcp.ServerConfig, error)
+	if a.configStore != nil {
+		loadServers = func() ([]mcp.ServerConfig, error) {
+			cfg, err := a.configStore.GetConfig()
+			if err != nil {
+				return nil, err
+			}
+			if cfg == nil {
+				return nil, nil
+			}
+			return cfg.MCP.Servers, nil
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), mcpSignInClearTimeout)
 	defer cancel()
-	updated, err := mcp.RemapUserPreferencesOrigins(ctx, &a.pluginAPI.KV, remaps)
+	updated, err := mcp.RemapUserPreferencesConverging(ctx, &a.pluginAPI.KV, remaps, loadServers)
 	if err != nil {
 		a.pluginAPI.Log.Warn("Failed to remap per-user MCP provider preferences after server URL change", "updated", updated, "error", err)
 		return

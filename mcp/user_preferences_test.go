@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,6 +120,124 @@ func TestRemapUserPreferencesOrigins(t *testing.T) {
 				require.NoError(t, json.Unmarshal(raw, &got))
 				require.Equal(t, wantDisabled, got.DisabledServers)
 			}
+		})
+	}
+}
+
+type hookAtomicKV struct {
+	*atomicMockKVService
+	beforeWrite func()
+}
+
+func (h *hookAtomicKV) SetAtomicWithRetries(key string, valueFunc func(oldValue []byte) (any, error)) error {
+	if h.beforeWrite != nil {
+		h.beforeWrite()
+	}
+	return h.atomicMockKVService.SetAtomicWithRetries(key, valueFunc)
+}
+
+func TestRemapUserPreferencesConvergingConcurrentEdits(t *testing.T) {
+	const (
+		serverID = "atl-id"
+		urlA     = "https://mcp.atlassian.com/v2/mcp"
+		urlB     = "https://mcp.atlassian.com/v2/mcp?tools=basic"
+		urlC     = "https://mcp.atlassian.com/v2/mcp?tools=all"
+		urlOther = "https://other.atlassian.com/v2/mcp"
+	)
+
+	tests := []struct {
+		name string
+		run  func(t *testing.T, kv *atomicMockKVService)
+		want []string
+	}{
+		{
+			name: "out-of-order sweeps: B->C runs before A->B and converges to C",
+			run: func(t *testing.T, kv *atomicMockKVService) {
+				latest := []ServerConfig{{ID: serverID, Name: "Atlassian", BaseURL: urlC}}
+				load := func() ([]ServerConfig, error) { return latest, nil }
+
+				// B->C sweeps first while KV still has A: no-op.
+				updatedBC, err := RemapUserPreferencesConverging(context.Background(), kv,
+					[]config.MCPServerURLRemap{{ServerID: serverID, ServerName: "Atlassian", OldURL: urlB, NewURL: urlC}}, load)
+				require.NoError(t, err)
+				require.Equal(t, 0, updatedBC)
+
+				// A->B runs afterwards, sees latest saved URL is C, and remaps A directly to C.
+				updatedAB, err := RemapUserPreferencesConverging(context.Background(), kv,
+					[]config.MCPServerURLRemap{{ServerID: serverID, ServerName: "Atlassian", OldURL: urlA, NewURL: urlB}}, load)
+				require.NoError(t, err)
+				require.Equal(t, 1, updatedAB)
+			},
+			want: []string{urlC},
+		},
+		{
+			name: "mid-flight advance: B->C commits and sweeps after A->B resolved B but before A->B writes B",
+			run: func(t *testing.T, kv *atomicMockKVService) {
+				var mu sync.Mutex
+				currentURL := urlB
+				load := func() ([]ServerConfig, error) {
+					mu.Lock()
+					defer mu.Unlock()
+					return []ServerConfig{{ID: serverID, Name: "Atlassian", BaseURL: currentURL}}, nil
+				}
+
+				advancedOnce := false
+				hookedKV := &hookAtomicKV{
+					atomicMockKVService: kv,
+					beforeWrite: func() {
+						mu.Lock()
+						if advancedOnce {
+							mu.Unlock()
+							return
+						}
+						advancedOnce = true
+						// Simulate concurrent B->C committing C and running its sweep
+						// while A->B has already resolved B and is about to write B.
+						currentURL = urlC
+						mu.Unlock()
+
+						updatedBC, err := RemapUserPreferencesConverging(context.Background(), kv,
+							[]config.MCPServerURLRemap{{ServerID: serverID, ServerName: "Atlassian", OldURL: urlB, NewURL: urlC}}, load)
+						require.NoError(t, err)
+						require.Equal(t, 0, updatedBC)
+					},
+				}
+
+				updatedAB, err := RemapUserPreferencesConverging(context.Background(), hookedKV,
+					[]config.MCPServerURLRemap{{ServerID: serverID, ServerName: "Atlassian", OldURL: urlA, NewURL: urlB}}, load)
+				require.NoError(t, err)
+				// Pass 1 writes B, post-write check observes C != B, pass 2 writes C.
+				require.Equal(t, 2, updatedAB)
+			},
+			want: []string{urlC},
+		},
+		{
+			name: "concurrent cross-origin host move stops remapping",
+			run: func(t *testing.T, kv *atomicMockKVService) {
+				load := func() ([]ServerConfig, error) {
+					return []ServerConfig{{ID: serverID, Name: "Atlassian", BaseURL: urlOther}}, nil
+				}
+				updated, err := RemapUserPreferencesConverging(context.Background(), kv,
+					[]config.MCPServerURLRemap{{ServerID: serverID, ServerName: "Atlassian", OldURL: urlA, NewURL: urlB}}, load)
+				require.NoError(t, err)
+				require.Equal(t, 0, updated)
+			},
+			want: []string{urlA},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := &atomicMockKVService{mockKVService: newMockKVService()}
+			_, err := kv.Set(userPreferencesKVKey("bob"), UserToolProviderPreferences{DisabledServers: []string{urlA}})
+			require.NoError(t, err)
+
+			tt.run(t, kv)
+
+			raw := kv.store[userPreferencesKVKey("bob")]
+			var got UserToolProviderPreferences
+			require.NoError(t, json.Unmarshal(raw, &got))
+			require.Equal(t, tt.want, got.DisabledServers)
 		})
 	}
 }

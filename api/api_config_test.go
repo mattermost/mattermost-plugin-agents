@@ -28,9 +28,10 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	cfg     *config.Config
-	getErr  error
-	saveErr error
+	cfg        *config.Config
+	getErr     error
+	saveErr    error
+	agentStore *mockAgentStore
 
 	// serviceIDMigrationDone mirrors the store's migration marker driving the
 	// post-migration UUID format rejection in UpdateConfig.
@@ -57,7 +58,8 @@ func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 	if s.getErr != nil {
 		return config.Config{}, s.getErr
 	}
-	next, err := transform(s.cfg)
+	prev := s.cfg
+	next, err := transform(prev)
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -65,6 +67,13 @@ func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 		for i := range next.Services {
 			if len(next.Services[i].ID) == 36 {
 				return next, store.ErrLegacyUUIDServiceID
+			}
+		}
+	}
+	if s.agentStore != nil && prev != nil {
+		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
+			if _, err := s.agentStore.RemapAgentMCPServerOrigins(remaps); err != nil {
+				return config.Config{}, err
 			}
 		}
 	}

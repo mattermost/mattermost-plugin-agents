@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -204,4 +205,135 @@ func RemapUserPreferencesOrigins(ctx context.Context, kv UserPreferencesKVStore,
 		updated++
 	}
 	return updated, errors.Join(errs...)
+}
+
+const maxUserPreferencesConvergePasses = 5
+
+// RemapUserPreferencesConverging updates persisted per-user disabled-server
+// preferences for initialRemaps while converging against the latest saved
+// server URLs returned by loadServers. If a concurrent config save edits one
+// of the same servers again (for example A->B racing with B->C) before or
+// during a pass, the intermediate target is folded into the tracked old URLs
+// and another pass runs against the newest URL so preferences never stall at
+// an intermediate value.
+func RemapUserPreferencesConverging(
+	ctx context.Context,
+	kv UserPreferencesKVStore,
+	initialRemaps []config.MCPServerURLRemap,
+	loadServers func() ([]ServerConfig, error),
+) (int, error) {
+	if len(initialRemaps) == 0 || kv == nil {
+		return 0, nil
+	}
+
+	type trackedServer struct {
+		serverID   string
+		serverName string
+		originRef  string
+		oldNorms   map[string]struct{}
+		targetURL  string
+	}
+
+	tracked := make([]*trackedServer, 0, len(initialRemaps))
+	for _, r := range initialRemaps {
+		oldNorm := llm.NormalizeMCPServerOrigin(r.OldURL)
+		if oldNorm == "" || r.NewURL == "" {
+			continue
+		}
+		tracked = append(tracked, &trackedServer{
+			serverID:   r.ServerID,
+			serverName: r.ServerName,
+			originRef:  r.OldURL,
+			oldNorms:   map[string]struct{}{oldNorm: {}},
+			targetURL:  r.NewURL,
+		})
+	}
+	if len(tracked) == 0 {
+		return 0, nil
+	}
+
+	resolveLatest := func() (bool, error) {
+		if loadServers == nil {
+			return false, nil
+		}
+		servers, err := loadServers()
+		if err != nil {
+			return false, fmt.Errorf("failed to load current MCP servers for preference remap: %w", err)
+		}
+		byID := make(map[string]ServerConfig, len(servers))
+		byName := make(map[string]ServerConfig, len(servers))
+		for _, s := range servers {
+			if s.ID != "" {
+				byID[s.ID] = s
+			}
+			byName[s.Name] = s
+		}
+
+		advanced := false
+		for _, t := range tracked {
+			if t.targetURL == "" {
+				continue
+			}
+			var (
+				cur ServerConfig
+				ok  bool
+			)
+			if t.serverID != "" {
+				cur, ok = byID[t.serverID]
+			} else {
+				cur, ok = byName[t.serverName]
+			}
+			if !ok || cur.BaseURL == "" || originChanged(t.originRef, cur.BaseURL) {
+				t.targetURL = ""
+				continue
+			}
+			if cur.BaseURL != t.targetURL {
+				if prevNorm := llm.NormalizeMCPServerOrigin(t.targetURL); prevNorm != "" {
+					t.oldNorms[prevNorm] = struct{}{}
+				}
+				t.targetURL = cur.BaseURL
+				advanced = true
+			}
+		}
+		return advanced, nil
+	}
+
+	if _, err := resolveLatest(); err != nil {
+		return 0, err
+	}
+
+	totalUpdated := 0
+	for range maxUserPreferencesConvergePasses {
+		active := make(map[string]string)
+		for _, t := range tracked {
+			if t.targetURL == "" {
+				continue
+			}
+			for oldNorm := range t.oldNorms {
+				active[oldNorm] = t.targetURL
+			}
+		}
+		if len(active) == 0 {
+			break
+		}
+
+		n, err := RemapUserPreferencesOrigins(ctx, kv, active)
+		totalUpdated += n
+		if err != nil {
+			return totalUpdated, err
+		}
+
+		if loadServers == nil {
+			break
+		}
+		advanced, err := resolveLatest()
+		if err != nil {
+			return totalUpdated, err
+		}
+		if !advanced {
+			break
+		}
+	}
+
+	return totalUpdated, nil
 }

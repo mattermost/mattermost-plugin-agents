@@ -134,10 +134,6 @@ type AgentStore interface {
 	DeleteAgentVersions(agentID string, versions []int) (int64, error)
 	// DeletePreviousAgentVersions deletes every version but the current one.
 	DeletePreviousAgentVersions(agentID string) (int64, error)
-	// RemapAgentMCPServerOrigins rewrites EnabledMCPTools entries on active
-	// agents whose normalized ServerOrigin appears in remaps, returning the
-	// IDs of updated agents.
-	RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.

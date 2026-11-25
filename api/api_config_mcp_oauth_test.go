@@ -653,7 +653,8 @@ func TestMCPServerQueryEditEndToEndThroughAdminConfigSave(t *testing.T) {
 					},
 				},
 			}
-			cfgStore := &testConfigStore{cfg: &initialCfg}
+			agentStore := newMockAgentStore()
+			cfgStore := &testConfigStore{cfg: &initialCfg, agentStore: agentStore}
 			cfgContainer := &config.Container{}
 			cfgContainer.Update(&initialCfg)
 
@@ -673,7 +674,6 @@ func TestMCPServerQueryEditEndToEndThroughAdminConfigSave(t *testing.T) {
 				clientManager.ReInit(cfgContainer.MCP(), nil)
 			})
 
-			agentStore := newMockAgentStore()
 			agent := &llm.BotConfig{
 				BotUserID:             "bot-user-1",
 				CreatorID:             aliceID,
