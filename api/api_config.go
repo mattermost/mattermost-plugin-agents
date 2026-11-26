@@ -287,7 +287,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	notifyErr := a.clusterNotifier.PublishConfigUpdate()
 
 	if len(urlRemaps) > 0 {
-		a.refreshRemappedMCPAgents(urlRemaps)
+		a.refreshRemappedMCPAgents(urlRemaps, notifyErr == nil)
 	}
 
 	// Remove saved sign-ins the change orphaned or that were issued for a
@@ -308,10 +308,12 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 }
 
 // refreshRemappedMCPAgents refreshes each active DB agent whose EnabledMCPTools
-// now references a remapped MCP server URL, locally via RefreshAgent and across
-// HA peers via PublishAgentUpdate(agentID), so a failing unrelated agent in
-// EnsureBots cannot leave remapped allowlists stale.
-func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap) {
+// now references a remapped MCP server URL, locally via RefreshAgent and (when
+// publishPeers is true) across HA peers via PublishAgentUpdate(agentID), so a
+// failing unrelated agent in EnsureBots cannot leave remapped allowlists stale.
+// Peer notification is skipped when PublishConfigUpdate failed so peers do not
+// reload remapped allowlists against a stale in-memory MCP config.
+func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap, publishPeers bool) {
 	newOrigins := make(map[string]struct{}, len(remaps))
 	for _, r := range remaps {
 		if norm := llm.NormalizeMCPServerOrigin(r.NewURL); norm != "" {
@@ -361,7 +363,7 @@ func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap) {
 		}
 	}
 
-	if a.clusterAgentNotifier != nil {
+	if publishPeers && a.clusterAgentNotifier != nil {
 		for _, id := range affectedIDs {
 			if err := a.clusterAgentNotifier.PublishAgentUpdate(id); err != nil && a.pluginAPI != nil {
 				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "agent_id", id, "error", err)

@@ -180,6 +180,13 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		}
 	}()
 
+	// Share-lock against exclusive config-save transactions (UpdateConfig) so
+	// concurrent agent writes never block each other, while a config save that
+	// remaps MCP server origins never misses a newly created agent.
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock_shared($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return fmt.Errorf("failed to lock agent create transaction: %w", err)
+	}
+
 	_, err = tx.Exec(
 		`INSERT INTO Agents_UserAgents (
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
@@ -336,6 +343,13 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 			_ = tx.Rollback()
 		}
 	}()
+
+	// Share-lock before acquiring the agent row lock (same lock order as
+	// UpdateConfig) so concurrent agent updates run in parallel while a
+	// config save remapping MCP server origins cannot miss an edit.
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock_shared($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return fmt.Errorf("failed to lock agent update transaction: %w", err)
+	}
 
 	current, err := lockActiveAgentTx(tx, cfg.ID)
 	if err != nil {
@@ -496,6 +510,10 @@ func (s *Store) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, 
 		}
 	}()
 
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return nil, fmt.Errorf("failed to lock agent MCP origin remap transaction: %w", err)
+	}
+
 	updatedIDs, err := s.remapAgentMCPServerOriginsInTx(tx, remaps, s.agentVersionsToKeep.Load())
 	if err != nil {
 		return nil, err
@@ -507,9 +525,10 @@ func (s *Store) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, 
 }
 
 // remapAgentMCPServerOriginsInTx locks and updates every active agent matching
-// remaps inside the caller's transaction (ascending ID order to prevent lock
-// cycles), pruning history against versionsToKeep. Any error fails the caller's
-// transaction so config and agent state never diverge.
+// remaps inside the caller's transaction (ascending ID order with FOR UPDATE
+// under the exclusive config save advisory lock), pruning history against
+// versionsToKeep. Any error fails the caller's transaction so config and agent
+// state never diverge.
 func (s *Store) remapAgentMCPServerOriginsInTx(tx *sqlx.Tx, remaps map[string]string, versionsToKeep int64) ([]string, error) {
 	if len(remaps) == 0 {
 		return nil, nil
@@ -520,27 +539,17 @@ func (s *Store) remapAgentMCPServerOriginsInTx(tx *sqlx.Tx, remaps map[string]st
 		`SELECT `+agentSelectColumns+`
 		FROM Agents_UserAgents
 		WHERE DeleteAt = 0
-		ORDER BY ID ASC`,
+		ORDER BY ID ASC
+		FOR UPDATE`,
 	); err != nil {
 		return nil, fmt.Errorf("failed to list agents for MCP origin remap: %w", err)
 	}
 
 	var updatedIDs []string
 	for i := range rows {
-		candidate, parseErr := rows[i].toBotConfig()
+		current, parseErr := rows[i].toBotConfig()
 		if parseErr != nil {
 			return nil, parseErr
-		}
-		if _, changed := llm.RemapEnabledMCPTools(candidate.EnabledMCPTools, remaps); !changed {
-			continue
-		}
-
-		current, err := lockActiveAgentTx(tx, candidate.ID)
-		if err != nil {
-			return nil, err
-		}
-		if current == nil {
-			continue
 		}
 
 		remapped, changed := llm.RemapEnabledMCPTools(current.EnabledMCPTools, remaps)
