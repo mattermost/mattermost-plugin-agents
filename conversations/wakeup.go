@@ -522,6 +522,8 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	policy, err := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: user, channel: channel, conv: conv, post: post})
 	_, isLicenseErr := errors.AsType[*enterprise.LicenseError](err)
 	switch {
+	case errors.Is(err, conversation.ErrRootPostDeleted):
+		return c.dropWake("root post deleted", nil, "conversation_id", conv.ID)
 	case errors.Is(err, bots.ErrUsageRestriction), errors.Is(err, ErrAnalysisSourceUnavailable), isLicenseErr:
 		return c.dropWake("turn not allowed", err, "user_id", user.Id, "bot_id", bot.GetMMBot().UserId, "channel_id", channel.Id)
 	case err != nil:

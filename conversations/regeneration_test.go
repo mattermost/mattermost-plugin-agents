@@ -587,7 +587,7 @@ func TestHandleRegenerate(t *testing.T) {
 				mmClient:         mm,
 				bots:             botsService,
 				contextBuilder:   builder,
-				convService:      conversation.NewService(convStore, nil, nil, nil),
+				convService:      conversation.NewService(convStore, nil, mm, nil),
 				streamingService: streamSvc,
 				licenseChecker:   enterprisetest.CheckerAt(licenseLevel),
 				configProvider:   &channelFollowUpTestConfig{},
@@ -828,7 +828,7 @@ func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
 		mmClient:         mm,
 		bots:             botsService,
 		contextBuilder:   loadedStateBuilder(t, blockingTool, regenChannelTool("get_channel_info", new(string))),
-		convService:      conversation.NewService(convStore, nil, nil, nil),
+		convService:      conversation.NewService(convStore, nil, mm, nil),
 		streamingService: &stoppedStreaming{stopAfter: toolStarted},
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelEnterprise),
 		configProvider:   &channelFollowUpTestConfig{},
@@ -863,4 +863,12 @@ func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
 	_, reserved = held[reservationKey]
 	kvMu.Unlock()
 	require.False(t, reserved)
+}
+
+type internalLivePostClient struct {
+	mmapi.Client
+}
+
+func (internalLivePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
 }

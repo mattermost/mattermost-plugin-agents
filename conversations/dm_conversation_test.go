@@ -822,6 +822,7 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 
 	// Pre-create a conversation
 	rootPostID := "root1"
+	env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 	channelID := env.channelID
 	createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
 		UserID:       env.userID,
@@ -1287,6 +1288,7 @@ func TestDMConversationIDProp_ReturnedForResponsePost(t *testing.T) {
 					UserMessage:  "first",
 				})
 				require.NoError(t, err)
+				env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 				return rootPostID
 			},
 		},
@@ -1367,6 +1369,7 @@ func TestDMTitleGeneration_IsNewFlagForCaller(t *testing.T) {
 					UserMessage:  "first",
 				})
 				require.NoError(t, err)
+				env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 				return &model.Post{
 					Id:        "post2",
 					UserId:    env.userID,
@@ -1474,6 +1477,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 
 	// Pre-create conversation with known content
 	rootPostID := "root1"
+	env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 	channelID := env.channelID
 	createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
 		UserID:       env.userID,

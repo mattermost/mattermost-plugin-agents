@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -115,8 +116,16 @@ func setupTest(t *testing.T) testSetup {
 	require.NoError(t, err)
 
 	bots := &testBotLookup{botUserIDs: map[string]bool{}}
-	svc := conversation.NewService(s, p, nil, bots)
+	svc := conversation.NewService(s, p, livePostClient{}, bots)
 	return testSetup{convService: svc, store: s, prompts: p}
+}
+
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
 }
 
 // setupMockThread sets up a mock client that returns thread data for a given post ID.
