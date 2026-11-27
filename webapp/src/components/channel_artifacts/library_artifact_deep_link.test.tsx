@@ -200,6 +200,46 @@ describe('LibraryArtifactDeepLink', () => {
         expect(getChannelArtifact).toHaveBeenCalledWith(artifactId);
     });
 
+    test('clicking the bookmark of the artifact that is already open leaves no query behind', async () => {
+        const listeners: Array<(location: {search?: string}) => void> = [];
+        const previous = window.WebappUtils;
+        window.WebappUtils = {
+            browserHistory: {
+                listen: (cb: (location: {search?: string}) => void) => {
+                    listeners.push(cb);
+                    return () => {
+                        const index = listeners.indexOf(cb);
+                        if (index >= 0) {
+                            listeners.splice(index, 1);
+                        }
+                    };
+                },
+                replace: (next: string) => window.history.replaceState({}, '', next),
+            },
+        };
+        jest.mocked(getChannelArtifact).mockResolvedValue(entry);
+        try {
+            const store = renderLink();
+            act(() => {
+                store.dispatch({type: 'SET_CHANNEL_ARTIFACTS_ENABLED', channelArtifactsEnabled: true});
+                store.dispatch({type: 'SET_CHANNEL', id: channelId});
+            });
+            await screen.findByTestId('html-artifact-fullscreen');
+            await waitFor(() => expect(window.location.search).not.toContain('mm_ai_library_artifact'));
+
+            window.history.replaceState({}, '', `/test/channels/off-topic?mm_ai_library_artifact=${artifactId}`);
+            act(() => {
+                listeners.forEach((listener) => listener({search: `?mm_ai_library_artifact=${artifactId}`}));
+            });
+
+            expect(window.location.search).not.toContain('mm_ai_library_artifact');
+            expect(screen.getByTestId('html-artifact-fullscreen')).toBeTruthy();
+            expect(getChannelArtifact).toHaveBeenCalledTimes(1);
+        } finally {
+            window.WebappUtils = previous;
+        }
+    });
+
     test('opens the same library link again after the feature flag request recovers', async () => {
         const listeners: Array<(location: {search?: string}) => void> = [];
         const previous = window.WebappUtils;

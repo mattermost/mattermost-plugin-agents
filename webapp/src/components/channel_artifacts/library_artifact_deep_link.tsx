@@ -154,7 +154,14 @@ const LibraryArtifactDeepLink = () => {
                 openingRef.current = null;
                 return;
             }
-            if (openedIdsRef.current.has(id) || openingRef.current === id) {
+            if (openedIdsRef.current.has(id)) {
+                // Clicking the bookmark of the artifact that is already open: the
+                // viewer stays, and the query must not outlive it or a refresh
+                // would reopen what the user closed.
+                stripQuery();
+                return;
+            }
+            if (openingRef.current === id) {
                 return;
             }
             tryOpen(search);
@@ -181,7 +188,7 @@ const LibraryArtifactDeepLink = () => {
             unlisten?.();
             window.removeEventListener('popstate', onPop);
         };
-    }, [tryOpen, openSeq]);
+    }, [tryOpen, openSeq, stripQuery]);
 
     return (
         <>
