@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // ErrDuplicateMCPServer reports a remote MCP server list that reuses a name or
@@ -125,6 +127,107 @@ func CanonicalMCPEndpointURL(raw string) string {
 
 func isDefaultPortForScheme(scheme, port string) bool {
 	return (scheme == "http" && port == "80") || (scheme == "https" && port == "443")
+}
+
+// MCPServerURLRemap describes a remote MCP server whose BaseURL changed
+// across a configuration save while keeping its identity and origin
+// (scheme, host, port).
+type MCPServerURLRemap struct {
+	ServerID   string
+	ServerName string
+	OldURL     string
+	NewURL     string
+}
+
+func canonicalMCPOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		default:
+			return ""
+		}
+	}
+	return scheme + "://" + u.Hostname() + ":" + port
+}
+
+// MCPServerOriginChanged reports whether two remote MCP server URLs point at
+// different origins (scheme, host, port). URLs whose origin cannot be
+// determined count as changed unless identical.
+func MCPServerOriginChanged(before, after string) bool {
+	a := strings.ToLower(canonicalMCPOrigin(before))
+	b := strings.ToLower(canonicalMCPOrigin(after))
+	if a == "" || b == "" {
+		return before != after
+	}
+	return a != b
+}
+
+// MCPServerURLRemaps returns same-origin URL edits for remote MCP servers
+// matched by stable ID (or by name for legacy ID-less entries).
+func MCPServerURLRemaps(prev, next []MCPServerConfig) []MCPServerURLRemap {
+	nextByID := make(map[string]int, len(next))
+	nextByName := make(map[string]int, len(next))
+	for i, s := range next {
+		if s.ID != "" {
+			nextByID[s.ID] = i
+		}
+		nextByName[s.Name] = i
+	}
+
+	var remaps []MCPServerURLRemap
+	for _, old := range prev {
+		lookup, key := nextByID, old.ID
+		if old.ID == "" {
+			lookup, key = nextByName, old.Name
+		}
+		i, kept := lookup[key]
+		if !kept {
+			continue
+		}
+		updated := next[i]
+		if old.BaseURL == "" || updated.BaseURL == "" || old.BaseURL == updated.BaseURL {
+			continue
+		}
+		if MCPServerOriginChanged(old.BaseURL, updated.BaseURL) {
+			continue
+		}
+		remaps = append(remaps, MCPServerURLRemap{
+			ServerID:   updated.ID,
+			ServerName: updated.Name,
+			OldURL:     old.BaseURL,
+			NewURL:     updated.BaseURL,
+		})
+	}
+	return remaps
+}
+
+// MCPServerURLRemapMap converts remaps into a lookup from
+// llm.NormalizeMCPServerOrigin(OldURL) to NewURL.
+func MCPServerURLRemapMap(remaps []MCPServerURLRemap) map[string]string {
+	if len(remaps) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(remaps))
+	for _, r := range remaps {
+		oldNorm := llm.NormalizeMCPServerOrigin(r.OldURL)
+		if oldNorm == "" {
+			continue
+		}
+		out[oldNorm] = r.NewURL
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ServerConflicts returns every remote MCP server entry that collides with

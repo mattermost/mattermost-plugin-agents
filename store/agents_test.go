@@ -5,8 +5,10 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -526,4 +528,255 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)
 	assert.GreaterOrEqual(t, fetched.UpdateAt, originalCreateAt)
+}
+
+func TestRemapAgentMCPServerOrigins(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	const (
+		oldURL   = "https://mcp.atlassian.com/v2/mcp"
+		newURL   = "https://mcp.atlassian.com/v2/mcp?tools=all"
+		otherURL = "https://github.example.com/mcp"
+	)
+
+	matching := testAgent("creator-1", "match", "Matching")
+	matching.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: oldURL, ToolName: "getJiraIssue"},
+		{ServerOrigin: otherURL, ToolName: "list_prs"},
+	}
+	require.NoError(t, s.CreateAgent(matching, SystemAgentVersionMeta()))
+
+	untouched := testAgent("creator-1", "keep", "Untouched")
+	untouched.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: otherURL, ToolName: "list_prs"},
+	}
+	require.NoError(t, s.CreateAgent(untouched, SystemAgentVersionMeta()))
+
+	deleted := testAgent("creator-1", "del", "Deleted")
+	deleted.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: oldURL, ToolName: "getJiraIssue"},
+	}
+	require.NoError(t, s.CreateAgent(deleted, SystemAgentVersionMeta()))
+	require.NoError(t, s.DeleteAgent(deleted.ID))
+
+	updatedIDs, err := s.RemapAgentMCPServerOrigins(map[string]string{oldURL: newURL})
+	require.NoError(t, err)
+	assert.Equal(t, []string{matching.ID}, updatedIDs)
+
+	gotMatching, err := s.GetAgent(matching.ID)
+	require.NoError(t, err)
+	require.Equal(t, []llm.EnabledMCPTool{
+		{ServerOrigin: newURL, ToolName: "getJiraIssue"},
+		{ServerOrigin: otherURL, ToolName: "list_prs"},
+	}, gotMatching.EnabledMCPTools)
+
+	// Remapping records a system version for the updated agent only.
+	matchingVersions, err := s.ListAgentVersions(matching.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, matchingVersions.Versions, 2)
+	assert.Equal(t, AgentVersionSourceSystem, matchingVersions.Versions[0].Source)
+
+	untouchedVersions, err := s.ListAgentVersions(untouched.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, untouchedVersions.Versions, 1)
+}
+
+func TestUpdateConfigRemapsAgentsAtomicallyAndRollsBackOnError(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	const (
+		serverID = "atlassian-server-id"
+		oldURL   = "https://mcp.atlassian.com/v2/mcp"
+		newURL   = "https://mcp.atlassian.com/v2/mcp?tools=all"
+	)
+
+	require.NoError(t, s.SaveConfig(config.Config{
+		MCP: config.MCPConfig{
+			Enabled: true,
+			Servers: []config.MCPServerConfig{{ID: serverID, Name: "Atlassian", Enabled: true, BaseURL: oldURL}},
+		},
+	}))
+
+	a1 := testAgent("creator-1", "a1", "Agent 1")
+	a1.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: oldURL, ToolName: "getJiraIssue"}}
+	require.NoError(t, s.CreateAgent(a1, SystemAgentVersionMeta()))
+
+	a2 := testAgent("creator-1", "a2", "Agent 2")
+	a2.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: oldURL, ToolName: "search"}}
+	require.NoError(t, s.CreateAgent(a2, SystemAgentVersionMeta()))
+
+	// Fail the second agent in ascending ID order so the first agent updates
+	// before the failure triggers rollback of the entire UpdateConfig tx.
+	orderedIDs := []string{a1.ID, a2.ID}
+	slices.Sort(orderedIDs)
+	failingID := orderedIDs[1]
+
+	_, err := s.db.Exec(fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION fail_remap_agent() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.ID = '%s' THEN
+				RAISE EXCEPTION 'simulated agent remap failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER trg_fail_remap_agent
+		BEFORE UPDATE ON Agents_UserAgents
+		FOR EACH ROW EXECUTE FUNCTION fail_remap_agent();
+	`, failingID))
+	require.NoError(t, err)
+
+	_, err = s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		next := *prev.Clone()
+		next.MCP.Servers[0].BaseURL = newURL
+		return next, nil
+	})
+	require.Error(t, err)
+
+	// Both the config change and the first agent's update must have rolled back.
+	gotCfg, err := s.GetConfig()
+	require.NoError(t, err)
+	require.Equal(t, oldURL, gotCfg.MCP.Servers[0].BaseURL, "config must roll back when agent remap fails")
+
+	for _, id := range orderedIDs {
+		gotAgent, getErr := s.GetAgent(id)
+		require.NoError(t, getErr)
+		require.Equal(t, oldURL, gotAgent.EnabledMCPTools[0].ServerOrigin, "agent %s must roll back", id)
+		versions, verErr := s.ListAgentVersions(id, 0, 10)
+		require.NoError(t, verErr)
+		require.Len(t, versions.Versions, 1)
+	}
+
+	// Dropping the fault and retrying succeeds atomically for config + both agents.
+	_, err = s.db.Exec(`DROP TRIGGER trg_fail_remap_agent ON Agents_UserAgents; DROP FUNCTION fail_remap_agent();`)
+	require.NoError(t, err)
+
+	outcome, err := s.UpdateConfigWithOutcome(func(prev *config.Config) (config.Config, error) {
+		next := *prev.Clone()
+		next.MCP.Servers[0].BaseURL = newURL
+		return next, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, orderedIDs, outcome.RemappedAgentIDs)
+
+	gotCfg, err = s.GetConfig()
+	require.NoError(t, err)
+	require.Equal(t, newURL, gotCfg.MCP.Servers[0].BaseURL)
+	for _, id := range orderedIDs {
+		gotAgent, getErr := s.GetAgent(id)
+		require.NoError(t, getErr)
+		require.Equal(t, newURL, gotAgent.EnabledMCPTools[0].ServerOrigin)
+		versions, verErr := s.ListAgentVersions(id, 0, 10)
+		require.NoError(t, verErr)
+		require.Len(t, versions.Versions, 2)
+		assert.Equal(t, AgentVersionSourceSystem, versions.Versions[0].Source)
+	}
+}
+
+func TestUpdateConfigConcurrentSameOriginURLRemapsConverge(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	const (
+		serverID = "atlassian-server-id"
+		urlA     = "https://mcp.atlassian.com/v2/mcp"
+		urlB     = "https://mcp.atlassian.com/v2/mcp?tools=basic"
+		urlC     = "https://mcp.atlassian.com/v2/mcp?tools=all"
+	)
+
+	require.NoError(t, s.SaveConfig(config.Config{
+		MCP: config.MCPConfig{
+			Enabled: true,
+			Servers: []config.MCPServerConfig{{ID: serverID, Name: "Atlassian", Enabled: true, BaseURL: urlA}},
+		},
+	}))
+
+	agent := testAgent("creator-1", "conc", "Concurrent")
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: urlA, ToolName: "getJiraIssue"}}
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+
+	// Hold writer 1 inside its transaction (after acquiring pg_advisory_xact_lock)
+	// while writer 2 starts, proving the advisory lock serializes A->B and B->C
+	// so the agent can never end up out of sync with the final active config.
+	writer1Entered := make(chan struct{})
+	releaseWriter1 := make(chan struct{})
+	errCh := make(chan error, 2)
+
+	go func() {
+		_, err := s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+			close(writer1Entered)
+			<-releaseWriter1
+			next := *prev.Clone()
+			next.MCP.Servers[0].BaseURL = urlB
+			return next, nil
+		})
+		errCh <- err
+	}()
+
+	<-writer1Entered
+
+	go func() {
+		_, err := s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+			next := *prev.Clone()
+			next.MCP.Servers[0].BaseURL = urlC
+			return next, nil
+		})
+		errCh <- err
+	}()
+
+	close(releaseWriter1)
+	require.NoError(t, <-errCh)
+	require.NoError(t, <-errCh)
+
+	finalCfg, err := s.GetConfig()
+	require.NoError(t, err)
+	require.Equal(t, urlC, finalCfg.MCP.Servers[0].BaseURL)
+
+	finalAgent, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.Equal(t, []llm.EnabledMCPTool{{ServerOrigin: urlC, ToolName: "getJiraIssue"}}, finalAgent.EnabledMCPTools)
+}
+
+func TestUpdateConfigRemapUsesSavedAgentVersionsToKeep(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	const (
+		serverID = "atlassian-server-id"
+		oldURL   = "https://mcp.atlassian.com/v2/mcp"
+		newURL   = "https://mcp.atlassian.com/v2/mcp?tools=all"
+	)
+
+	// Store currently enforces keep=2, and the agent already has 2 versions.
+	s.SetAgentVersionsToKeep(2)
+	require.NoError(t, s.SaveConfig(config.Config{
+		AgentVersionsToKeep: 2,
+		MCP: config.MCPConfig{
+			Enabled: true,
+			Servers: []config.MCPServerConfig{{ID: serverID, Name: "Atlassian", Enabled: true, BaseURL: oldURL}},
+		},
+	}))
+
+	agent := testAgent("creator-1", "ret", "Retention")
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: oldURL, ToolName: "getJiraIssue"}}
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+	agent.DisplayName = "Retention v2"
+	require.NoError(t, s.UpdateAgent(agent, SystemAgentVersionMeta()))
+
+	// Admin saves both the URL change AND AgentVersionsToKeep=0 (keep all).
+	// The remap's version write must honor the newly saved 0 limit rather than
+	// pruning version 1 using the stale in-memory limit of 2.
+	_, err := s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		next := *prev.Clone()
+		next.AgentVersionsToKeep = 0
+		next.MCP.Servers[0].BaseURL = newURL
+		return next, nil
+	})
+	require.NoError(t, err)
+
+	versions, err := s.ListAgentVersions(agent.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, versions.Versions, 3, "version 1 must be preserved when the same save sets AgentVersionsToKeep=0")
 }

@@ -45,7 +45,7 @@ These changes remove every user's saved sign-in for the server, and Mattermost w
 - Moving it to another host, meaning a different scheme, host, or port. Its tool policies are cleared too.
 - Changing the OAuth client ID.
 
-Deleting a server also removes its sign-ins. Changing only the URL's path, the client secret, headers, service account headers, OAuth authorization parameters, the description, or whether the server is enabled doesn't affect sign-ins. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
+Deleting a server also removes its sign-ins. Changing only the URL's path or query, the client secret, headers, service account headers, OAuth authorization parameters, the description, or whether the server is enabled doesn't affect sign-ins. Same-origin URL edits also keep existing agent tool grants and per-user provider preferences. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
 
 Automation must read the configuration with `GET /plugins/mattermost-ai/admin/config` and send it back with `PUT`, keeping each server's `id`. A server sent without its `id` is treated as deleted and added again, which removes its users' saved sign-ins.
 

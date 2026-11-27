@@ -28,9 +28,10 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	cfg     *config.Config
-	getErr  error
-	saveErr error
+	cfg        *config.Config
+	getErr     error
+	saveErr    error
+	agentStore *mockAgentStore
 
 	// serviceIDMigrationDone mirrors the store's migration marker driving the
 	// post-migration UUID format rejection in UpdateConfig.
@@ -54,24 +55,39 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 }
 
 func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	outcome, err := s.UpdateConfigWithOutcome(transform)
+	return outcome.Config, err
+}
+
+func (s *testConfigStore) UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error) {
 	if s.getErr != nil {
-		return config.Config{}, s.getErr
+		return store.ConfigUpdateOutcome{}, s.getErr
 	}
-	next, err := transform(s.cfg)
+	prev := s.cfg
+	next, err := transform(prev)
 	if err != nil {
-		return config.Config{}, err
+		return store.ConfigUpdateOutcome{}, err
 	}
 	if s.serviceIDMigrationDone {
 		for i := range next.Services {
 			if len(next.Services[i].ID) == 36 {
-				return next, store.ErrLegacyUUIDServiceID
+				return store.ConfigUpdateOutcome{Config: next}, store.ErrLegacyUUIDServiceID
+			}
+		}
+	}
+	var remappedAgentIDs []string
+	if s.agentStore != nil && prev != nil {
+		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
+			remappedAgentIDs, err = s.agentStore.RemapAgentMCPServerOrigins(remaps)
+			if err != nil {
+				return store.ConfigUpdateOutcome{}, err
 			}
 		}
 	}
 	if err := s.SaveConfig(next); err != nil {
-		return next, err
+		return store.ConfigUpdateOutcome{Config: next}, err
 	}
-	return next, nil
+	return store.ConfigUpdateOutcome{Config: next, RemappedAgentIDs: remappedAgentIDs}, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.

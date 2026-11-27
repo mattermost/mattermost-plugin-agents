@@ -70,6 +70,16 @@ func TestOAuthStateToClear(t *testing.T) {
 			next: []ServerConfig{with(jira, func(s *ServerConfig) { s.BaseURL = "https://JIRA.example.com:443/v2/mcp/" })},
 		},
 		{
+			name: "adding a query string keeps grants",
+			prev: []ServerConfig{jira},
+			next: []ServerConfig{with(jira, func(s *ServerConfig) { s.BaseURL = "https://jira.example.com/mcp?tools=all" })},
+		},
+		{
+			name: "removing a query string keeps grants",
+			prev: []ServerConfig{with(jira, func(s *ServerConfig) { s.BaseURL = "https://jira.example.com/mcp?tools=all" })},
+			next: []ServerConfig{jira},
+		},
+		{
 			name: "a new server clears state left under its name",
 			prev: []ServerConfig{jira},
 			next: []ServerConfig{jira, docs},
@@ -97,6 +107,72 @@ func TestOAuthStateToClear(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, OAuthStateToClear(tt.prev, tt.next))
+		})
+	}
+}
+
+func TestServerURLRemaps(t *testing.T) {
+	atlassian := ServerConfig{ID: "atl-id", Name: "Atlassian", BaseURL: "https://mcp.atlassian.com/v2/mcp"}
+	with := func(s ServerConfig, change func(*ServerConfig)) ServerConfig {
+		change(&s)
+		return s
+	}
+
+	tests := []struct {
+		name string
+		prev []ServerConfig
+		next []ServerConfig
+		want map[string]string
+	}{
+		{
+			name: "unchanged URL produces no remap",
+			prev: []ServerConfig{atlassian},
+			next: []ServerConfig{atlassian},
+		},
+		{
+			name: "adding query string remaps normalized old URL to new URL",
+			prev: []ServerConfig{atlassian},
+			next: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.BaseURL = "https://mcp.atlassian.com/v2/mcp?tools=all" })},
+			want: map[string]string{"https://mcp.atlassian.com/v2/mcp": "https://mcp.atlassian.com/v2/mcp?tools=all"},
+		},
+		{
+			name: "removing query string remaps back to query-less URL",
+			prev: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.BaseURL = "https://mcp.atlassian.com/v2/mcp?tools=all" })},
+			next: []ServerConfig{atlassian},
+			want: map[string]string{"https://mcp.atlassian.com/v2/mcp?tools=all": "https://mcp.atlassian.com/v2/mcp"},
+		},
+		{
+			name: "changing path on same origin remaps",
+			prev: []ServerConfig{atlassian},
+			next: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.BaseURL = "https://mcp.atlassian.com/v3/mcp" })},
+			want: map[string]string{"https://mcp.atlassian.com/v2/mcp": "https://mcp.atlassian.com/v3/mcp"},
+		},
+		{
+			name: "changing host does not remap",
+			prev: []ServerConfig{atlassian},
+			next: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.BaseURL = "https://other.atlassian.com/v2/mcp" })},
+		},
+		{
+			name: "changing port does not remap",
+			prev: []ServerConfig{atlassian},
+			next: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.BaseURL = "https://mcp.atlassian.com:8443/v2/mcp" })},
+		},
+		{
+			name: "deleted server produces no remap",
+			prev: []ServerConfig{atlassian},
+			next: nil,
+		},
+		{
+			name: "server saved before IDs existed remaps when matched by name",
+			prev: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.ID = "" })},
+			next: []ServerConfig{with(atlassian, func(s *ServerConfig) { s.BaseURL = "https://mcp.atlassian.com/v2/mcp?tools=all" })},
+			want: map[string]string{"https://mcp.atlassian.com/v2/mcp": "https://mcp.atlassian.com/v2/mcp?tools=all"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, ServerURLRemaps(tt.prev, tt.next))
 		})
 	}
 }
