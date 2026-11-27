@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -330,5 +331,124 @@ func TestToolApprovalClickDuringEarlierStreamIsRetryable(t *testing.T) {
 	case <-followUps:
 	case <-time.After(10 * time.Second):
 		require.Fail(t, "the retried click never streamed the follow-up")
+	}
+}
+
+// TestToolApprovalClickWhileEarlierRunReleasesThePost pins that a click sent
+// the moment the requester's client receives the pending tool_call event
+// succeeds even though the run that produced the card still holds the post
+// reserved (its tool runner has not exited yet), instead of failing with a
+// stale-click error the webapp shows as "Failed to submit tool decisions".
+func TestToolApprovalClickWhileEarlierRunReleasesThePost(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID    = "post12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+		convID    = "conv12345678901234567890ab"
+		heldKey   = "post_run_reservation_" + postID
+	)
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	var kvMu sync.Mutex
+	kv := map[string][]byte{heldKey: []byte(`"earlier-run"`)}
+	refused := make(chan struct{}, 1)
+	e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(
+		func(key string, value []byte, opts model.PluginKVSetOptions) (bool, *model.AppError) {
+			kvMu.Lock()
+			defer kvMu.Unlock()
+			current, held := kv[key]
+			if opts.Atomic && ((opts.OldValue == nil && held) || (opts.OldValue != nil && string(current) != string(opts.OldValue))) {
+				if key == heldKey {
+					select {
+					case refused <- struct{}{}:
+					default:
+					}
+				}
+				return false, nil
+			}
+			if value == nil {
+				delete(kv, key)
+			} else {
+				kv[key] = value
+			}
+			return true, nil
+		}).Maybe()
+
+	streamService := streaming.NewMMPostStreamService(mmapi.NewClient(e.client), nil)
+	e.api.streamingService = streamService
+	convStore := e.useConversations()
+	streamService.SetTurnStore(convStore)
+
+	followUps := make(chan struct{}, 4)
+	e.setBots(bots.NewBot(
+		llm.BotConfig{ID: testBotUserID, Name: "bot", UserAccessLevel: llm.UserAccessLevelAll, ChannelAccessLevel: llm.ChannelAccessLevelAll},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: testBotUserID, Username: "bot"},
+		&FakeLLM{Response: "done", OnContext: func(context.Context) { followUps <- struct{}{} }},
+	))
+	require.NoError(t, convStore.CreateConversation(&store.Conversation{ID: convID, UserID: testUserID, BotID: testBotUserID, Operation: "conversation"}))
+
+	post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+	post.AddProp(streaming.ConversationIDProp, convID)
+	e.mockAPI.On("GetPost", postID).Return(func(string) (*model.Post, *model.AppError) { return post.Clone(), nil }).Maybe()
+	e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
+		Id:   channelID,
+		Name: testBotUserID + "__" + testUserID,
+		Type: model.ChannelTypeDirect,
+	}, nil).Maybe()
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true).Maybe()
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	e.mockAPI.On("UpdatePost", mock.Anything).Return(func(p *model.Post) (*model.Post, *model.AppError) { return p.Clone(), nil }).Maybe()
+
+	var clicked atomic.Bool
+	clickStatus := make(chan int, 1)
+	e.mockAPI.On("PublishWebSocketEvent", "postupdate", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		payload, _ := args.Get(1).(map[string]any)
+		broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
+		if payload["control"] != "tool_call" || broadcast == nil || broadcast.UserId != testUserID || !clicked.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/tool_call", strings.NewReader(`{"accepted_tool_ids":["tool-use-1"]}`))
+			req.Header.Add("Mattermost-User-Id", testUserID)
+			rec := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, rec, req)
+			clickStatus <- rec.Code
+		}()
+	}).Maybe()
+
+	events := make(chan llm.TextStreamEvent, 2)
+	events <- llm.TextStreamEvent{Type: llm.EventTypeToolCallBatch, Value: llm.ToolCallBatch{
+		Phase: llm.ToolCallPhaseAwaitingDecision,
+		Calls: []llm.ToolCall{{ID: "tool-use-1", Name: "create_post", Arguments: []byte(`{}`), Status: llm.ToolCallStatusPending}},
+	}}
+	events <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+	close(events)
+	streamService.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: events}, post, "en", testUserID)
+
+	select {
+	case <-refused:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the click never reached the post reservation")
+	}
+	kvMu.Lock()
+	delete(kv, heldKey)
+	kvMu.Unlock()
+
+	select {
+	case status := <-clickStatus:
+		require.Equal(t, http.StatusOK, status)
+	case <-time.After(15 * time.Second):
+		require.Fail(t, "the click never completed")
+	}
+	select {
+	case <-followUps:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the click never streamed the follow-up")
 	}
 }
