@@ -104,8 +104,12 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 4. Privacy filtering, live-post reconciliation, and display sanitization
-	resolver := conversation.NewAnchoredPostResolver(&a.pluginAPI.Post, conv)
-	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, a.agentUsername(conv.BotID), resolver)
+	anchored, err := conversation.ResolveAnchoredPosts(conv, turns, a.postBatchGetter(), &a.pluginAPI.Post)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to resolve anchored posts: %w", err))
+		return
+	}
+	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, a.agentUsername(conv.BotID), anchored)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
@@ -195,7 +199,7 @@ func turnsToResponse(
 	turns []store.Turn,
 	filterForNonRequester bool,
 	agentUsername string,
-	resolver *conversation.AnchoredPostResolver,
+	anchored *conversation.AnchoredPosts,
 ) ([]TurnResponse, bool, error) {
 	result := make([]TurnResponse, len(turns))
 	openingTextChanged := false
@@ -207,10 +211,7 @@ func turnsToResponse(
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
 		}
-		reconciled, changed, err := conversation.ReconcileTurnForDisplay(turn, blocks, agentUsername, resolver)
-		if err != nil {
-			return nil, false, err
-		}
+		reconciled, changed := conversation.ReconcileTurnForDisplay(turn, blocks, agentUsername, anchored)
 		blocks = reconciled
 		if i == 0 && changed {
 			openingTextChanged = true
@@ -234,6 +235,15 @@ func turnsToResponse(
 		}
 	}
 	return result, openingTextChanged, nil
+}
+
+// postBatchGetter returns a.dbClient as a PostBatchGetter, or a nil interface
+// when no DB client is wired (unit tests).
+func (a *API) postBatchGetter() conversation.PostBatchGetter {
+	if a.dbClient == nil {
+		return nil
+	}
+	return a.dbClient
 }
 
 // agentUsername returns the username of the agent botID names, or "" when

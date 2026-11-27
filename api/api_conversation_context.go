@@ -55,7 +55,8 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	enableVision, maxFileSize := a.attachmentConfigForBot(conv.BotID)
 	llmCtx := a.buildContextForConversation(c.Request.Context(), userID, conv)
 	req, err := conversation.AssembleRequest(conv, turns, llmCtx, a.mmClient, enableVision, maxFileSize, conversation.BuildOptions{
-		SessionID: auth.SessionIDFromContext(c.Request.Context()),
+		SessionID:       auth.SessionIDFromContext(c.Request.Context()),
+		PostBatchGetter: a.postBatchGetter(),
 	})
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to build composition: %w", err))

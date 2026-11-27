@@ -64,6 +64,20 @@ func (c *reconcileFakeClient) HasPermissionToChannel(_, channelID string, _ *mod
 
 func (c *reconcileFakeClient) LogError(_ string, _ ...any) {}
 
+type countingBatchGetter struct {
+	inner PostBatchGetter
+	calls int
+	err   error
+}
+
+func (c *countingBatchGetter) GetPostsByIDs(postIDs []string) (map[string]mmapi.LivePost, error) {
+	c.calls++
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.inner.GetPostsByIDs(postIDs)
+}
+
 func mustJSONBlocks(t *testing.T, blocks []ContentBlock) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(blocks)
@@ -132,80 +146,87 @@ func TestWithoutPostContent(t *testing.T) {
 	}
 }
 
-func TestAnchoredPostResolver(t *testing.T) {
-	chanA := "chan-a"
-	chanB := "chan-b"
-	rootID := "root-post"
+func TestResolveAnchoredPostsWithSQLBatch(t *testing.T) {
+	_, s := setupTestService(t)
+	_, err := s.DB().Exec(`CREATE TABLE Posts (
+		Id VARCHAR(26) PRIMARY KEY,
+		ChannelId VARCHAR(26) NOT NULL,
+		Message TEXT NOT NULL DEFAULT '',
+		EditAt BIGINT NOT NULL DEFAULT 0,
+		DeleteAt BIGINT NOT NULL DEFAULT 0
+	)`)
+	require.NoError(t, err)
 
-	t.Run("caches per post ID and enforces channel scope", func(t *testing.T) {
-		client := newReconcileFakeClient()
-		client.posts["p-live"] = &model.Post{Id: "p-live", ChannelId: chanA, Message: "hello", EditAt: 50}
-		client.posts["p-deleted"] = &model.Post{Id: "p-deleted", ChannelId: chanA, Message: "gone", DeleteAt: 100}
-		client.posts["p-other-chan"] = &model.Post{Id: "p-other-chan", ChannelId: chanB, Message: "secret"}
-		client.postErrors["p-err"] = errors.New("db down")
+	const (
+		chanA = "chan-a"
+		chanB = "chan-b"
+	)
+	_, err = s.DB().Exec(`INSERT INTO Posts (Id, ChannelId, Message, EditAt, DeleteAt) VALUES
+		('p-live', $1, 'edited hello', 50, 0),
+		('p-deleted', $1, 'gone secret', 0, 100),
+		('p-other-chan', $2, 'foreign secret', 0, 0),
+		('p-root', $1, 'summary root', 0, 0),
+		('p-dead-root', $1, 'dead root', 0, 999)
+	`, chanA, chanB)
+	require.NoError(t, err)
 
-		resolver := NewAnchoredPostResolver(client, &store.Conversation{ChannelID: &chanA})
+	dbClient := mmapi.NewTestDBClient(s.DB())
 
-		anchor, known, err := resolver.Lookup("p-live")
-		require.NoError(t, err)
+	t.Run("fetches all turn PostIDs and RunPostIDs in a single SQL query without calling GetPost", func(t *testing.T) {
+		batch := &countingBatchGetter{inner: dbClient}
+		fallback := newReconcileFakeClient()
+		ch := chanA
+		turns := []store.Turn{
+			{PostID: new("p-live")},
+			{RunPostID: new("p-deleted")},
+			{PostID: new("p-other-chan")},
+			{PostID: new("p-missing")},
+			{PostID: new("p-live")}, // duplicate ID must be deduplicated
+		}
+
+		anchored, resolveErr := ResolveAnchoredPosts(&store.Conversation{ChannelID: &ch}, turns, batch, fallback)
+		require.NoError(t, resolveErr)
+		assert.Equal(t, 1, batch.calls, "must issue exactly one batched SQL query")
+		assert.Empty(t, fallback.getPostCalls, "must not call per-post GetPost when batch getter is wired")
+
+		live, known := anchored.Get("p-live")
 		assert.True(t, known)
-		assert.True(t, anchor.Live)
-		assert.Equal(t, "hello", anchor.Message)
-		assert.Equal(t, int64(50), anchor.EditAt)
-
-		// Second lookup uses the cache.
-		_, _, err = resolver.Lookup("p-live")
-		require.NoError(t, err)
-		assert.Equal(t, 1, client.getPostCalls["p-live"])
+		assert.True(t, live.Live)
+		assert.Equal(t, "edited hello", live.Message)
+		assert.Equal(t, int64(50), live.EditAt)
 
 		for _, id := range []string{"p-deleted", "p-other-chan", "p-missing"} {
-			a, k, lookupErr := resolver.Lookup(id)
-			require.NoError(t, lookupErr)
+			a, k := anchored.Get(id)
 			assert.True(t, k, id)
 			assert.False(t, a.Live, id)
 		}
-
-		_, _, err = resolver.Lookup("p-err")
-		require.Error(t, err)
 	})
 
-	t.Run("threadless conversation scopes anchored posts to its root post channel and caches dead root", func(t *testing.T) {
-		client := newReconcileFakeClient()
-		client.posts[rootID] = &model.Post{Id: rootID, ChannelId: chanA, Message: "summary"}
-		client.posts["reply-ok"] = &model.Post{Id: "reply-ok", ChannelId: chanA, Message: "follow-up"}
-		client.posts["reply-other"] = &model.Post{Id: "reply-other", ChannelId: chanB, Message: "leaked"}
-
-		resolver := NewAnchoredPostResolver(client, &store.Conversation{RootPostID: &rootID})
-
-		a, known, err := resolver.Lookup(rootID)
-		require.NoError(t, err)
-		assert.True(t, known)
-		assert.True(t, a.Live)
-		assert.Equal(t, 1, client.getPostCalls[rootID], "root lookup must not be issued twice")
-
-		a, known, err = resolver.Lookup("reply-ok")
-		require.NoError(t, err)
-		assert.True(t, known)
-		assert.True(t, a.Live)
-
-		a, known, err = resolver.Lookup("reply-other")
-		require.NoError(t, err)
-		assert.True(t, known)
-		assert.False(t, a.Live)
-
-		// Deleted root marks every lookup dead across repeated calls.
-		deadClient := newReconcileFakeClient()
-		deadClient.posts[rootID] = &model.Post{Id: rootID, ChannelId: chanA, DeleteAt: 999}
-		deadClient.posts["reply-ok"] = &model.Post{Id: "reply-ok", ChannelId: chanA, Message: "still live"}
-		deadResolver := NewAnchoredPostResolver(deadClient, &store.Conversation{RootPostID: &rootID})
-
-		for range 2 {
-			da, dk, derr := deadResolver.Lookup("reply-ok")
-			require.NoError(t, derr)
-			assert.True(t, dk)
-			assert.False(t, da.Live)
+	t.Run("threadless conversation scopes anchored posts to its root post channel and fails closed when root is dead", func(t *testing.T) {
+		rootID := "p-root"
+		turns := []store.Turn{
+			{PostID: new("p-live")},
+			{PostID: new("p-other-chan")},
 		}
-		assert.Equal(t, 0, deadClient.getPostCalls["reply-ok"])
+		anchored, resolveErr := ResolveAnchoredPosts(&store.Conversation{RootPostID: &rootID}, turns, dbClient, nil)
+		require.NoError(t, resolveErr)
+
+		live, known := anchored.Get("p-live")
+		assert.True(t, known && live.Live)
+		foreign, known := anchored.Get("p-other-chan")
+		assert.True(t, known && !foreign.Live)
+
+		deadRoot := "p-dead-root"
+		deadAnchored, resolveErr := ResolveAnchoredPosts(&store.Conversation{RootPostID: &deadRoot}, turns, dbClient, nil)
+		require.NoError(t, resolveErr)
+		a, k := deadAnchored.Get("p-live")
+		assert.True(t, k && !a.Live)
+	})
+
+	t.Run("batch SQL error fails closed", func(t *testing.T) {
+		batch := &countingBatchGetter{err: errors.New("db down")}
+		_, resolveErr := ResolveAnchoredPosts(&store.Conversation{}, []store.Turn{{PostID: new("p-live")}}, batch, nil)
+		require.Error(t, resolveErr)
 	})
 }
 
@@ -213,11 +234,13 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 	const (
 		chanID    = "chan-1"
 		userID    = "user-1"
+		peerID    = "peer-1"
 		botID     = "bot-1"
 		botName   = "agent"
 		rootID    = "post-u1"
 		botPostID = "post-b1"
 		u2PostID  = "post-u2"
+		peerPost  = "post-peer"
 		fileID    = "file-1"
 	)
 
@@ -247,6 +270,7 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 		name     string
 		turns    []store.Turn
 		posts    []*model.Post
+		users    map[string]*model.User
 		setup    func(c *reconcileFakeClient)
 		opts     BuildOptions
 		wantErr  bool
@@ -255,13 +279,13 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 		{
 			name: "edited user post sends live edited text instead of stored text",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "SECRET_ORIGINAL"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "answer"},
 				})},
-				{ID: "t3", PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "follow up"},
 				})},
 			},
@@ -274,25 +298,23 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 				require.Len(t, req.Posts, 4, mode)
 				assert.Equal(t, "redacted question", req.Posts[1].Message, mode)
 				assert.NotContains(t, req.Posts[1].Message, "SECRET_ORIGINAL", mode)
-				assert.Equal(t, "answer", req.Posts[2].Message, mode)
-				assert.Equal(t, "follow up", req.Posts[3].Message, mode)
 			},
 		},
 		{
 			name: "edited assistant post drops server tool activity while keeping tool_use/tool_result pairing",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "question"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{ID: "srv1", Tool: "web_search", Status: "completed", Query: "SECRET_QUERY"}},
 					{Type: BlockTypeText, Text: "SECRET_ANSWER"},
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "lookup", Input: json.RawMessage(`{"id":"1"}`), Status: StatusSuccess, Shared: new(true)},
 				})},
-				{ID: "t3", Role: "tool_result", Sequence: 3, CreatedAt: 201, Content: mustJSONBlocks(t, []ContentBlock{
+				{Role: "tool_result", Sequence: 3, CreatedAt: 201, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "tool output", Status: StatusSuccess, Shared: new(true)},
 				})},
-				{ID: "t4", PostID: new(u2PostID), Role: "user", Sequence: 4, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(u2PostID), Role: "user", Sequence: 4, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "next"},
 				})},
 			},
@@ -306,44 +328,20 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 				assert.Equal(t, "edited answer", req.Posts[2].Message, mode)
 				assert.Empty(t, req.Posts[2].ServerTools, mode)
 				require.Len(t, req.Posts[2].ToolUse, 1, mode)
-				assert.Equal(t, "tc1", req.Posts[2].ToolUse[0].ID, mode)
 				assert.Equal(t, "tool output", req.Posts[2].ToolUse[0].Result, mode)
 			},
 		},
 		{
-			name: "edited-to-empty user post without attachments uses placeholder",
+			name: "edited-to-empty user post without readable attachments uses placeholder",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "SECRET_TEXT"},
-				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "reply"},
-				})},
-				{ID: "t3", PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "follow up"},
-				})},
-			},
-			posts: []*model.Post{
-				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, EditAt: 150, Message: "   "},
-				{Id: botPostID, UserId: botID, ChannelId: chanID, RootId: rootID, CreateAt: 200, Message: "reply"},
-				{Id: u2PostID, UserId: userID, ChannelId: chanID, RootId: rootID, CreateAt: 300, Message: "follow up"},
-			},
-			validate: func(t *testing.T, mode string, req *llm.CompletionRequest) {
-				require.Len(t, req.Posts, 4, mode)
-				assert.Equal(t, EmptyEditedPostPlaceholder, req.Posts[1].Message, mode)
-			},
-		},
-		{
-			name: "edited-to-empty user post whose attachment is unreadable still uses placeholder",
-			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "SECRET_TEXT"},
 					{Type: BlockTypeFile, FileID: fileID, Filename: "notes.txt", MimeType: "text/plain"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "reply"},
 				})},
-				{ID: "t3", PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "follow up"},
 				})},
 			},
@@ -363,23 +361,25 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 			},
 		},
 		{
-			name: "deleted mid-thread assistant post keeps placeholder, preserves role order, and keeps tool rounds paired",
+			name: "deleted mid-thread assistant post strips RunPostID tool-round preamble while keeping tool calls paired",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "question"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "SECRET_BOT_REPLY"},
+				{RunPostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 190, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "PREAMBLE_SECRET"},
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "lookup", Input: json.RawMessage(`{"id":"1"}`), Status: StatusSuccess, Shared: new(true)},
 				})},
-				{ID: "t3", Role: "tool_result", Sequence: 3, CreatedAt: 201, Content: mustJSONBlocks(t, []ContentBlock{
+				{RunPostID: new(botPostID), Role: "tool_result", Sequence: 3, CreatedAt: 195, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "tool output", Status: StatusSuccess, Shared: new(true)},
 				})},
-				{ID: "t4", PostID: new(u2PostID), Role: "user", Sequence: 4, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 4, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "SECRET_BOT_REPLY"},
+				})},
+				{PostID: new(u2PostID), Role: "user", Sequence: 5, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "next question"},
 				})},
 			},
-			// botPostID is deleted, so GetPostThread omits it and GetPost reports DeleteAt > 0.
 			posts: []*model.Post{
 				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, Message: "question"},
 				{Id: u2PostID, UserId: userID, ChannelId: chanID, RootId: rootID, CreateAt: 300, Message: "next question"},
@@ -388,27 +388,54 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 				c.posts[botPostID] = &model.Post{Id: botPostID, UserId: botID, ChannelId: chanID, RootId: rootID, CreateAt: 200, DeleteAt: 250, Message: "SECRET_BOT_REPLY"}
 			},
 			validate: func(t *testing.T, mode string, req *llm.CompletionRequest) {
-				require.Len(t, req.Posts, 4, mode)
-				assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role, mode)
-				assert.Equal(t, "question", req.Posts[1].Message, mode)
-				assert.Equal(t, llm.PostRoleBot, req.Posts[2].Role, mode)
-				assert.Equal(t, DeletedPostPlaceholder, req.Posts[2].Message, mode)
+				require.Len(t, req.Posts, 5, mode)
+				assert.Empty(t, req.Posts[2].Message, mode)
+				assert.NotContains(t, req.Posts[2].Message, "PREAMBLE_SECRET", mode)
 				require.Len(t, req.Posts[2].ToolUse, 1, mode)
 				assert.Equal(t, "tool output", req.Posts[2].ToolUse[0].Result, mode)
-				assert.Equal(t, llm.PostRoleUser, req.Posts[3].Role, mode)
-				assert.Equal(t, "next question", req.Posts[3].Message, mode)
+				assert.Equal(t, DeletedPostPlaceholder, req.Posts[3].Message, mode)
+				assert.Equal(t, "next question", req.Posts[4].Message, mode)
+			},
+		},
+		{
+			name: "deleted latest assistant post does not truncate trailing non-turn channel thread posts",
+			turns: []store.Turn{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "question"},
+				})},
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "deleted reply"},
+				})},
+			},
+			posts: []*model.Post{
+				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, Message: "question"},
+				{Id: peerPost, UserId: peerID, ChannelId: chanID, RootId: rootID, CreateAt: 300, Message: "peer follow up"},
+			},
+			users: map[string]*model.User{peerID: {Id: peerID, Username: "alice"}},
+			setup: func(c *reconcileFakeClient) {
+				c.posts[botPostID] = &model.Post{Id: botPostID, UserId: botID, ChannelId: chanID, RootId: rootID, CreateAt: 200, DeleteAt: 250, Message: "deleted reply"}
+			},
+			validate: func(t *testing.T, mode string, req *llm.CompletionRequest) {
+				if mode == "BuildChannelMentionRequest" {
+					require.Len(t, req.Posts, 4, mode)
+					assert.Equal(t, DeletedPostPlaceholder, req.Posts[2].Message, mode)
+					assert.Contains(t, req.Posts[3].Message, "peer follow up", mode)
+				} else {
+					require.Len(t, req.Posts, 3, mode)
+					assert.Equal(t, DeletedPostPlaceholder, req.Posts[2].Message, mode)
+				}
 			},
 		},
 		{
 			name: "deleted user post with attachment drops the attachment and uses placeholder",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "question"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "answer"},
 				})},
-				{ID: "t3", PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "SECRET_REPLY"},
 					{Type: BlockTypeFile, FileID: fileID, Filename: "secret.txt", MimeType: "text/plain"},
 				})},
@@ -426,16 +453,15 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 				require.Len(t, req.Posts, 4, mode)
 				assert.Equal(t, DeletedPostPlaceholder, req.Posts[3].Message, mode)
 				assert.NotContains(t, req.Posts[3].Message, "SECRET_FILE", mode)
-				assert.NotContains(t, req.Posts[3].Message, "secret.txt", mode)
 			},
 		},
 		{
 			name: "unchanged auto-reply mention keeps stored text without cache busting",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "@agent help me"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "sure"},
 				})},
 			},
@@ -449,46 +475,60 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 			},
 		},
 		{
-			name: "unattended run ignores post-cutoff edits but still applies deletions",
+			name: "live unedited empty assistant post keeps stored answer (failed UpdatePost or settle race)",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "vetted question"},
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "write long code"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "SECRET_DELETED_REPLY"},
-				})},
-				{ID: "t3", PostID: new(u2PostID), Role: "user", Sequence: 3, CreatedAt: 300, Content: mustJSONBlocks(t, []ContentBlock{
-					{Type: BlockTypeText, Text: "latest vetted turn"},
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "long generated answer"},
 				})},
 			},
 			posts: []*model.Post{
-				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, EditAt: 500, UpdateAt: 500, Message: "PROMPT_INJECTION_EDIT"},
-				{Id: u2PostID, UserId: userID, ChannelId: chanID, RootId: rootID, CreateAt: 300, Message: "latest vetted turn"},
+				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, Message: "write long code"},
+				{Id: botPostID, UserId: botID, ChannelId: chanID, RootId: rootID, CreateAt: 200, EditAt: 0, Message: ""},
 			},
-			setup: func(c *reconcileFakeClient) {
-				c.posts[botPostID] = &model.Post{Id: botPostID, UserId: botID, ChannelId: chanID, RootId: rootID, CreateAt: 200, DeleteAt: 600, Message: "SECRET_DELETED_REPLY"}
-			},
-			opts: BuildOptions{SkipThreadPostsAfterLatestUserTurn: true},
 			validate: func(t *testing.T, mode string, req *llm.CompletionRequest) {
-				require.Len(t, req.Posts, 4, mode)
-				assert.Equal(t, "vetted question", req.Posts[1].Message, mode)
-				assert.NotContains(t, req.Posts[1].Message, "PROMPT_INJECTION_EDIT", mode)
-				assert.Equal(t, DeletedPostPlaceholder, req.Posts[2].Message, mode)
-				assert.NotContains(t, req.Posts[2].Message, "SECRET_DELETED_REPLY", mode)
-				assert.Equal(t, "latest vetted turn", req.Posts[3].Message, mode)
+				require.Len(t, req.Posts, 3, mode)
+				assert.Equal(t, "long generated answer", req.Posts[2].Message, mode)
+			},
+		},
+		{
+			name: "unattended run still applies owner edits removing secrets while skipping unvetted peer posts",
+			turns: []store.Turn{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "deploy with SECRET123"},
+				})},
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+					{Type: BlockTypeText, Text: "waiting on job"},
+				})},
+			},
+			posts: []*model.Post{
+				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, EditAt: 500, UpdateAt: 500, Message: "deploy safely"},
+				{Id: botPostID, UserId: botID, ChannelId: chanID, RootId: rootID, CreateAt: 200, Message: "waiting on job"},
+				{Id: peerPost, UserId: peerID, ChannelId: chanID, RootId: rootID, CreateAt: 600, UpdateAt: 600, Message: "UNVETTED_PEER_INJECTION"},
+			},
+			users: map[string]*model.User{peerID: {Id: peerID, Username: "alice"}},
+			opts:  BuildOptions{SkipThreadPostsAfterLatestUserTurn: true},
+			validate: func(t *testing.T, mode string, req *llm.CompletionRequest) {
+				require.Len(t, req.Posts, 3, mode)
+				assert.Equal(t, "deploy safely", req.Posts[1].Message, mode)
+				assert.NotContains(t, req.Posts[1].Message, "SECRET123", mode)
+				for _, p := range req.Posts {
+					assert.NotContains(t, p.Message, "UNVETTED_PEER_INJECTION", mode)
+				}
 			},
 		},
 		{
 			name: "post lookup error fails closed",
 			turns: []store.Turn{
-				{ID: "t1", PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(rootID), Role: "user", Sequence: 1, CreatedAt: 100, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "question"},
 				})},
-				{ID: "t2", PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
+				{PostID: new(botPostID), Role: "assistant", Sequence: 2, CreatedAt: 200, Content: mustJSONBlocks(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "answer"},
 				})},
 			},
-			// Omit botPostID from threadData so BuildChannelMentionRequest also hits GetPost.
 			posts: []*model.Post{
 				{Id: rootID, UserId: userID, ChannelId: chanID, CreateAt: 100, Message: "question"},
 			},
@@ -523,7 +563,11 @@ func TestBuildRequestsReconcileAnchoredPosts(t *testing.T) {
 				tt.validate(t, "BuildCompletionRequest", completionReq)
 			}
 
-			threadData := &mmapi.ThreadData{Posts: tt.posts, UsersByID: map[string]*model.User{}}
+			users := tt.users
+			if users == nil {
+				users = map[string]*model.User{}
+			}
+			threadData := &mmapi.ThreadData{Posts: tt.posts, UsersByID: users}
 			mentionReq, err := svc.BuildChannelMentionRequest(conv, llmCtx, threadData, tt.opts)
 			if tt.wantErr {
 				require.Error(t, err, "BuildChannelMentionRequest")

@@ -249,9 +249,9 @@ func TestReconciledAnchoredTurnsProduceValidProviderRequests(t *testing.T) {
 			name: "mid-thread user and assistant posts edited to empty",
 			posts: map[string]*model.Post{
 				u1ID: {Id: u1ID, ChannelId: chanID, Message: "initial question"},
-				b1ID: {Id: b1ID, ChannelId: chanID, Message: ""},
-				u2ID: {Id: u2ID, ChannelId: chanID, Message: "   "},
-				b2ID: {Id: b2ID, ChannelId: chanID, Message: ""},
+				b1ID: {Id: b1ID, ChannelId: chanID, EditAt: 100, Message: ""},
+				u2ID: {Id: u2ID, ChannelId: chanID, EditAt: 100, Message: "   "},
+				b2ID: {Id: b2ID, ChannelId: chanID, EditAt: 100, Message: ""},
 				u3ID: {Id: u3ID, ChannelId: chanID, Message: "third question"},
 			},
 		},

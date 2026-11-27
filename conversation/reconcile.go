@@ -6,6 +6,8 @@ package conversation
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -26,170 +28,182 @@ const DeletedPostPlaceholder = "[message deleted]"
 // text or drop the turn and break role alternation.
 const EmptyEditedPostPlaceholder = "[message edited to empty]"
 
-// ErrInitiatingPostDeleted is returned by BuildRegenerateRequest when the user
-// post that initiated the regenerated response was deleted or is no longer live.
+// ErrInitiatingPostDeleted is returned when the user post that initiated a
+// regenerated response was deleted or is no longer live.
 var ErrInitiatingPostDeleted = errors.New("initiating post was deleted")
 
-// AnchoredPost describes the resolved state of a Mattermost post that a
-// conversation turn is anchored to.
+// PostBatchGetter fetches multiple Mattermost posts in a single SQL query.
+// *mmapi.DBClient implements it in production.
+type PostBatchGetter interface {
+	GetPostsByIDs(postIDs []string) (map[string]mmapi.LivePost, error)
+}
+
+// AnchoredPost describes the resolved live state of a Mattermost post that a
+// conversation turn is anchored to (via PostID) or belongs to (via RunPostID).
 type AnchoredPost struct {
-	Message  string
-	CreateAt int64
-	EditAt   int64
-	UpdateAt int64
-	Live     bool
+	Message string
+	EditAt  int64
+	Live    bool
 }
 
-// AnchoredPostResolver resolves and caches the current state of Mattermost
-// posts that turns are anchored to, at most once per post ID per request.
-type AnchoredPostResolver struct {
-	posts              PostGetter
-	channelID          string
-	rootPostID         string
-	rootChannelChecked bool
-	rootDead           bool
-	seeded             map[string]*model.Post
-	resolved           map[string]AnchoredPost
+// AnchoredPosts holds the resolved state of every post referenced by a
+// conversation's turns, scoped to the conversation's channel.
+type AnchoredPosts struct {
+	posts map[string]AnchoredPost
 }
 
-// NewAnchoredPostResolver constructs a resolver bound to conv's channel.
-// When conv.ChannelID is set, only live posts in that channel are considered
-// live. When conv.ChannelID is nil (e.g. DM-delivered summaries) and
-// conv.RootPostID is set, the root post's channel is resolved lazily to scope
-// anchored posts. Any posts passed via seed (such as threadData.Posts) are
-// reused without issuing extra GetPost calls.
-func NewAnchoredPostResolver(posts PostGetter, conv *store.Conversation, seed ...*model.Post) *AnchoredPostResolver {
-	r := &AnchoredPostResolver{
-		posts:    posts,
-		resolved: make(map[string]AnchoredPost),
+// Get returns the resolved post state for postID. known is false only when
+// postID was neither pre-seeded nor looked up (e.g. unit tests with nil clients).
+func (a *AnchoredPosts) Get(postID string) (AnchoredPost, bool) {
+	if a == nil || postID == "" {
+		return AnchoredPost{}, false
 	}
+	p, ok := a.posts[postID]
+	return p, ok
+}
+
+// ResolveAnchoredPosts loads the current state of every post referenced by
+// turns (PostID and RunPostID), scoped to conv's channel. Any posts already in
+// seed (such as threadData.Posts) are reused without querying. Remaining IDs
+// are fetched in a single SQL query via batch when provided, falling back to
+// fallback.GetPost otherwise. Non-not-found lookup errors fail closed.
+func ResolveAnchoredPosts(
+	conv *store.Conversation,
+	turns []store.Turn,
+	batch PostBatchGetter,
+	fallback PostGetter,
+	seed ...*model.Post,
+) (*AnchoredPosts, error) {
+	seen := make(map[string]struct{}, len(turns))
+	ids := make([]string, 0, len(turns))
+	addID := func(id *string) {
+		if id == nil || *id == "" {
+			return
+		}
+		if _, dup := seen[*id]; dup {
+			return
+		}
+		seen[*id] = struct{}{}
+		ids = append(ids, *id)
+	}
+	for i := range turns {
+		addID(turns[i].PostID)
+		addID(turns[i].RunPostID)
+	}
+	return resolveAnchoredPostIDs(conv, ids, batch, fallback, seed...)
+}
+
+func resolveAnchoredPostIDs(
+	conv *store.Conversation,
+	ids []string,
+	batch PostBatchGetter,
+	fallback PostGetter,
+	seed ...*model.Post,
+) (*AnchoredPosts, error) {
+	if len(ids) == 0 {
+		return &AnchoredPosts{}, nil
+	}
+
+	var expectedChannelID, rootPostID string
 	if conv != nil {
 		if conv.ChannelID != nil {
-			r.channelID = *conv.ChannelID
+			expectedChannelID = *conv.ChannelID
 		}
 		if conv.RootPostID != nil {
-			r.rootPostID = *conv.RootPostID
+			rootPostID = *conv.RootPostID
 		}
 	}
-	if len(seed) > 0 {
-		r.seeded = make(map[string]*model.Post, len(seed))
-		for _, p := range seed {
-			if p != nil && p.Id != "" {
-				r.seeded[p.Id] = p
+
+	queryIDs := ids
+	if expectedChannelID == "" && rootPostID != "" && !slices.Contains(ids, rootPostID) {
+		queryIDs = append(append([]string(nil), ids...), rootPostID)
+	}
+
+	raw := make(map[string]mmapi.LivePost, len(queryIDs))
+	seeded := make(map[string]bool, len(seed))
+	for _, p := range seed {
+		if p != nil && p.Id != "" {
+			raw[p.Id] = mmapi.LivePost{
+				ID:        p.Id,
+				ChannelID: p.ChannelId,
+				Message:   p.Message,
+				EditAt:    p.EditAt,
+				DeleteAt:  p.DeleteAt,
+			}
+			seeded[p.Id] = true
+		}
+	}
+
+	missing := make([]string, 0, len(queryIDs))
+	for _, id := range queryIDs {
+		if !seeded[id] {
+			missing = append(missing, id)
+		}
+	}
+
+	canLookup := batch != nil || fallback != nil
+	if len(missing) > 0 && canLookup {
+		if batch != nil {
+			fetched, err := batch.GetPostsByIDs(missing)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read conversation posts: %w", err)
+			}
+			maps.Copy(raw, fetched)
+		} else {
+			for _, id := range missing {
+				post, err := fallback.GetPost(id)
+				if err != nil {
+					if mmapi.IsNotFound(err) {
+						continue
+					}
+					return nil, fmt.Errorf("failed to read the post a conversation turn is anchored to: %w", err)
+				}
+				if post != nil {
+					raw[id] = mmapi.LivePost{
+						ID:        post.Id,
+						ChannelID: post.ChannelId,
+						Message:   post.Message,
+						EditAt:    post.EditAt,
+						DeleteAt:  post.DeleteAt,
+					}
+				}
 			}
 		}
 	}
-	return r
-}
 
-// Lookup returns the current state of postID. known is false only when no
-// PostGetter is configured and postID was not pre-seeded (unit tests with a
-// nil client). Any lookup error other than not-found is returned so callers
-// fail closed.
-func (r *AnchoredPostResolver) Lookup(postID string) (AnchoredPost, bool, error) {
-	if r == nil || postID == "" {
-		return AnchoredPost{}, false, nil
-	}
-	if cached, seen := r.resolved[postID]; seen {
-		return cached, true, nil
-	}
-
-	channelID, rootDead, err := r.expectedChannelID()
-	if err != nil {
-		return AnchoredPost{}, false, err
-	}
-	if rootDead {
-		r.resolved[postID] = AnchoredPost{}
-		return AnchoredPost{}, true, nil
-	}
-	if cached, seen := r.resolved[postID]; seen {
-		return cached, true, nil
-	}
-
-	if post, ok := r.seeded[postID]; ok {
-		anchor := evaluateAnchoredPost(post, channelID)
-		r.resolved[postID] = anchor
-		return anchor, true, nil
-	}
-
-	if r.posts == nil {
-		return AnchoredPost{}, false, nil
-	}
-
-	post, err := r.posts.GetPost(postID)
-	var anchor AnchoredPost
-	switch {
-	case err != nil:
-		if !mmapi.IsNotFound(err) {
-			return AnchoredPost{}, false, fmt.Errorf("failed to read the post a conversation turn is anchored to: %w", err)
+	// For ChannelID == nil conversations (e.g. DM-delivered summaries), learn
+	// the channel from the root post so cross-channel anchors are still rejected.
+	rootDead := false
+	if expectedChannelID == "" && rootPostID != "" && (seeded[rootPostID] || canLookup) {
+		root, ok := raw[rootPostID]
+		if !ok || root.DeleteAt != 0 {
+			rootDead = true
+		} else {
+			expectedChannelID = root.ChannelID
 		}
-	default:
-		anchor = evaluateAnchoredPost(post, channelID)
 	}
 
-	r.resolved[postID] = anchor
-	return anchor, true, nil
-}
-
-// expectedChannelID returns the channel ID anchored posts must belong to.
-// When conv.ChannelID is nil and conv.RootPostID is set, it inspects the root
-// post once to learn its channel (or detect that the root post itself was
-// deleted, in which case rootDead is true).
-func (r *AnchoredPostResolver) expectedChannelID() (channelID string, rootDead bool, err error) {
-	if r.channelID != "" || r.rootChannelChecked || r.rootPostID == "" {
-		return r.channelID, r.rootDead, nil
-	}
-
-	if post, ok := r.seeded[r.rootPostID]; ok {
-		r.rootChannelChecked = true
-		if post.DeleteAt != 0 {
-			r.rootDead = true
-			return "", true, nil
+	resolved := make(map[string]AnchoredPost, len(ids))
+	for _, id := range ids {
+		if !seeded[id] && !canLookup {
+			continue
 		}
-		r.channelID = post.ChannelId
-		return r.channelID, false, nil
-	}
-
-	if r.posts == nil {
-		r.rootChannelChecked = true
-		return "", false, nil
-	}
-
-	post, err := r.posts.GetPost(r.rootPostID)
-	if err != nil {
-		if mmapi.IsNotFound(err) {
-			r.rootChannelChecked = true
-			r.rootDead = true
-			r.resolved[r.rootPostID] = AnchoredPost{}
-			return "", true, nil
+		if rootDead {
+			resolved[id] = AnchoredPost{}
+			continue
 		}
-		return "", false, fmt.Errorf("failed to read conversation root post: %w", err)
+		post, ok := raw[id]
+		if !ok || post.DeleteAt != 0 || (expectedChannelID != "" && post.ChannelID != expectedChannelID) {
+			resolved[id] = AnchoredPost{}
+			continue
+		}
+		resolved[id] = AnchoredPost{
+			Message: post.Message,
+			EditAt:  post.EditAt,
+			Live:    true,
+		}
 	}
-	r.rootChannelChecked = true
-	if post == nil || post.DeleteAt != 0 {
-		r.rootDead = true
-		r.resolved[r.rootPostID] = AnchoredPost{}
-		return "", true, nil
-	}
-	r.channelID = post.ChannelId
-	r.resolved[r.rootPostID] = evaluateAnchoredPost(post, r.channelID)
-	return r.channelID, false, nil
-}
-
-func evaluateAnchoredPost(post *model.Post, expectedChannelID string) AnchoredPost {
-	if post == nil || post.DeleteAt != 0 {
-		return AnchoredPost{}
-	}
-	if expectedChannelID != "" && post.ChannelId != expectedChannelID {
-		return AnchoredPost{}
-	}
-	return AnchoredPost{
-		Message:  post.Message,
-		CreateAt: post.CreateAt,
-		EditAt:   post.EditAt,
-		UpdateAt: post.UpdateAt,
-		Live:     true,
-	}
+	return &AnchoredPosts{posts: resolved}, nil
 }
 
 // WithoutLeadingMention drops the "@agent " the plugin puts in front of the
@@ -210,103 +224,103 @@ func WithoutLeadingMention(text, agentUsername string) string {
 	return text
 }
 
-// ReconcileTurnForDisplay reconciles a turn's content blocks against the live
-// Mattermost post it is anchored to for GET /conversations/{id}. textChanged
-// reports whether the turn's effective text differs from what was stored
-// (ignoring a plugin-added leading "@agent " mention), which callers use to
-// clear a title derived from the opening turn.
+// ReconcileTurnForDisplay reconciles a turn's content blocks against its
+// resolved Mattermost post for GET /conversations/{id}. textChanged reports
+// whether the turn's effective text differs from what was stored (ignoring a
+// plugin-added leading "@agent " mention), which callers use to clear a title
+// derived from the opening turn.
 func ReconcileTurnForDisplay(
 	turn store.Turn,
 	blocks []ContentBlock,
 	agentUsername string,
-	resolver *AnchoredPostResolver,
-) (reconciled []ContentBlock, textChanged bool, err error) {
-	if turn.PostID == nil || *turn.PostID == "" || resolver == nil {
-		return blocks, false, nil
-	}
-	stored := TextContent(blocks)
-	if stored == "" && !hasAttachmentBlocks(blocks) {
-		return blocks, false, nil
+	anchored *AnchoredPosts,
+) (reconciled []ContentBlock, textChanged bool) {
+	reconciled, textChanged, _ = reconcileTurnBlocks(turn, blocks, anchored, agentUsername, false)
+	return reconciled, textChanged
+}
+
+// ReconcileTurnForLLM reconciles a turn's content blocks against its resolved
+// Mattermost post for LLM request building. Deleted posts map to
+// DeletedPostPlaceholder (or empty text on tool-only assistant turns) while
+// dropping attachments and text-coupled blocks; posts edited to empty with no
+// remaining attachments or tool calls map to EmptyEditedPostPlaceholder so
+// strict providers keep valid alternating roles and paired tool calls.
+func ReconcileTurnForLLM(
+	turn store.Turn,
+	blocks []ContentBlock,
+	agentUsername string,
+	anchored *AnchoredPosts,
+) (reconciled []ContentBlock, editedToBlank bool) {
+	reconciled, _, editedToBlank = reconcileTurnBlocks(turn, blocks, anchored, agentUsername, true)
+	return reconciled, editedToBlank
+}
+
+func reconcileTurnBlocks(
+	turn store.Turn,
+	blocks []ContentBlock,
+	anchored *AnchoredPosts,
+	agentUsername string,
+	forLLM bool,
+) (reconciled []ContentBlock, textChanged bool, editedToBlank bool) {
+	if anchored == nil {
+		return blocks, false, false
 	}
 
-	anchor, known, err := resolver.Lookup(*turn.PostID)
-	if err != nil || !known {
-		return blocks, false, err
+	// Tool-round and demoted-anchor turns are linked to their response post via
+	// RunPostID rather than PostID. They carry intermediate round state (not the
+	// post's final message), so live edits leave them alone while deleting the
+	// post strips their text, attachments, and text-coupled blocks.
+	if turn.PostID == nil || *turn.PostID == "" {
+		if turn.RunPostID != nil && *turn.RunPostID != "" {
+			if anchor, known := anchored.Get(*turn.RunPostID); known && !anchor.Live {
+				return WithoutPostContent(blocks, ""), true, false
+			}
+		}
+		return blocks, false, false
+	}
+
+	anchor, known := anchored.Get(*turn.PostID)
+	if !known {
+		return blocks, false, false
 	}
 
 	// While a response is still streaming, partial text is checkpointed on the
 	// turn while the Mattermost placeholder post stays empty until settlement.
-	// Keep the checkpointed text as long as the post is still live.
 	if turn.Status == store.TurnStatusStreaming && anchor.Live {
-		return blocks, false, nil
+		return blocks, false, false
 	}
 
 	if !anchor.Live {
-		return WithoutPostContent(blocks, ""), true, nil
-	}
-
-	if stored == "" {
-		return blocks, false, nil
-	}
-
-	if anchor.Message != stored {
-		changed := strings.TrimSpace(anchor.Message) != strings.TrimSpace(WithoutLeadingMention(stored, agentUsername))
-		return WithTextContent(blocks, anchor.Message), changed, nil
-	}
-
-	return blocks, false, nil
-}
-
-// ReconcileOptions configures anchored-post reconciliation when building an
-// LLM completion request.
-type ReconcileOptions struct {
-	Resolver          *AnchoredPostResolver
-	AgentUsername     string
-	SkipUnvettedEdits bool
-	VettedCutoff      int64
-}
-
-// ReconcileTurnForLLM reconciles a turn's content blocks against its anchored
-// Mattermost post for LLM request building. Deletions always apply (even when
-// SkipUnvettedEdits is set) and replace text with DeletedPostPlaceholder while
-// dropping attachments and text-coupled blocks. Live edits replace text (unless
-// SkipUnvettedEdits blocks edits made after VettedCutoff) and fall back to
-// EmptyEditedPostPlaceholder when an edit empties a turn that would otherwise
-// be dropped by strict providers.
-func ReconcileTurnForLLM(
-	turn store.Turn,
-	blocks []ContentBlock,
-	opts ReconcileOptions,
-) (reconciled []ContentBlock, editedToBlank bool, err error) {
-	if turn.PostID == nil || *turn.PostID == "" || opts.Resolver == nil {
-		return blocks, false, nil
-	}
-
-	anchor, known, err := opts.Resolver.Lookup(*turn.PostID)
-	if err != nil || !known {
-		return blocks, false, err
-	}
-
-	if !anchor.Live {
-		replacement := DeletedPostPlaceholder
-		if turn.Role == "assistant" && TextContent(blocks) == "" && hasToolUseBlocks(blocks) {
-			replacement = ""
+		replacement := ""
+		if forLLM && (turn.Role != "assistant" || TextContent(blocks) != "" || !hasToolUseBlocks(blocks)) {
+			replacement = DeletedPostPlaceholder
 		}
-		return WithoutPostContent(blocks, replacement), false, nil
+		return WithoutPostContent(blocks, replacement), true, false
+	}
+
+	// An unedited empty assistant post indicates either the brief window
+	// between turn settlement and UpdatePost or a failed final UpdatePost (for
+	// example exceeding Mattermost's post length limit), not a user edit.
+	if turn.Role == "assistant" && anchor.Message == "" && anchor.EditAt == 0 {
+		return blocks, false, false
 	}
 
 	stored := TextContent(blocks)
-	if stored == "" && turn.Role != "user" {
-		return blocks, false, nil
+	if stored == "" && (!forLLM || turn.Role != "user") {
+		return blocks, false, false
 	}
 	if anchor.Message == stored {
-		return blocks, false, nil
+		return blocks, false, false
 	}
-	if opts.AgentUsername != "" && strings.TrimSpace(anchor.Message) == strings.TrimSpace(WithoutLeadingMention(stored, opts.AgentUsername)) {
-		return blocks, false, nil
+	if agentUsername != "" && strings.TrimSpace(anchor.Message) == strings.TrimSpace(WithoutLeadingMention(stored, agentUsername)) {
+		if forLLM {
+			return blocks, false, false
+		}
+		return WithTextContent(blocks, anchor.Message), false, false
 	}
-	if opts.SkipUnvettedEdits && isEditAfterCutoff(anchor, opts.VettedCutoff) {
-		return blocks, false, nil
+
+	if !forLLM {
+		return WithTextContent(blocks, anchor.Message), true, false
 	}
 
 	replacement := anchor.Message
@@ -318,17 +332,7 @@ func ReconcileTurnForLLM(
 			replacement = EmptyEditedPostPlaceholder
 		}
 	}
-	return WithTextContent(blocks, replacement), blankEdit, nil
-}
-
-func isEditAfterCutoff(anchor AnchoredPost, cutoff int64) bool {
-	if cutoff == 0 {
-		return true
-	}
-	if anchor.EditAt > 0 {
-		return anchor.EditAt > cutoff
-	}
-	return anchor.UpdateAt > cutoff
+	return WithTextContent(blocks, replacement), true, blankEdit
 }
 
 func hasAttachmentBlocks(blocks []ContentBlock) bool {

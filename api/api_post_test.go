@@ -1048,6 +1048,7 @@ func TestHandleRegenerateRejectsDeletedInitiatingPost(t *testing.T) {
 	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
 
 	require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode, recorder.Body.String())
+	e.mockAPI.AssertNotCalled(t, "KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestReadablePostRefusesMissingOrDeletedPost(t *testing.T) {

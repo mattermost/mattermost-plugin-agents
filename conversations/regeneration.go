@@ -144,6 +144,11 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	if err != nil {
 		return err
 	}
+	if path == regenerateConversation {
+		if err = c.convService.CheckInitiatingPostLive(conv, post.Id); err != nil {
+			return err
+		}
+	}
 
 	user, err := c.mmClient.GetUser(userID)
 	if err != nil {

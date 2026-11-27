@@ -82,6 +82,7 @@ func TestHandleGetConversation(t *testing.T) {
 						{Type: conversation.BlockTypeToolUse, ID: "tc_lost", Name: "get_weather", Input: toolUseInput, Status: conversation.StatusInterrupted, Shared: new(false)},
 					}), Sequence: 4},
 				}
+				e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, Message: ""}, nil).Maybe()
 				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
 			},
 			expectedStatus: http.StatusOK,
@@ -1309,7 +1310,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 				rereadAnchorPost.Message = "a different question"
 			},
 			validateSecond: func(t *testing.T, body []byte) {
-				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), edgePostMessage,
+				assert.Equal(t, "a different question", conversation.TextContent(turnBlocks(t, body)),
 					"a later request resolves the anchored post again rather than reusing the earlier read")
 			},
 		},
@@ -1467,6 +1468,8 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			setup: func(t *testing.T, e *TestEnvironment) {
 				anchoredThread(t, e, "conv-edited", "Question about "+secretEditedAway, map[string]string{anchoredUserPostID: secretEditedAway},
 					[]*model.Post{livePost(anchoredUserPostID, "", editedReplacement)})
+				rootID := anchoredUserPostID
+				e.conversationStore.conversations["conv-edited"].RootPostID = &rootID
 			},
 			status:    http.StatusOK,
 			absent:    []string{secretEditedAway},
@@ -1486,6 +1489,8 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 					livePost(anchoredUserPostID, "", threadRootMessage),
 					deletedPost(secretReplyPostID, anchoredUserPostID, secretDeletedReply),
 				})
+				rootID := anchoredUserPostID
+				e.conversationStore.conversations["conv-reply-deleted"].RootPostID = &rootID
 			},
 			status:    http.StatusOK,
 			absent:    []string{secretDeletedReply},
@@ -1856,6 +1861,84 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			absent:    []string{secretEditedAway},
 			texts:     []string{""},
 			wantTitle: "",
+		},
+		{
+			name:           "deleted textless assistant turn drops thinking, annotations, and server-tool blocks",
+			conversationID: "conv-deleted-textless",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(deletedPost(anchoredAssistantPostID, "", ""), nil).Maybe()
+				anchoredThread(t, e, "conv-deleted-textless", "Tool only", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-deleted-textless"] = []store.Turn{{
+					ID: "turn-textless", ConversationID: "conv-deleted-textless", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeThinking, Text: secretEditedAway, Signature: "sig-" + secretToken},
+						{Type: conversation.BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{ID: "srv1", Tool: "web_search", Status: "completed", Query: secretDeletedReply}},
+						{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "lookup", Shared: new(true)},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply, secretToken},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			name:           "deleted bot post strips preamble and thinking from RunPostID tool-round turns",
+			conversationID: "conv-deleted-run-rounds",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredUserPostID).Return(livePost(anchoredUserPostID, "", threadRootMessage), nil).Maybe()
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(deletedPost(anchoredAssistantPostID, anchoredUserPostID, secretDeletedReply), nil).Maybe()
+				anchoredThread(t, e, "conv-deleted-run-rounds", "Thread title", nil, nil)
+				userPostID := anchoredUserPostID
+				botPostID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-deleted-run-rounds"] = []store.Turn{
+					{
+						ID: "turn-u", ConversationID: "conv-deleted-run-rounds", PostID: &userPostID, Role: "user", Sequence: 1,
+						Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: threadRootMessage}}),
+					},
+					{
+						ID: "turn-round", ConversationID: "conv-deleted-run-rounds", RunPostID: &botPostID, Role: "assistant", Sequence: 2,
+						Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+							{Type: conversation.BlockTypeThinking, Text: secretToken},
+							{Type: conversation.BlockTypeText, Text: secretEditedAway},
+							{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "lookup", Shared: new(true)},
+						}),
+					},
+					{
+						ID: "turn-anchor", ConversationID: "conv-deleted-run-rounds", PostID: &botPostID, Role: "assistant", Sequence: 3,
+						Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: secretDeletedReply}}),
+					},
+				}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretDeletedReply, secretToken},
+			texts:     []string{threadRootMessage, "", ""},
+			wantTitle: "Thread title",
+		},
+		{
+			name:           "live unedited empty assistant post keeps stored answer",
+			conversationID: "conv-unedited-empty-bot",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: "", EditAt: 0,
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-unedited-empty-bot", "Answer", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-unedited-empty-bot"] = []store.Turn{{
+					ID: "turn-bot", ConversationID: "conv-unedited-empty-bot", PostID: &postID, Role: "assistant", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: storedAssistantTurnText}}),
+				}}
+			},
+			status:    http.StatusOK,
+			texts:     []string{storedAssistantTurnText},
+			wantTitle: "Answer",
 		},
 	}
 

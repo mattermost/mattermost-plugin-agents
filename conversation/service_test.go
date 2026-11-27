@@ -923,7 +923,13 @@ func TestBuildCompletionRequest_SystemPromptIsFirst(t *testing.T) {
 }
 
 func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
-	svc, s := setupTestService(t)
+	_, s := setupTestService(t)
+	client := newReconcileFakeClient()
+	client.posts["user_post1"] = &model.Post{Id: "user_post1", Message: "user1"}
+	client.posts["resp1"] = &model.Post{Id: "resp1", Message: "assistant1"}
+	client.posts["user_post2"] = &model.Post{Id: "user_post2", Message: "user2"}
+	client.posts["resp2"] = &model.Post{Id: "resp2", Message: "assistant2"}
+	svc := NewService(s, nil, client, &testBotLookup{botUserIDs: map[string]bool{}})
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
@@ -997,7 +1003,11 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 // the demoted prior anchor and its tool_result, so the request ends on the
 // user turn (bifrost rejects an assistant-ended prefill).
 func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeavesUserTail(t *testing.T) {
-	svc, s := setupTestService(t)
+	_, s := setupTestService(t)
+	client := newReconcileFakeClient()
+	client.posts["user_post1"] = &model.Post{Id: "user_post1", Message: "user1"}
+	client.posts["resp_post"] = &model.Post{Id: "resp_post", Message: "final answer"}
+	svc := NewService(s, nil, client, &testBotLookup{botUserIDs: map[string]bool{}})
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
