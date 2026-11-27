@@ -32,6 +32,7 @@ Each request also carries the definitions (name, description, and parameters) of
 | AI search and `/ask-channel` | Your query, plus the posts the agent reads while it searches. |
 | React for me | The text of the message you picked. |
 | Skills | The rendered instructions, as an ordinary message. A skill an agent loads on its own is read into that conversation. |
+| Dictation | Nothing goes to the LLM. Audio goes from the user's browser directly to OpenAI, and the transcript comes back to the browser. The plugin creates the session and watches its events, transcript included, to enforce the configured settings, but doesn't store or log them. See [Set up dictation](dictation.md#privacy). |
 
 Attachments in a conversation are included when the model and agent allow them. Images need **Enable Vision** and a vision-capable model. Other files contribute text only when Mattermost can extract it.
 
@@ -46,7 +47,7 @@ In channels, a result the initiator keeps private isn't sent to the LLM for the 
 | Service | What it receives |
 |---|---|
 | LLM provider | Everything described above. |
-| Web search provider (Brave, Google, SearXNG) | The model's search queries, and page fetches for result URLs. |
+| Web search provider (Brave, SearXNG) | The model's search queries, and page fetches for result URLs. |
 | MCP servers | Tool arguments the model chooses. Remote servers see your identity when you connect with your own account. |
 | Embedding provider | The text of every indexed post, in chunks, when semantic search is on. |
 | Native provider tools | Whatever the provider's tool needs, such as search queries or code. Code execution may retain content in the provider's sandbox under the provider's terms. |

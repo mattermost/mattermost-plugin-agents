@@ -35,7 +35,6 @@ const (
 	sentinelMCPClientSecret      = "sentinel-mcp-client-secret" // #nosec G101 -- test fixture value
 	sentinelMCPHeaderToken       = "sentinel-mcp-header-token"
 	sentinelMCPServiceAccount    = "sentinel-mcp-sa-header-token"
-	sentinelGoogleAPIKey         = "sentinel-google-key"
 	sentinelBraveAPIKey          = "sentinel-brave-key"
 	sentinelEmbeddingAPIKey      = "sentinel-embedding-key"
 	sentinelOTelHeaders          = "Authorization=Basic sentinel-otel-token"
@@ -55,7 +54,7 @@ const (
 	visibleMCPBaseURL         = "https://mcp.example.com"
 	visibleMCPHeaderName      = "Authorization"
 	visibleMCPOtherHeaderName = "X-Tenant"
-	visibleSearchEngineID     = "search-engine-id-visible"
+	visibleBraveAPIURL        = "https://brave-visible.example.com"
 	visibleEmbeddingModel     = "text-embedding-3-small"
 	visibleEmbeddingAPIURL    = "https://embeddings.example.com/v1"
 )
@@ -119,13 +118,10 @@ func storedCredentialConfig() *config.Config {
 		},
 		WebSearch: config.WebSearchConfig{
 			Enabled:  true,
-			Provider: "google",
-			Google: config.WebSearchGoogleConfig{
-				APIKey:         sentinelGoogleAPIKey,
-				SearchEngineID: visibleSearchEngineID,
-			},
+			Provider: "brave",
 			Brave: config.WebSearchBraveConfig{
 				APIKey: sentinelBraveAPIKey,
+				APIURL: visibleBraveAPIURL,
 			},
 		},
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
@@ -242,11 +238,6 @@ func credentialFields() []credentialField {
 			},
 		},
 		{
-			name: "webSearch.google.apiKey",
-			get:  func(cfg config.Config) string { return cfg.WebSearch.Google.APIKey },
-			set:  func(cfg *config.Config, v string) { cfg.WebSearch.Google.APIKey = v },
-		},
-		{
 			name: "openTelemetryHeaders",
 			get:  func(cfg config.Config) string { return cfg.OpenTelemetryHeaders },
 			set:  func(cfg *config.Config, v string) { cfg.OpenTelemetryHeaders = v },
@@ -297,7 +288,6 @@ func TestGetConfigDoesNotReturnStoredCredentials(t *testing.T) {
 		{field: "mcp.servers[0].clientSecret", sentinel: sentinelMCPClientSecret},
 		{field: "mcp.servers[0].headers[Authorization]", sentinel: sentinelMCPHeaderToken},
 		{field: "mcp.servers[0].serviceAccountHeaders[Authorization]", sentinel: sentinelMCPServiceAccount},
-		{field: "webSearch.google.apiKey", sentinel: sentinelGoogleAPIKey},
 		{field: "webSearch.brave.apiKey", sentinel: sentinelBraveAPIKey},
 		{field: "embeddingSearchConfig.embeddingProvider.parameters.apiKey", sentinel: sentinelEmbeddingAPIKey},
 		{field: "openTelemetryHeaders", sentinel: sentinelOTelHeaders},
@@ -332,7 +322,7 @@ func TestGetConfigPreservesNonCredentialFields(t *testing.T) {
 		{field: "mcp.servers[0].baseURL", value: visibleMCPBaseURL},
 		{field: "mcp.servers[0].headers key", value: visibleMCPHeaderName},
 		{field: "mcp.servers[0].headers second key", value: visibleMCPOtherHeaderName},
-		{field: "webSearch.google.searchEngineId", value: visibleSearchEngineID},
+		{field: "webSearch.brave.apiURL", value: visibleBraveAPIURL},
 		{field: "embeddingSearchConfig.embeddingProvider.parameters.embeddingModel", value: visibleEmbeddingModel},
 		{field: "embeddingSearchConfig.embeddingProvider.parameters.apiURL", value: visibleEmbeddingAPIURL},
 	}

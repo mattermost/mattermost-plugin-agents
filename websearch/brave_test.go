@@ -13,6 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type mockLogger struct{}
+
+func (m *mockLogger) Debug(message string, keyValuePairs ...any) {}
+func (m *mockLogger) Info(message string, keyValuePairs ...any)  {}
+func (m *mockLogger) Warn(message string, keyValuePairs ...any)  {}
+func (m *mockLogger) Error(message string, keyValuePairs ...any) {}
+
 func TestBraveProvider(t *testing.T) {
 	t.Run("successful search with summarizer returns answer with remapped citations", func(t *testing.T) {
 		// Mock Brave API server

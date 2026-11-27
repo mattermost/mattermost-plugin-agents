@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"syscall"
@@ -28,6 +29,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -109,6 +111,9 @@ type ConfigStore interface {
 	// persists the result under the config advisory lock. A transform error
 	// aborts the update and is returned as-is.
 	UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error)
+	// UpdateConfigWithOutcome is UpdateConfig returning the persisted config
+	// and any DB-backed agent IDs atomically remapped inside the transaction.
+	UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.
@@ -222,6 +227,7 @@ type API struct {
 	autoReplyStore        ChannelAutoReplyStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
+	dictationService      *dictation.Service
 
 	// artifactSecretCache caches the HTML artifact bridge secret after
 	// its first load from the KV store.
@@ -323,18 +329,39 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 	a.convService = svc
 }
 
+// clientContextKey holds the server's request context, which ends when the
+// client goes away, under the uncancelled context handlers run with.
+type clientContextKey struct{}
+
+// clientGone reports whether the client of c's request disconnected.
+func clientGone(c *gin.Context) bool {
+	ctx, ok := c.Request.Context().Value(clientContextKey{}).(context.Context)
+	return ok && ctx.Err() != nil
+}
+
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	// Servers with context-aware plugin HTTP cancel the request context when
 	// the request ends, but handlers hand LLM streams and tool loops that
 	// outlive the request to goroutines on this context.
 	serverCtx := r.Context()
-	r = r.WithContext(context.WithoutCancel(serverCtx))
+	r = r.WithContext(context.WithValue(context.WithoutCancel(serverCtx), clientContextKey{}, serverCtx))
 	if c != nil {
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
 
-	router := gin.Default()
+	router := a.newRouter(serverCtx, c)
+	router.ServeHTTP(w, r)
+}
+
+func (a *API) newRouter(serverCtx context.Context, c *plugin.Context) *gin.Engine {
+	// Use gin.New() instead of gin.Default(): gin.Recovery dumps full request
+	// headers (including cookies) in debug mode, and gin.Logger writes raw
+	// query strings and client IPs to stdout (plugin_stdout at INFO) while
+	// a.ginlogger, metricsMiddleware, otelgin, and auditMiddleware cover
+	// plugin-side observability.
+	router := gin.New()
+	router.Use(a.recovery(serverCtx))
 	router.Use(httpTracingMiddleware())
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
@@ -435,6 +462,12 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
+
+	// Dictation involves no agent, so a server with none can still dictate.
+	router.GET("/dictation/availability", a.handleGetDictationAvailability)
+	router.POST("/dictation/session", a.capabilityRequired(enterprise.CapDictation), a.handleCreateDictationSession)
+	// Not license-gated: a user can always end their own session.
+	router.DELETE("/dictation/session/:sessionid", a.handleEndDictationSession)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks. Semantic search is
@@ -551,7 +584,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Starts a search conversation with the selected bot in the user's DM
 	searchRouter.POST("/run", a.handleRunSearch)
 
-	router.ServeHTTP(w, r)
+	return router
 }
 
 // ServeMetrics serves the metrics endpoint
@@ -612,6 +645,45 @@ func (a *API) aiBotRequired(c *gin.Context) {
 		}
 	}
 	c.Set(ContextBotKey, bot)
+}
+
+func (a *API) recovery(serverCtx context.Context) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			// Check the server request context rather than c.Request.Context():
+			// ServeHTTP detaches c.Request.Context() with context.WithoutCancel
+			// for background streams, while inner middleware (such as /mcp-server)
+			// cancels its derived context in a defer during panic unwinding.
+			clientCtx := serverCtx
+			if clientCtx == nil {
+				clientCtx = c.Request.Context()
+			}
+			if clientCtx.Err() != nil {
+				a.pluginAPI.Log.Debug("client disconnected before response",
+					"method", c.Request.Method,
+					"path", c.FullPath(),
+				)
+				c.Abort()
+				return
+			}
+			a.pluginAPI.Log.Error("Panic recovered in HTTP handler",
+				"panic", fmt.Sprint(rec),
+				"method", c.Request.Method,
+				"path", c.FullPath(),
+				"stack", string(debug.Stack()),
+			)
+			if !c.Writer.Written() {
+				c.AbortWithStatus(http.StatusInternalServerError)
+			} else {
+				c.Abort()
+			}
+		}()
+		c.Next()
+	}
 }
 
 func (a *API) ginlogger(c *gin.Context) {

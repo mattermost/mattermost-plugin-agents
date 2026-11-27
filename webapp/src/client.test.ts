@@ -11,6 +11,9 @@ import manifest from './manifest';
 import {
     artifactPath,
     artifactURL,
+    createDictationSession,
+    getDictationAvailability,
+    endDictationSession,
     doChannelAnalysis,
     doLoopInAgent,
     doRunSearch,
@@ -27,6 +30,7 @@ import {
     getConversation,
     getConversationContext,
     getUserMCPTools,
+    refreshUserMCPTools,
     normalizeConversationResponse,
     renderCustomPrompt,
     searchAllChannels,
@@ -516,6 +520,23 @@ describe('getUserMCPTools', () => {
     });
 });
 
+describe('refreshUserMCPTools', () => {
+    test.each([
+        {name: 'default refresh sends no query', opts: undefined, params: {}}, // eslint-disable-line no-undefined
+        {name: 'agent editor refresh forwards agentConfig and service account params', opts: {agentId: 'a1', serviceAccount: true, agentConfig: true}, params: {catalog: 'service_account', purpose: 'agent_config', agent_id: 'a1'}},
+    ])('$name', async ({opts, params}) => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({servers: []})} as unknown as Response);
+
+        await refreshUserMCPTools(opts);
+
+        const [rawUrl, init] = mockFetch.mock.calls[0];
+        const url = new URL(rawUrl);
+        expect(init?.method).toBe('POST');
+        expect(`${url.origin}${url.pathname}`).toBe(`${siteURL}/plugins/${manifest.id}/mcp/tools/refresh`);
+        expect(Object.fromEntries(url.searchParams)).toEqual(params);
+    });
+});
+
 describe('fetchModels', () => {
     test('names the saved service and passes the credential through unchanged', async () => {
         mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve([])} as unknown as Response);
@@ -545,5 +566,85 @@ describe('getAIThreads', () => {
 
         await expect(request).rejects.toThrow('aborted');
         timeoutSpy.mockRestore();
+    });
+});
+
+describe('getDictationAvailability', () => {
+    test('returns the availability from the plugin route', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({available: true})} as unknown as Response);
+
+        await expect(getDictationAvailability()).resolves.toEqual({available: true});
+        expect(mockFetch.mock.calls[0][0]).toBe(`${siteURL}/plugins/${manifest.id}/dictation/availability`);
+    });
+
+    test.each([
+        {name: 'an error status', mock: () => mockFetch.mockResolvedValue({ok: false, status: 503} as unknown as Response), status: 503},
+        {name: 'a network failure', mock: () => mockFetch.mockRejectedValue(new TypeError('offline')), status: 0},
+        {name: 'an unreadable body', mock: () => mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.reject(new SyntaxError('bad json'))} as unknown as Response), status: 0},
+    ])('$name rejects with status $status', async ({mock, status}) => {
+        mock();
+        await expect(getDictationAvailability()).rejects.toMatchObject({status_code: status});
+    });
+});
+
+describe('createDictationSession', () => {
+    test('sends the offer as JSON to the plugin route, refusing redirects', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 201, json: () => Promise.resolve({sdp: 'ANSWER', sessionId: 's'})} as unknown as Response);
+
+        await expect(createDictationSession('OFFER')).resolves.toEqual({sdp: 'ANSWER', sessionId: 's'});
+
+        const [url, init] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/dictation/session`);
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body as string)).toEqual({sdp: 'OFFER'});
+        expect(init.redirect).toBe('error');
+        expect(init.signal).toBeDefined();
+    });
+
+    test.each([413, 429, 502])('a %s rejects with its status', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: () => Promise.resolve({error: 'x'})} as unknown as Response);
+        await expect(createDictationSession('OFFER')).rejects.toMatchObject({status_code: status});
+    });
+
+    test('a network failure or timeout rejects with status 0', async () => {
+        mockFetch.mockRejectedValue(new DOMException('timed out', 'TimeoutError'));
+        await expect(createDictationSession('OFFER')).rejects.toMatchObject({status_code: 0});
+    });
+
+    test('aborting the caller signal aborts the request', async () => {
+        mockFetch.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+            init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        }));
+        const controller = new AbortController();
+
+        const creating = createDictationSession('OFFER', controller.signal);
+        controller.abort();
+
+        await expect(creating).rejects.toMatchObject({status_code: 0});
+        expect((mockFetch.mock.calls[0][1] as RequestInit).signal!.aborted).toBe(true);
+    });
+});
+
+describe('endDictationSession', () => {
+    test('deletes the session by id, refusing redirects and outliving the page', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200} as unknown as Response);
+
+        await expect(endDictationSession('id/1')).resolves.toBeUndefined();
+
+        const [url, init] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/dictation/session/id%2F1`);
+        expect(init.method).toBe('DELETE');
+        expect(init.redirect).toBe('error');
+        expect(init.keepalive).toBe(true);
+    });
+
+    test.each([
+        {name: 'an unknown session', mock: () => mockFetch.mockResolvedValue({ok: false, status: 404} as unknown as Response), status: 404},
+        {name: 'the end rate limit', mock: () => mockFetch.mockResolvedValue({ok: false, status: 429} as unknown as Response), status: 429},
+        {name: 'an unconfirmed hangup', mock: () => mockFetch.mockResolvedValue({ok: false, status: 502} as unknown as Response), status: 502},
+        {name: 'a network failure', mock: () => mockFetch.mockRejectedValue(new TypeError('offline')), status: 0},
+    ])('$name rejects with its status', async ({mock, status}) => {
+        mock();
+        await expect(endDictationSession('s')).rejects.toMatchObject({status_code: status});
     });
 });

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -43,6 +44,10 @@ type Tool struct {
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
+
+	// ReadOnlyHint is the MCP server's annotations.readOnlyHint metadata.
+	// Used only for UI grouping/hints; never for approval or authorization.
+	ReadOnlyHint bool
 
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
@@ -521,11 +526,15 @@ func (s *ToolStore) ResolveToolCall(ctx context.Context, name string, info ToolC
 	return result, err
 }
 
+// GetTools returns the tools sorted by name. Requests list tools in this
+// order, and the order must not change between requests: tools lead the
+// prompt prefix, so any change defeats provider prompt caching.
 func (s *ToolStore) GetTools() []Tool {
 	result := make([]Tool, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, tool)
 	}
+	slices.SortFunc(result, func(a, b Tool) int { return strings.Compare(a.Name, b.Name) })
 	return result
 }
 
@@ -711,6 +720,50 @@ func NormalizeMCPServerOrigins(origins []string) []string {
 	}
 
 	return normalized
+}
+
+// RemapEnabledMCPTools rewrites any EnabledMCPTool whose normalized ServerOrigin
+// appears in remaps (keyed by NormalizeMCPServerOrigin(oldURL) -> newURL) and
+// deduplicates resulting (normalized origin, tool name) pairs. It returns the
+// original slice and false when no entry matched remaps.
+func RemapEnabledMCPTools(tools []EnabledMCPTool, remaps map[string]string) ([]EnabledMCPTool, bool) {
+	if len(tools) == 0 || len(remaps) == 0 {
+		return tools, false
+	}
+
+	matched := false
+	for _, t := range tools {
+		if nextOrigin, ok := remaps[NormalizeMCPServerOrigin(t.ServerOrigin)]; ok && t.ServerOrigin != nextOrigin {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return tools, false
+	}
+
+	remapped := make([]EnabledMCPTool, 0, len(tools))
+	type toolKey struct {
+		origin string
+		name   string
+	}
+	seen := make(map[toolKey]struct{}, len(tools))
+	for _, t := range tools {
+		origin := t.ServerOrigin
+		if nextOrigin, ok := remaps[NormalizeMCPServerOrigin(origin)]; ok && origin != nextOrigin {
+			origin = nextOrigin
+		}
+		k := toolKey{origin: NormalizeMCPServerOrigin(origin), name: t.ToolName}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		remapped = append(remapped, EnabledMCPTool{
+			ServerOrigin: origin,
+			ToolName:     t.ToolName,
+		})
+	}
+	return remapped, true
 }
 
 // RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches

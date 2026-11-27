@@ -42,6 +42,23 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 	}
 }
 
+// TranscriptionServiceTypes are the service types that can transcribe
+// recorded audio files (Meetings).
+var TranscriptionServiceTypes = []string{llm.ServiceTypeOpenAI, llm.ServiceTypeOpenAICompatible, llm.ServiceTypeAzure}
+
+// RealtimeSessionServiceTypes are the service types whose realtime calls
+// (WebRTC SDP exchange, sideband and hangup) are supported for dictation.
+var RealtimeSessionServiceTypes = []string{llm.ServiceTypeOpenAI}
+
+// ProviderForServiceType maps serviceType to its Bifrost provider, returning
+// an error when serviceType is not one of allowed.
+func ProviderForServiceType(serviceType string, allowed []string) (schemas.ModelProvider, error) {
+	if !slices.Contains(allowed, serviceType) {
+		return "", fmt.Errorf("service type %q is not supported for this feature", serviceType)
+	}
+	return MapServiceTypeToProvider(serviceType)
+}
+
 // SupportsNativeTools reports whether the given service type can use provider
 // native tools (currently, web search). This gates both request-time filtering
 // and the effective-behavior checks used by built-in Mattermost tools so that

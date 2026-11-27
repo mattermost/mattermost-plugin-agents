@@ -152,7 +152,7 @@ func TestApprovalRunOnDeadNodeIsRecovered(t *testing.T) {
 		&channelFollowUpTestConfig{},
 	)
 
-	convService := conversation.NewService(s, nil, nil, nil)
+	convService := conversation.NewService(s, nil, internalLivePostClient{}, nil)
 	c := &Conversations{
 		mmClient:          mmClient,
 		contextBuilder:    contextBuilder,

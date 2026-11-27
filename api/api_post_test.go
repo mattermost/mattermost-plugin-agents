@@ -1049,3 +1049,62 @@ func TestHandleRegenerateRejectsDeletedInitiatingPost(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode, recorder.Body.String())
 }
+
+func TestReadablePostRefusesMissingOrDeletedPost(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const postID = "post12345678901234567890ab"
+
+	routes := []struct {
+		endpoint string
+		body     string
+	}{
+		{endpoint: "react"},
+		{endpoint: "loop_in_agent"},
+		{endpoint: "stop"},
+		{endpoint: "regenerate"},
+		{endpoint: "tool_call", body: `{"accepted_tool_ids":["tc-1"]}`},
+		{endpoint: "tool_result", body: `{"accepted_tool_ids":["tc-1"]}`},
+	}
+
+	states := []struct {
+		name string
+		mock func(e *TestEnvironment)
+	}{
+		{
+			name: "missing post",
+			mock: func(e *TestEnvironment) {
+				e.mockAPI.On("GetPost", postID).Return(nil, model.NewAppError("GetPost", "app.post.get.app_error", nil, "", http.StatusNotFound))
+			},
+		},
+		{
+			name: "soft-deleted post",
+			mock: func(e *TestEnvironment) {
+				e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: testBotUserID, ChannelId: "chan1", DeleteAt: model.GetMillis()}, nil)
+			},
+		},
+	}
+
+	for _, state := range states {
+		for _, route := range routes {
+			t.Run(state.name+"/"+route.endpoint, func(t *testing.T) {
+				e := SetupTestEnvironment(t)
+				defer e.Cleanup(t)
+				e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+				state.mock(e)
+
+				var body io.Reader
+				if route.body != "" {
+					body = strings.NewReader(route.body)
+				}
+				req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/"+route.endpoint, body)
+				req.Header.Add("Mattermost-User-Id", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+				require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode, recorder.Body.String())
+			})
+		}
+	}
+}

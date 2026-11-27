@@ -49,12 +49,20 @@ func (a *API) postAuthorizationRequired(c *gin.Context) {
 
 // readablePost loads the :postid post and its channel into the request
 // context, returning whichever it loaded, and aborts unless the requester can
-// read that channel.
+// read that channel. Missing or soft-deleted posts answer 404.
 func (a *API) readablePost(c *gin.Context) (*model.Post, *model.Channel) {
 	post, err := a.pluginAPI.Post.GetPost(c.Param("postid"))
+	if mmapi.IsNotFound(err) {
+		c.AbortWithError(http.StatusNotFound, errors.New("post not found"))
+		return nil, nil
+	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return nil, nil
+	}
+	if post.DeleteAt != 0 {
+		c.AbortWithError(http.StatusNotFound, errors.New("post not found"))
+		return post, nil
 	}
 	c.Set(ContextPostKey, post)
 

@@ -119,7 +119,7 @@ func setupChannelMentionService(t *testing.T) (*conversation.Service, *store.Sto
 	require.NoError(t, err)
 
 	bots := &channelMentionBotLookup{botIDs: map[string]bool{}}
-	svc := conversation.NewService(s, nil, nil, bots)
+	svc := conversation.NewService(s, nil, livePostClient{}, bots)
 	return svc, s
 }
 
@@ -344,7 +344,7 @@ func TestChannelMentionContextMerge(t *testing.T) {
 	userPostID := model.NewId()
 
 	bots := &channelMentionBotLookup{botIDs: map[string]bool{botID: true}}
-	svc := conversation.NewService(s, nil, nil, bots)
+	svc := conversation.NewService(s, nil, livePostClient{}, bots)
 
 	// Create conversation with a user turn
 	result, err := svc.GetOrCreateConversation(conversation.GetOrCreateParams{

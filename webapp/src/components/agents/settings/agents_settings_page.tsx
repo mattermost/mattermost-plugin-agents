@@ -24,7 +24,7 @@ import {SETTINGS_PATH, useNavigationGuard} from '../use_agents_route';
 
 import {DEFAULT_SETTINGS_SECTION, SETTINGS_SECTIONS, SettingsSection} from './sections';
 import {withSavedMCPServer, withoutMCPServer} from './mcp_server_persistence';
-import SettingsSectionContent, {RuntimeBotOption, defaultConfig} from './settings_sections';
+import SettingsSectionContent, {RuntimeBotOption, defaultConfig, withConfigDefaults} from './settings_sections';
 import {useSettingsAccess} from './use_settings_access';
 
 const isSettingsPath = (pathname: string) => pathname === SETTINGS_PATH || pathname.startsWith(`${SETTINGS_PATH}/`);
@@ -56,6 +56,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [linkDomainsError, setLinkDomainsError] = useState('');
+    const [dictationSaveError, setDictationSaveError] = useState('');
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
 
@@ -68,7 +69,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
             try {
                 const cfg = await getPluginConfig();
                 if (current) {
-                    const loaded = {...defaultConfig, ...cfg};
+                    const loaded = withConfigDefaults(cfg);
                     setSavedConfig(loaded);
                     if (canEdit && !loaded.services?.length) {
                         draftServiceRef.current = {...firstNewService};
@@ -135,6 +136,9 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
     const updateConfig = useCallback((updates: Partial<PluginConfig>) => {
         if ('allowedLinkDomains' in updates) {
             setLinkDomainsError('');
+        }
+        if ('dictation' in updates) {
+            setDictationSaveError('');
         }
         setLocalConfig((prev) => ({...prev, ...updates}));
         setDirty(true);
@@ -214,15 +218,27 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
 
             // Adopt the normalized saved config so server-minted service/MCP
             // IDs (and the UI gated on them) appear without a reload.
-            setLocalConfig({...defaultConfig, ...saved});
-            setSavedConfig({...defaultConfig, ...saved});
+            setLocalConfig(withConfigDefaults(saved));
+            setSavedConfig(withConfigDefaults(saved));
             setDirty(false);
             setLinkDomainsError('');
+            setDictationSaveError('');
         } catch (e) {
-            if ((e as {server_error_id?: string})?.server_error_id === 'invalid_allowed_link_domains') {
+            const err = e as {server_error_id?: string; message?: string};
+            if (err?.server_error_id === 'invalid_allowed_link_domains') {
                 setLinkDomainsError(intl.formatMessage({defaultMessage: 'One or more entries are not valid domains.'}));
             }
-            setSaveError(intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
+
+            // The save bar shows on every section, so the dictation reason is
+            // visible even when the change that broke it was elsewhere, such
+            // as removing the transcription service.
+            if (err?.server_error_id === 'invalid_dictation') {
+                const reason = err.message || intl.formatMessage({defaultMessage: 'The Dictation settings are not valid.'});
+                setDictationSaveError(reason);
+                setSaveError(reason);
+            } else {
+                setSaveError(intl.formatMessage({defaultMessage: 'Failed to save configuration.'}));
+            }
         } finally {
             setSaving(false);
         }
@@ -233,6 +249,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         setDirty(false);
         setSaveError(null);
         setLinkDomainsError('');
+        setDictationSaveError('');
     };
 
     const tabLabels: Record<SettingsSection, React.ReactNode> = {
@@ -241,6 +258,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
         mcp: <FormattedMessage defaultMessage='MCP servers'/>,
         search: <FormattedMessage defaultMessage='Embedding search'/>,
         'web-search': <FormattedMessage defaultMessage='Web search'/>,
+        dictation: <FormattedMessage defaultMessage='Dictation'/>,
         debug: <FormattedMessage defaultMessage='Debug'/>,
     };
 
@@ -290,6 +308,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                     runtimeBots={runtimeBots}
                     runtimeBotsError={runtimeBotsError}
                     linkDomainsError={linkDomainsError}
+                    dictationSaveError={dictationSaveError}
                     updateConfig={updateConfig}
                     updateMCP={updateMCP}
                     persistMCPServer={persistMCPServer}
@@ -310,7 +329,7 @@ const AgentsSettingsPage = ({section = DEFAULT_SETTINGS_SECTION, onSelectSection
                         <FormattedMessage defaultMessage='Settings'/>
                     </PageTitle>
                     <Subtitle>
-                        <FormattedMessage defaultMessage='AI services, tools, search and other settings that apply to every agent in the workspace.'/>
+                        <FormattedMessage defaultMessage='Workspace-wide settings for AI services, tools, and search.'/>
                     </Subtitle>
                 </PageHeader>
                 <PageBody>{body}</PageBody>

@@ -220,7 +220,7 @@ func newWakeEnv(t *testing.T, bot *bots.Bot) *wakeEnv {
 		mmClient:         env.mmClient,
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             botsService,
-		convService:      conversation.NewService(env.convStore, nil, nil, nil),
+		convService:      conversation.NewService(env.convStore, nil, internalLivePostClient{}, nil),
 		streamingService: env.streaming,
 	}
 	return env

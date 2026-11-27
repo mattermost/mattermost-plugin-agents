@@ -29,6 +29,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -50,6 +51,8 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 	gin.DefaultWriter = io.Discard
 
 	mockAPI := &plugintest.API{}
+	allowAnyPluginAPILogging(mockAPI)
+	mockAPI.On("LogAuditRec", mock.Anything).Return().Maybe()
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	cfg := &testConfigImpl{}
@@ -1268,6 +1271,11 @@ func (s *failingConfigStore) UpdateConfig(transform func(prev *config.Config) (c
 		return next, err
 	}
 	return next, nil
+}
+
+func (s *failingConfigStore) UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error) {
+	cfg, err := s.UpdateConfig(transform)
+	return store.ConfigUpdateOutcome{Config: cfg}, err
 }
 
 // setupAdminAuditTest wires the full-router environment with audit capture so

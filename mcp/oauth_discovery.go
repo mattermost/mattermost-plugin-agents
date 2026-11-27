@@ -29,18 +29,27 @@ import (
 // follow a challenge URL because some servers (e.g. Google's Workspace MCP
 // servers) challenge with a per-tool metadata document whose resource does
 // not match the server URL, while serving a compliant document at the
-// well-known location. Every candidate still passes the strict resource
-// check. The first candidate to succeed wins; if all fail, the first
-// candidate's error is returned since it is the primary variant.
+// well-known location. When the configured server URL carries a query string
+// (or fragment), the challenge and path-inserted candidates try the exact URL
+// first and then accept a metadata document whose resource equals the same
+// scheme, host, port, and path with the query and fragment removed. Every
+// candidate still passes the strict resource check. The first candidate to
+// succeed wins; if all fail, the first candidate's error is returned since it
+// is the primary variant.
 func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serverURL, metadataURL string) (*oauthex.ProtectedResourceMetadata, error) {
 	type prmCandidate struct {
 		metadataURL string
-		resource    string
+		resources   []string
+	}
+
+	serverResources := []string{serverURL}
+	if querylessURL := stripQueryAndFragment(serverURL); querylessURL != "" {
+		serverResources = append(serverResources, querylessURL)
 	}
 
 	var candidates []prmCandidate
 	if metadataURL != "" {
-		candidates = append(candidates, prmCandidate{metadataURL: metadataURL, resource: serverURL})
+		candidates = append(candidates, prmCandidate{metadataURL: metadataURL, resources: serverResources})
 	}
 
 	pathInserted, err := constructWellKnownURL(serverURL, "oauth-protected-resource")
@@ -48,44 +57,81 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 		return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
 	}
 	if pathInserted != metadataURL {
-		candidates = append(candidates, prmCandidate{metadataURL: pathInserted, resource: serverURL})
+		candidates = append(candidates, prmCandidate{metadataURL: pathInserted, resources: serverResources})
 	}
 
 	if parsed, parseErr := url.Parse(serverURL); parseErr == nil && strings.Trim(parsed.Path, "/") != "" {
 		origin := &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
 		candidates = append(candidates, prmCandidate{
 			metadataURL: origin.String() + "/.well-known/oauth-protected-resource",
-			resource:    origin.String(),
+			resources:   []string{origin.String()},
 		})
 	}
 
 	var firstErr error
 	for _, candidate := range candidates {
-		prm, err := oauthex.GetProtectedResourceMetadata(ctx, candidate.metadataURL, candidate.resource, m.httpClient)
-		if err != nil {
-			m.pluginAPI.LogDebug("MCP OAuth discovery: protected resource metadata candidate failed",
+		for _, expectedResource := range candidate.resources {
+			prm, fetchErr := oauthex.GetProtectedResourceMetadata(ctx, candidate.metadataURL, expectedResource, m.httpClient)
+			if fetchErr != nil {
+				m.pluginAPI.LogDebug("MCP OAuth discovery: protected resource metadata candidate failed",
+					"metadataURL", candidate.metadataURL,
+					"resource", expectedResource,
+					"error", fetchErr)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("failed to fetch protected resource metadata from %s: %w", candidate.metadataURL, fetchErr)
+				}
+				// Only retry the same metadata URL with the query-less resource
+				// when oauthex rejected the document solely on its resource field.
+				if !strings.Contains(fetchErr.Error(), "got metadata resource") {
+					break
+				}
+				continue
+			}
+			if !sameServerOrigin(prm.Resource, serverURL) {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("protected resource metadata from %s returned cross-origin resource %q", candidate.metadataURL, prm.Resource)
+				}
+				break
+			}
+			if len(prm.AuthorizationServers) == 0 {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("no authorization servers found in protected resource metadata from %s", candidate.metadataURL)
+				}
+				break
+			}
+			m.pluginAPI.LogDebug("MCP OAuth discovery: resolved protected resource metadata",
 				"metadataURL", candidate.metadataURL,
-				"resource", candidate.resource,
-				"error", err)
-			if firstErr == nil {
-				firstErr = fmt.Errorf("failed to fetch protected resource metadata from %s: %w", candidate.metadataURL, err)
-			}
-			continue
+				"resource", prm.Resource,
+				"authorizationServers", prm.AuthorizationServers)
+			return prm, nil
 		}
-		if len(prm.AuthorizationServers) == 0 {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("no authorization servers found in protected resource metadata from %s", candidate.metadataURL)
-			}
-			continue
-		}
-		m.pluginAPI.LogDebug("MCP OAuth discovery: resolved protected resource metadata",
-			"metadataURL", candidate.metadataURL,
-			"resource", prm.Resource,
-			"authorizationServers", prm.AuthorizationServers)
-		return prm, nil
 	}
 
 	return nil, firstErr
+}
+
+// stripQueryAndFragment returns rawURL with its query string and fragment
+// removed, preserving scheme, host, port, and path verbatim. It returns ""
+// when rawURL has neither query nor fragment or cannot be parsed as an
+// absolute URL with a host.
+func stripQueryAndFragment(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	if parsed.RawQuery == "" && !parsed.ForceQuery && parsed.Fragment == "" && parsed.RawFragment == "" {
+		return ""
+	}
+	stripped := *parsed
+	stripped.RawQuery = ""
+	stripped.ForceQuery = false
+	stripped.Fragment = ""
+	stripped.RawFragment = ""
+	result := stripped.String()
+	if result == rawURL || !sameOrigin(parsed, &stripped) {
+		return ""
+	}
+	return result
 }
 
 // fetchAuthorizationServerMetadata fetches OAuth 2.0 Authorization Server

@@ -44,6 +44,10 @@ const configErrorInvalidLinkDomains agentErrorCode = "invalid_allowed_link_domai
 // stored credential stands behind it.
 const configErrorUnresolvedCredentials agentErrorCode = "unresolved_credentials"
 
+// configErrorInvalidDictation: dictation is enabled without a supported
+// transcription service or a model.
+const configErrorInvalidDictation agentErrorCode = "invalid_dictation"
+
 // validateServiceStructuredOutputPolicies rejects a service whose
 // structured-output policy is not a value the runtime understands. Persisting a
 // typo would take every agent on that service offline (EnsureBots skips an
@@ -182,7 +186,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// IDs; they never reclaim an existing identity by name or origin.
 	var changedKeys []string
 	var prevServers []config.MCPServerConfig
-	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+	outcome, err := a.configStore.UpdateConfigWithOutcome(func(prev *config.Config) (config.Config, error) {
 		// A masked credential means "keep the stored one"; any other value is what
 		// the admin typed, including an empty one that clears it.
 		restored := config.RestoreSecrets(cfg, prev)
@@ -215,8 +219,18 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		if !systemAdmin {
 			normalized.Bots = nil
 			if prev != nil {
-				normalized.Bots = prev.Bots
+				normalized.Bots = slices.Clone(prev.Bots)
 			}
+		}
+		if remaps := mcp.ServerURLRemaps(prevServers, normalized.MCP.Servers); len(remaps) > 0 {
+			for i := range normalized.Bots {
+				if remapped, changed := llm.RemapEnabledMCPTools(normalized.Bots[i].EnabledMCPTools, remaps); changed {
+					normalized.Bots[i].EnabledMCPTools = remapped
+				}
+			}
+		}
+		if err := normalized.ValidateDictation(); err != nil {
+			return config.Config{}, err
 		}
 		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
 			return config.Config{}, err
@@ -238,6 +252,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		// Duplicate payload IDs, or an embedded server ID that does not match storage.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload has duplicate service or MCP server IDs, or an embedded server ID that does not match the stored identity: %w", err))
 		return
+	case errors.Is(err, config.ErrInvalidDictationConfig):
+		abortAgentRequestWithCode(c, http.StatusBadRequest, configErrorInvalidDictation, err)
+		return
 	case errors.Is(err, store.ErrLegacyUUIDServiceID):
 		// After the ABAC ID migration, a dashed UUID is an invalid service ID format.
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid service ID format: %w", err))
@@ -246,6 +263,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
+
+	saved := outcome.Config
+	remappedAgentIDs := outcome.RemappedAgentIDs
 
 	// From here on the config HAS changed in the database. If a later step
 	// fails (cluster notify), the audit record's fail status would otherwise
@@ -259,9 +279,19 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 	}
 
+	// DB-backed agents whose EnabledMCPTools referenced an edited server's old
+	// URL were remapped atomically inside UpdateConfigWithOutcome under the
+	// config save advisory lock. Record the affected server and agent IDs in
+	// the audit trail, update local runtime config, notify peers, and refresh
+	// each remapped agent individually.
+	urlRemaps := config.MCPServerURLRemaps(prevServers, saved.MCP.Servers)
+	recordMCPURLRemapAudit(c, urlRemaps, remappedAgentIDs)
+
 	a.configUpdater.Update(&saved)
 
 	notifyErr := a.clusterNotifier.PublishConfigUpdate()
+
+	a.refreshRemappedMCPAgents(remappedAgentIDs, notifyErr == nil)
 
 	// Remove saved sign-ins the change orphaned or that were issued for a
 	// server's old origin. Grants are only used by the server they were
@@ -270,6 +300,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// made unusable rather than guarding against misuse. It runs after the
 	// change is applied so a slow sweep never delays that.
 	a.clearMCPServerOAuthState(c, prevServers, saved.MCP.Servers)
+	a.remapMCPUserPreferences(c, urlRemaps)
 
 	if notifyErr != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of config update: %w", notifyErr))
@@ -277,6 +308,91 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, adminConfigResponse(saved))
+}
+
+func recordMCPURLRemapAudit(c *gin.Context, remaps []config.MCPServerURLRemap, remappedAgentIDs []string) {
+	if len(remaps) > 0 {
+		serverIDs := make([]string, 0, len(remaps))
+		for _, r := range remaps {
+			if r.ServerID != "" && !slices.Contains(serverIDs, r.ServerID) {
+				serverIDs = append(serverIDs, r.ServerID)
+			}
+		}
+		if len(serverIDs) > 0 {
+			audit.AddParam(auditRec(c), audit.KeyMCPURLRemappedServerIDs, audit.TruncateIDs(serverIDs))
+		}
+	}
+	if len(remappedAgentIDs) > 0 {
+		audit.AddParam(auditRec(c), audit.KeyMCPURLRemappedAgentIDs, audit.TruncateIDs(remappedAgentIDs))
+	}
+}
+
+// refreshRemappedMCPAgents refreshes each DB-backed agent whose EnabledMCPTools
+// was atomically remapped inside UpdateConfigWithOutcome, locally via
+// RefreshAgent and (when publishPeers is true) across HA peers via
+// PublishAgentUpdate(agentID), so a failing unrelated agent in EnsureBots
+// cannot leave remapped allowlists stale. Peer notification is skipped when
+// PublishConfigUpdate failed so peers do not reload remapped allowlists
+// against a stale in-memory MCP config.
+func (a *API) refreshRemappedMCPAgents(agentIDs []string, publishPeers bool) {
+	if len(agentIDs) == 0 {
+		return
+	}
+
+	if a.bots != nil {
+		for _, id := range agentIDs {
+			if err := a.bots.RefreshAgent(id); err != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to refresh agent after MCP server URL remap", "agent_id", id, "error", err)
+			}
+		}
+	}
+
+	if publishPeers && a.clusterAgentNotifier != nil {
+		for _, id := range agentIDs {
+			if err := a.clusterAgentNotifier.PublishAgentUpdate(id); err != nil && a.pluginAPI != nil {
+				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "agent_id", id, "error", err)
+			}
+		}
+	}
+
+	if a.mmClient != nil {
+		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
+	}
+}
+
+// remapMCPUserPreferences updates per-user disabled MCP server preferences in
+// KV so same-origin URL edits (such as adding or removing a query string) keep
+// users' existing provider toggles pointing at the edited server. It resolves
+// each edited server's latest saved URL from configStore so concurrent edits
+// (for example A->B racing with B->C) converge on the final URL.
+func (a *API) remapMCPUserPreferences(c *gin.Context, remaps []config.MCPServerURLRemap) {
+	if len(remaps) == 0 || a.pluginAPI == nil {
+		return
+	}
+	var loadServers func() ([]mcp.ServerConfig, error)
+	if a.configStore != nil {
+		loadServers = func() ([]mcp.ServerConfig, error) {
+			cfg, err := a.configStore.GetConfig()
+			if err != nil {
+				return nil, err
+			}
+			if cfg == nil {
+				return nil, nil
+			}
+			return cfg.MCP.Servers, nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), mcpSignInClearTimeout)
+	defer cancel()
+	updated, err := mcp.RemapUserPreferencesConverging(ctx, &a.pluginAPI.KV, remaps, loadServers)
+	if err != nil {
+		a.pluginAPI.Log.Warn("Failed to remap per-user MCP provider preferences after server URL change", "updated", updated, "error", err)
+		audit.AddParam(auditRec(c), audit.KeyMCPPrefsRemapFailed, true)
+		return
+	}
+	if updated > 0 {
+		a.pluginAPI.Log.Info("Remapped per-user MCP provider preferences after server URL change", "updated", updated)
+	}
 }
 
 // clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP

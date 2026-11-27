@@ -60,6 +60,14 @@ func NewToolsCache(kvAPI KVStore, log Logger) *ToolsCache {
 
 // GetTools retrieves cached tools for a server, returns nil if missing
 func (tc *ToolsCache) GetTools(serverID string) map[string]*mcp.Tool {
+	return tc.GetToolsForURL(serverID, "")
+}
+
+// GetToolsForURL retrieves cached tools for a server when the cached entry was
+// fetched from serverURL (or any URL when serverURL is empty). A URL mismatch
+// is treated as a cache miss so query or path edits discover fresh tools across
+// every cluster node without waiting for cache expiry.
+func (tc *ToolsCache) GetToolsForURL(serverID, serverURL string) map[string]*mcp.Tool {
 	key := tc.buildCacheKey(serverID)
 
 	var cached CachedTools
@@ -73,6 +81,10 @@ func (tc *ToolsCache) GetTools(serverID string) map[string]*mcp.Tool {
 	// Check if data was actually populated
 	if cached.Tools == nil || cached.Timestamp.IsZero() {
 		tc.log.Debug("Cache miss for server", "serverID", serverID)
+		return nil
+	}
+	if serverURL != "" && cached.ServerURL != serverURL {
+		tc.log.Debug("Cache miss for server due to URL change", "serverID", serverID)
 		return nil
 	}
 

@@ -1,26 +1,10 @@
-<!--
-Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
-See LICENSE.txt for license information.
--->
-
 # Use Mattermost Agents as your personal AI assistant
 
-Ask an agent to search and post across Mattermost, act in Jira or GitHub through MCP servers, schedule posts, and hand off long-running work. It acts as you and asks before it changes anything, unless your admin set a tool to run automatically.
-
-## How an agent works
-
-You message an agent in a direct message or the **Agents** pane. The agent is a Mattermost bot backed by the LLM your admin chose, which can be a self-hosted model. When a request needs more than the model knows, the agent calls tools:
-
-- **Mattermost tools** to search, read, post, and manage channels. The [tool reference](mcp_tools.md) lists them all.
-- **Remote MCP servers** for other systems such as an issue tracker or a calendar. You connect each one with your own account.
-- **Plugin tools** from Mattermost plugins that register with Agents.
-- **Built-in tools** to search the web (if your admin set it up), create files, ask you a multiple-choice question, and wait for long-running work.
-
-Mattermost and plugin tool calls run as you, so the agent reaches only what you can reach. MCP tool calls use your own account on each system unless the agent uses a shared service account. Calls that need your approval wait for you to accept them. See [Use tools and approve actions](using_tools.md), which also covers agents that use a shared service account.
+Ask an agent to search and post across Mattermost, act in Jira or GitHub through MCP servers, schedule posts, and hand off long-running work. For starting conversations, creating agents, and attaching files, see [Use Mattermost Agents](user_guide.md). For tool approvals and account connections, see [Use tools and approve actions](using_tools.md).
 
 ## Work across Mattermost
 
-The built-in Mattermost tools cover most day-to-day actions:
+Built-in Mattermost tools cover day-to-day actions across channels, threads, and direct messages (see the [tool reference](mcp_tools.md) for the full list):
 
 - Search posts and files, and read posts, threads, and channels.
 - Look up users, teams, groups, and channel members.

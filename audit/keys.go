@@ -21,6 +21,7 @@ var (
 	KeyConversationID   = string(telemetry.ConversationID)
 	KeyAgentID          = string(telemetry.AgentID)
 	KeyAgentName        = string(telemetry.AgentName)
+	KeyServiceID        = string(telemetry.ServiceID)
 	KeyToolName         = string(telemetry.ToolName)
 	KeyToolID           = string(telemetry.ToolID)
 	KeyMCPServer        = string(telemetry.MCPServer)
@@ -47,6 +48,21 @@ const (
 	// KeyMCPSignInsClearFailed marks a configuration change whose removal of
 	// saved MCP sign-ins did not complete.
 	KeyMCPSignInsClearFailed = "agents.mcp_server.signins_clear_failed"
+
+	// KeyMCPURLRemappedServerIDs lists the remote MCP servers whose same-origin
+	// URL change triggered remapping of agent tool grants and user preferences.
+	KeyMCPURLRemappedServerIDs = "agents.mcp_server.url_remapped.ids"
+
+	// KeyMCPURLRemappedAgentIDs lists the DB-backed agents whose EnabledMCPTools
+	// were rewritten to follow a remote MCP server's same-origin URL change.
+	KeyMCPURLRemappedAgentIDs = "agents.mcp_server.url_remapped_agents.ids"
+
+	// KeyMCPPrefsRemapFailed marks a configuration change whose remapping of
+	// per-user MCP provider preferences did not complete.
+	KeyMCPPrefsRemapFailed = "agents.mcp_server.prefs_remap_failed"
+
+	// KeyDictationSessionID identifies a dictation session.
+	KeyDictationSessionID = "agents.dictation.session.id"
 
 	// MetaTraceID is the meta key carrying the OpenTelemetry trace ID of the
 	// request, letting an auditor pivot from an audit record to the full

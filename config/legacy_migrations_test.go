@@ -20,6 +20,15 @@ func TestGenerateServiceID(t *testing.T) {
 	assert.NotEqual(t, id, generateServiceID(), "IDs must be unique")
 }
 
+func TestNewUUIDv4(t *testing.T) {
+	id1 := newUUIDv4()
+	id2 := newUUIDv4()
+	assert.Len(t, id1, 36)
+	assert.Equal(t, byte('4'), id1[14], "UUID version nibble must be 4")
+	assert.Contains(t, []byte{'8', '9', 'a', 'b'}, id1[19], "UUID variant nibble must be RFC 4122")
+	assert.NotEqual(t, id1, id2)
+}
+
 func TestMigrateSeparateServicesFromBots(t *testing.T) {
 	tests := []struct {
 		name           string

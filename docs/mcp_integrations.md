@@ -25,9 +25,10 @@ Everything is under **Agents > Settings > MCP servers**. It has a **Configuratio
    | **Server URL** | The server's final address. Redirects to a different origin, including an `http` to `https` upgrade, are refused so credentials can't reach another host. |
       | **Direct Messages Only** | Config key `dmOnly`. Off by default. Limits the server to a user's direct message with an agent. See [Limit a server to direct messages](#limit-a-server-to-direct-messages). |
    | **Description** | Up to 500 characters. Tells agents what the integration is for, so they can offer it to people who haven't connected yet. Once the server is saved, **Auto-fill from server** copies the server's own description or instructions, connecting as you with the saved settings. You may need to connect your account first. Review the text and save. |
-   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in the System Console; leave one untouched to keep it, or type a new value to replace it. |
+   | **Headers** | Extra HTTP headers the server needs. They're sent for every user in both authentication modes, so don't put a personal or admin credential here. Saved values show as a mask in **Agents > Settings**; leave one untouched to keep it, or type a new value to replace it. |
    | **Service Account Authentication** | Static headers, such as an API key, for agents that use service accounts. See [Service account authentication](#service-account-authentication). |
    | **OAuth Credentials (Optional)** | **Client ID** and **Client Secret** for servers that need a pre-registered OAuth app, such as GitHub. Leave empty if the server supports automatic registration. |
+   | **OAuth authorization parameters** | Config key `authorizationParams`. Optional extra parameters for the OAuth authorization URL. See [Add OAuth authorization parameters](#add-oauth-authorization-parameters). |
 
 3. Select **Save and connect**. Mattermost saves the server and connects to it as you. For an OAuth server, select **Sign in** to complete the provider's sign-in, which connects only your account.
 4. In **Review tools**, check each tool's approval policy and select **Accept and save**. Tools are grouped as **Read-only tools** and **Write tools**, and each group and **All tools** has a control that sets every tool in it. Tools the server marks read-only (the `readOnlyHint` annotation) start at **Auto Run (DM)**. All others start at **Ask Every Time**, except tools with a curated default, such as read tools on Atlassian and Figma. Annotations never change how a tool runs until you save a policy.
@@ -44,7 +45,7 @@ These changes remove every user's saved sign-in for the server, and Mattermost w
 - Moving it to another host, meaning a different scheme, host, or port. Its tool policies are cleared too.
 - Changing the OAuth client ID.
 
-Deleting a server also removes its sign-ins. Changing only the URL's path, the client secret, headers, service account headers, the description, or whether the server is enabled doesn't affect sign-ins. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
+Deleting a server also removes its sign-ins. Changing only the URL's path or query, the client secret, headers, service account headers, OAuth authorization parameters, the description, or whether the server is enabled doesn't affect sign-ins. Same-origin URL edits also keep existing agent tool grants and per-user provider preferences. A saved sign-in is only used by the server it was issued for. After a change that ends sign-ins, sign in again and review the tools. Policies you already chose are kept unless the server moved hosts.
 
 Automation must read the configuration with `GET /plugins/mattermost-ai/admin/config` and send it back with `PUT`, keeping each server's `id`. A server sent without its `id` is treated as deleted and added again, which removes its users' saved sign-ins.
 
@@ -62,6 +63,32 @@ Servers that use OAuth authorize each Mattermost user separately. Connecting in 
 - **Where users connect.** Users connect from a **Connect** card in the conversation, or from the **Tools** menu in the Agents pane. See [Use tools and approve actions](using_tools.md). The mobile apps can't start OAuth, so users need web or desktop.
 - **Discovery.** If the OAuth start URL carries a `resource_metadata` parameter, it's accepted only when its origin matches the **Server URL**. This blocks cross-origin metadata injection.
 - **Expired authorization.** If a user's authorization expires or is revoked during a conversation, the agent drops that connection and shows the **Connect** card again instead of failing.
+
+### Add OAuth authorization parameters
+
+Some providers need extra parameters on the authorization URL, for example to issue a refresh token. Add them under **OAuth authorization parameters**, or in the server's `authorizationParams` map in the configuration. They're sent only on the authorization request, not on token or refresh requests. Values are stored and shown in clear text, so don't put secrets in them.
+
+| Provider | Parameters |
+|---|---|
+| YouTrack or Hub | `access_type=offline` |
+| Google | `access_type=offline` (add `prompt=consent` to ensure a refresh token is re-issued when re-authorizing an already-consented account) |
+
+```json
+{
+  "name": "YouTrack",
+  "enabled": true,
+  "baseURL": "https://youtrack.example.com/mcp",
+  "authorizationParams": {
+    "access_type": "offline"
+  }
+}
+```
+
+A server can have up to 16 parameters. Every parameter needs a unique name (compared without regard to case, up to 64 bytes) and a non-blank value with no leading or trailing whitespace (up to 1024 bytes). Names can contain only ASCII letters, digits, hyphens, periods, and underscores. Saving fails otherwise, or if a name is one the OAuth flow relies on, compared without regard to case: `response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `response_mode`, `request`, or `request_uri`.
+
+Sign-in fails if the provider's authorization endpoint URL already contains a parameter with the same name (compared without regard to case).
+
+A change applies at the next sign-in. Users who are already connected must disconnect and connect again to get it.
 
 ### Atlassian MCP server
 
@@ -81,13 +108,13 @@ GitHub's MCP server needs a pre-registered OAuth app. GitHub's interface changes
    - **OAuth client ID** and **OAuth client secret** to the values from step 1.
 3. Select **Save and connect**, then **Sign in** to authorize your own account. Each user still connects their own account.
 4. In **Review tools**, check the policies and select **Accept and save**. Tools the server marks read-only are suggested as **Auto Run (DM)**, and tools that change something, such as creating an issue, start at **Ask Every Time**. See [Enable and approve tools](#enable-and-approve-tools).
-6. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
+5. Check the agent's **MCPs** tab. With **Automatically enable all MCP tools** on, which is the default, the agent can use the GitHub tools. Otherwise, grant them there.
 
 A user who asks "Open an issue for the bug in this thread" now sees a **Connect** card the first time. After they connect, the agent finds the issue tool with dynamic tool loading, and the user accepts the call.
 
 ## Enable and approve tools
 
-On the **Tools** tab, each server lists its tools. For each tool you set whether it's enabled and how it's approved. The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. What they do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
+On the **Tools** tab, each server lists its tools. Search filters by server name, tool name, tool description, or retrieval description override (name searches match any length; description searches require at least 3 characters). For each tool you set whether it's enabled and how it's approved. The options are **Ask Every Time**, **Auto Run (DM)**, and **Auto Run (Everywhere)**. Tools are grouped as **Read-only tools** and **Write tools** when the server provides `readOnlyHint` annotations, and **All tools** and each group include controls to enable, disable, or set the approval policy for every tool in that section at once. What approval policies do in direct messages and channels is in [Approval policies](tool_approval.md#approval-policies).
 
 A tool with no saved setting is enabled and set to **Ask Every Time**, except for curated defaults on Mattermost's own tools, Atlassian, and Figma. That includes tools a server adds later. When you review a server's tools, a tool the server marks read-only (`readOnlyHint`) is suggested as **Auto Run (DM)**, but the suggestion applies only once you save it. Remote servers show how many tools are **Not reviewed**, meaning no administrator has chosen a policy. Open the server's tool list, select **Mark tools as reviewed**, and save to store the suggested policy for every unreviewed tool. Turning a tool on or off doesn't set its policy.
 

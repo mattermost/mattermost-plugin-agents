@@ -73,6 +73,24 @@ func TestValidateLicenseTransition(t *testing.T) {
 			next: Config{Services: []llm.ServiceConfig{{ID: "s1"}}},
 		},
 		{
+			name:     "enabling dictation",
+			next:     Config{Dictation: DictationConfig{Enabled: true, ServiceID: "s1", Model: "gpt-live-transcribe"}},
+			minLevel: enterprise.LevelEnterprise,
+		},
+		{
+			name: "unrelated save with dictation already enabled is accepted",
+			prev: &Config{Dictation: DictationConfig{Enabled: true, ServiceID: "s1", Model: "gpt-live-transcribe"}},
+			next: Config{
+				Dictation:           DictationConfig{Enabled: true, ServiceID: "s1", Model: "gpt-4o-transcribe"},
+				AgentVersionsToKeep: 5,
+			},
+		},
+		{
+			name: "disabling dictation is accepted",
+			prev: &Config{Dictation: DictationConfig{Enabled: true, ServiceID: "s1", Model: "gpt-live-transcribe"}},
+			next: Config{Dictation: DictationConfig{ServiceID: "s1", Model: "gpt-live-transcribe"}},
+		},
+		{
 			name:     "newly non-empty fallback",
 			prev:     &Config{Services: []llm.ServiceConfig{{ID: "s1"}}},
 			next:     Config{Services: []llm.ServiceConfig{{ID: "s1", FallbackServiceID: "s2"}}},

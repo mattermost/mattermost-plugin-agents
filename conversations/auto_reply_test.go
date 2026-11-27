@@ -158,6 +158,7 @@ func setupAutoReplyTestEnvWithTools(
 		},
 		channels:        map[string]*model.Channel{autoReplyChannelID: channel},
 		allowCreatePost: true,
+		liveRoots:       true,
 	}
 
 	mcpMgr := &testMCPClientManager{}
