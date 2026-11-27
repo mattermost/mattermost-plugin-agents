@@ -551,6 +551,7 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
+	convService.SetPostBatchGetter(dbClient)
 	conversationsService.SetConversationService(convService)
 	conversationsService.SetAutoReplySettings(autoreplyService)
 

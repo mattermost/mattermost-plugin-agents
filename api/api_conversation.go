@@ -103,11 +103,23 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		return
 	}
 
-	// 4. Privacy filtering and display sanitization
-	turnResponses, err := turnsToResponse(turns, userID != conv.UserID)
+	// 4. Privacy filtering, live-post reconciliation, and display sanitization
+	anchored, err := conversation.ResolveAnchoredPosts(conv, turns, a.postBatchGetter(), &a.pluginAPI.Post)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to resolve anchored posts: %w", err))
+		return
+	}
+	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, a.agentUsername(conv.BotID), anchored)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
+	}
+
+	// The title is generated from the opening turn's text, so it goes with
+	// that text when the post no longer reads as the turn stored it.
+	title := conv.Title
+	if openingTextChanged {
+		title = ""
 	}
 
 	// 5. Build response
@@ -117,7 +129,7 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		BotID:      conv.BotID,
 		ChannelID:  conv.ChannelID,
 		RootPostID: conv.RootPostID,
-		Title:      conv.Title,
+		Title:      title,
 		Operation:  conv.Operation,
 		Turns:      turnResponses,
 	}
@@ -179,22 +191,35 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 }
 
 // turnsToResponse converts store turns to response objects with display
-// sanitization, first applying privacy filtering when the requesting user is
-// not the conversation owner.
-func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResponse, error) {
+// sanitization, applying privacy filtering when the requesting user is not the
+// conversation owner and reconciling post-anchored turns against their live
+// Mattermost posts for every viewer so owners, non-owners, and the model see
+// the same post text.
+func turnsToResponse(
+	turns []store.Turn,
+	filterForNonRequester bool,
+	agentUsername string,
+	anchored *conversation.AnchoredPosts,
+) ([]TurnResponse, bool, error) {
 	result := make([]TurnResponse, len(turns))
+	openingTextChanged := false
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
+			return nil, false, fmt.Errorf("failed to unmarshal turn content: %w", err)
 		}
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
 		}
+		reconciled, changed := conversation.ReconcileTurnForDisplay(turn, blocks, agentUsername, anchored)
+		blocks = reconciled
+		if i == 0 && changed {
+			openingTextChanged = true
+		}
 		sanitized := conversation.SanitizeForDisplay(blocks)
 		sanitizedJSON, err := json.Marshal(sanitized)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal sanitized content: %w", err)
+			return nil, false, fmt.Errorf("failed to marshal sanitized content: %w", err)
 		}
 		result[i] = TurnResponse{
 			ID:            turn.ID,
@@ -209,5 +234,24 @@ func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResp
 			RunPostID:     turn.RunPostID,
 		}
 	}
-	return result, nil
+	return result, openingTextChanged, nil
+}
+
+// postBatchGetter returns a.dbClient as a PostBatchGetter, or a nil interface
+// when no DB client is wired (unit tests).
+func (a *API) postBatchGetter() conversation.PostBatchGetter {
+	if a.dbClient == nil {
+		return nil
+	}
+	return a.dbClient
+}
+
+// agentUsername returns the username of the agent botID names, or "" when
+// there is none, in which case no mention counts as the plugin's own.
+func (a *API) agentUsername(botID string) string {
+	bot := a.bots.GetBotByID(botID)
+	if bot == nil || bot.GetMMBot() == nil {
+		return ""
+	}
+	return bot.GetMMBot().Username
 }

@@ -280,13 +280,19 @@ func (s *Store) CreateTurnAutoSequence(turn *Turn) error {
 }
 
 // UpdateTurnPostID sets or clears the PostID column for a turn. The webapp's
-// anchor lookup expects at most one assistant turn per post_id.
+// anchor lookup expects at most one assistant turn per post_id. When clearing
+// PostID (demoting a prior anchor on tool-approval continuation), the
+// originating post ID is preserved in RunPostID so deleting that post also
+// withholds its earlier rounds.
 func (s *Store) UpdateTurnPostID(id string, postID *string) error {
-	return s.execBuilder(s.builder.
+	q := s.builder.
 		Update("LLM_Turns").
 		Set("PostID", postID).
-		Where(sq.Eq{"ID": id}),
-		"update turn post id")
+		Where(sq.Eq{"ID": id})
+	if postID == nil {
+		q = q.Set("RunPostID", sq.Expr("COALESCE(RunPostID, PostID)"))
+	}
+	return s.execBuilder(q, "update turn post id")
 }
 
 // turnSpanRow is a turn read to decide which run it belongs to.

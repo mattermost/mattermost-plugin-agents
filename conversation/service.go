@@ -99,10 +99,11 @@ type BotLookup interface {
 // Service manages conversation entities: creation, continuation,
 // CompletionRequest building, turn writing, and title generation.
 type Service struct {
-	store    Store
-	prompts  *llm.Prompts
-	mmClient mmapi.Client
-	bots     BotLookup
+	store      Store
+	prompts    *llm.Prompts
+	mmClient   mmapi.Client
+	bots       BotLookup
+	batchPosts PostBatchGetter
 }
 
 // NewService creates a new conversation Service.
@@ -118,6 +119,13 @@ func NewService(
 		mmClient: mmClient,
 		bots:     bots,
 	}
+}
+
+// SetPostBatchGetter configures a batched SQL post fetcher (in production,
+// *mmapi.DBClient) so anchored-post reconciliation runs in one query per
+// request instead of one GetPost RPC per turn.
+func (s *Service) SetPostBatchGetter(b PostBatchGetter) {
+	s.batchPosts = b
 }
 
 // CreateConversationParams contains parameters for creating a new conversation.
@@ -483,13 +491,39 @@ func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
 }
 
+// CheckInitiatingPostLive verifies that the real user turn preceding postID's
+// assistant anchor still has a live Mattermost post when it is post-anchored.
+// Returns ErrInitiatingPostDeleted if the post was deleted or is no longer in
+// the conversation's channel, or the lookup error on failure.
+func (s *Service) CheckInitiatingPostLive(conv *store.Conversation, postID string) error {
+	userTurn, err := s.GetInitiatingUserTurn(conv.ID, postID)
+	if err != nil {
+		return err
+	}
+	if userTurn == nil || userTurn.PostID == nil || *userTurn.PostID == "" {
+		return nil
+	}
+	anchored, err := resolveAnchoredPostIDs(conv, []string{*userTurn.PostID}, s.batchPosts, s.mmClient)
+	if err != nil {
+		return err
+	}
+	if anchor, known := anchored.Get(*userTurn.PostID); known && !anchor.Live {
+		return ErrInitiatingPostDeleted
+	}
+	return nil
+}
+
 // BuildRegenerateRequest builds the request that regenerates postID's
 // response from the turns before it, then scrubs that prior response so the
-// new stream runs like a first one.
+// new stream runs like a first one. If the user post that initiated the
+// response was deleted, it returns ErrInitiatingPostDeleted without scrubbing.
 func (s *Service) BuildRegenerateRequest(conv *store.Conversation, context *llm.Context, postID string, opts BuildOptions) (*llm.CompletionRequest, error) {
-	// Check root liveness before DeleteResponseTurns so a deleted root or
-	// failed lookup leaves the saved response turns intact.
+	// Check root and initiating-post liveness before DeleteResponseTurns so a
+	// deleted post or failed lookup leaves the saved response turns intact.
 	if err := CheckRootPost(s.mmClient, conv); err != nil {
+		return nil, err
+	}
+	if err := s.CheckInitiatingPostLive(conv, postID); err != nil {
 		return nil, err
 	}
 	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
@@ -697,6 +731,10 @@ type BuildOptions struct {
 	// requests it is omitted from the rendered thread unless it is already a
 	// turn: a fresh placeholder is empty and not yet part of the conversation.
 	ResponsePostID string
+
+	// PostBatchGetter, when set, fetches all anchored posts in one SQL query
+	// instead of one GetPost RPC per turn.
+	PostBatchGetter PostBatchGetter
 }
 
 func firstBuildOptions(opts []BuildOptions) BuildOptions {
@@ -718,8 +756,12 @@ func (s *Service) BuildCompletionRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
+	buildOpts := firstBuildOptions(opts)
+	if buildOpts.PostBatchGetter == nil {
+		buildOpts.PostBatchGetter = s.batchPosts
+	}
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
+	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, buildOpts)
 }
 
 // AssembleRequest builds the CompletionRequest from already-loaded turns and
@@ -786,6 +828,12 @@ func AssembleRequest(
 
 	mmClient = mmapi.WithFilePolicy(mmClient, firstBuildOptions(opts).SessionID)
 
+	buildOpts := firstBuildOptions(opts)
+	anchored, err := ResolveAnchoredPosts(conv, turns, buildOpts.PostBatchGetter, mmClient)
+	if err != nil {
+		return nil, err
+	}
+
 	posts := make([]llm.Post, 0, len(turns)+1)
 
 	// System prompt is always first.
@@ -804,7 +852,7 @@ func AssembleRequest(
 	if context != nil {
 		conversionOpts.ToolStore = context.Tools
 	}
-	turnPosts, err := turnsToLLMPosts(turns, conversionOpts)
+	turnPosts, err := turnsToLLMPosts(turns, conversionOpts, botUsernameFromContext(context), anchored)
 	if err != nil {
 		return nil, err
 	}
@@ -815,6 +863,13 @@ func AssembleRequest(
 		Context:   context,
 		Operation: conv.Operation,
 	}, nil
+}
+
+func botUsernameFromContext(ctx *llm.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	return ctx.BotUsername
 }
 
 // attachmentConfigForBot returns the bot's EnableVision and MaxFileSize.
@@ -842,13 +897,17 @@ const MissingToolResultContent = "No result: this tool call was not executed."
 func turnsToLLMPosts(
 	turns []store.Turn,
 	conversionOpts PostConversionOptions,
+	agentUsername string,
+	anchored *AnchoredPosts,
 ) ([]llm.Post, error) {
 	blocksByTurn := make([][]ContentBlock, len(turns))
+	editedToBlank := make([]bool, len(turns))
 	for i, turn := range turns {
 		blocks, err := UnmarshalBlocks(turn.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
+		blocks, editedToBlank[i] = ReconcileTurnForLLM(turn, blocks, agentUsername, anchored)
 		blocksByTurn[i] = blocks
 	}
 	pairToolResults(turns, blocksByTurn)
@@ -859,6 +918,9 @@ func turnsToLLMPosts(
 			continue
 		}
 		post := BlocksToPost(blocksByTurn[i], turn.Role, conversionOpts)
+		if editedToBlank[i] && turn.Role == "user" && strings.TrimSpace(post.Message) == "" && len(post.Files) == 0 {
+			post.Message = EmptyEditedPostPlaceholder
+		}
 		if turn.Role == "assistant" {
 			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
 			// content blocks intentionally normalize assistant output (merge text
@@ -1178,13 +1240,15 @@ func (s *Service) GenerateTitle(
 	return nil
 }
 
-// floatingRun is a post-less user turn and the post-less turns that follow it.
-// It has no thread position of its own, so it is rendered before the first
-// thread post created after it, and never after the post-linked turn that
-// follows it in the conversation (beforePostID).
+// floatingRun is a post-less user turn (or a post-linked turn whose post is
+// absent from the live thread) and the turns that follow it. It has no thread
+// position of its own, so it is rendered after afterPostID (when set) and
+// before the first thread post created after it, and never after the
+// post-linked turn that follows it in the conversation (beforePostID).
 type floatingRun struct {
 	turns        []store.Turn
 	createdAt    int64
+	afterPostID  string
 	beforePostID string
 }
 
@@ -1236,6 +1300,15 @@ func (s *Service) BuildChannelMentionRequest(
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
 	mmClient := mmapi.WithFilePolicy(s.mmClient, firstBuildOptions(opts).SessionID)
 
+	threadPostIDs := make(map[string]bool, len(threadData.Posts))
+	for _, threadPost := range threadData.Posts {
+		threadPostIDs[threadPost.Id] = true
+	}
+	anchored, err := ResolveAnchoredPosts(conv, turns, s.batchPosts, mmClient, threadData.Posts...)
+	if err != nil {
+		return nil, err
+	}
+
 	// Post-linked turns are rendered where their post sits in the thread.
 	turnPostIDs := make(map[string]bool)
 	turnByPostID := make(map[string]store.Turn)
@@ -1243,6 +1316,7 @@ func (s *Service) BuildChannelMentionRequest(
 	latestPostLinkedPostID := ""
 	latestPostLinkedRole := ""
 	latestUserPostID := ""
+	lastLivePostID := ""
 	// Post-less turns (tool rounds, synthetic user turns) are grouped by
 	// walking turns in sequence order: tool rounds ride with the preceding
 	// post-linked turn so tool_use/tool_result stay contiguous, while a
@@ -1270,8 +1344,6 @@ func (s *Service) BuildChannelMentionRequest(
 		var slot runSlot
 		switch {
 		case turn.PostID != nil:
-			turnPostIDs[*turn.PostID] = true
-			turnByPostID[*turn.PostID] = turn
 			if turn.Sequence > latestPostLinkedSequence {
 				latestPostLinkedSequence = turn.Sequence
 				latestPostLinkedPostID = *turn.PostID
@@ -1280,15 +1352,44 @@ func (s *Service) BuildChannelMentionRequest(
 			if turn.Role == "user" {
 				latestUserPostID = *turn.PostID
 			}
-			for _, run := range unanchored {
-				run.beforePostID = *turn.PostID
+			anchor, known := anchored.Get(*turn.PostID)
+			if !threadPostIDs[*turn.PostID] && known && !anchor.Live {
+				// A deleted or ineligible post is omitted by GetPostThread.
+				// Float the turn in its sequence window so its placeholder
+				// preserves role alternation and any trailing tool rounds
+				// remain paired.
+				if turn.Role == "user" || openRun == nil {
+					openRun = &floatingRun{
+						turns:       []store.Turn{turn},
+						createdAt:   turn.CreatedAt,
+						afterPostID: lastLivePostID,
+					}
+					floatingRuns = append(floatingRuns, openRun)
+					unanchored = append(unanchored, openRun)
+				} else {
+					openRun.turns = append(openRun.turns, turn)
+				}
+				slot = runSlot{run: openRun}
+			} else {
+				turnPostIDs[*turn.PostID] = true
+				turnByPostID[*turn.PostID] = turn
+				for _, run := range unanchored {
+					run.beforePostID = *turn.PostID
+				}
+				unanchored = nil
+				openRun = nil
+				precedingSeq = turn.Sequence
+				if threadPostIDs[*turn.PostID] {
+					lastLivePostID = *turn.PostID
+				}
+				slot = runSlot{seq: turn.Sequence}
 			}
-			unanchored = nil
-			openRun = nil
-			precedingSeq = turn.Sequence
-			slot = runSlot{seq: turn.Sequence}
 		case turn.Role == "user":
-			openRun = &floatingRun{turns: []store.Turn{turn}, createdAt: turn.CreatedAt}
+			openRun = &floatingRun{
+				turns:       []store.Turn{turn},
+				createdAt:   turn.CreatedAt,
+				afterPostID: lastLivePostID,
+			}
 			floatingRuns = append(floatingRuns, openRun)
 			unanchored = append(unanchored, openRun)
 			slot = runSlot{run: openRun}
@@ -1344,18 +1445,21 @@ func (s *Service) BuildChannelMentionRequest(
 	if context != nil {
 		conversionOpts.ToolStore = context.Tools
 	}
-	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], conversionOpts)
+	agentUsername := botUsernameFromContext(context)
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], conversionOpts, agentUsername, anchored)
 	if err != nil {
 		return nil, err
 	}
 	posts = append(posts, leadingPosts...)
 
 	// Thread posts in order, each rendered from the bot's turn when one exists,
-	// otherwise as plain user text. Floating runs are emitted before the first
-	// post that is later than them or that their conversation position precedes.
+	// otherwise as plain user text. Floating runs are emitted after their
+	// preceding live post and before the first post that is later than them or
+	// that their conversation position precedes.
 	pendingRuns := floatingRuns
+	emittedPosts := make(map[string]bool, len(threadData.Posts))
 	emitRun := func(run *floatingRun) error {
-		runPosts, err := turnsToLLMPosts(run.turns, conversionOpts)
+		runPosts, err := turnsToLLMPosts(run.turns, conversionOpts, agentUsername, anchored)
 		if err != nil {
 			return err
 		}
@@ -1365,6 +1469,9 @@ func (s *Service) BuildChannelMentionRequest(
 	emitRunsBefore := func(threadPost *model.Post) error {
 		for len(pendingRuns) > 0 {
 			run := pendingRuns[0]
+			if run.afterPostID != "" && !emittedPosts[run.afterPostID] {
+				return nil
+			}
 			if run.beforePostID != threadPost.Id && run.createdAt >= threadPost.CreateAt {
 				return nil
 			}
@@ -1398,7 +1505,7 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, err := turnsToLLMPosts(run, conversionOpts)
+			runPosts, err := turnsToLLMPosts(run, conversionOpts, agentUsername, anchored)
 			if err != nil {
 				return nil, err
 			}
@@ -1413,6 +1520,7 @@ func (s *Service) BuildChannelMentionRequest(
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, mmClient)
 			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, UserID: conv.UserID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
+		emittedPosts[threadPost.Id] = true
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break
 		}

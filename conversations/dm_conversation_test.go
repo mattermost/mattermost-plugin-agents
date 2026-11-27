@@ -1497,6 +1497,10 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 		RootId:    rootPostID,
 		Message:   "And what is 3+3?",
 	}
+	if env.mmClient.posts == nil {
+		env.mmClient.posts = map[string]*model.Post{}
+	}
+	env.mmClient.posts[post.Id] = post
 
 	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,

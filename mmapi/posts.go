@@ -9,8 +9,19 @@ import (
 	"slices"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/lib/pq"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// LivePost is the subset of Mattermost's Posts row needed to reconcile
+// post-anchored conversation turns against their current live state.
+type LivePost struct {
+	ID        string `db:"id"`
+	ChannelID string `db:"channelid"`
+	Message   string `db:"message"`
+	EditAt    int64  `db:"editat"`
+	DeleteAt  int64  `db:"deleteat"`
+}
 
 type ThreadData struct {
 	Posts     []*model.Post
@@ -87,4 +98,26 @@ func (db *DBClient) GetFirstPostBeforeTimeRangeID(channelID string, startTime, e
 	}
 
 	return result.ID, nil
+}
+
+// GetPostsByIDs fetches the live state of each post ID in postIDs from
+// Mattermost's Posts table in a single primary-key-indexed query. IDs that do
+// not exist are absent from the returned map.
+func (db *DBClient) GetPostsByIDs(postIDs []string) (map[string]LivePost, error) {
+	if len(postIDs) == 0 {
+		return map[string]LivePost{}, nil
+	}
+	var rows []LivePost
+	err := db.DoQuery(&rows, db.Builder().
+		Select("Id", "ChannelId", "Message", "EditAt", "DeleteAt").
+		From("Posts").
+		Where(sq.Expr("Id = ANY(?)", pq.Array(postIDs))))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get posts by ids: %w", err)
+	}
+	result := make(map[string]LivePost, len(rows))
+	for _, row := range rows {
+		result[row.ID] = row
+	}
+	return result, nil
 }

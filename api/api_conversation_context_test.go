@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -601,4 +602,66 @@ func TestHandleGetConversationContextCountsDMOnlyToolsOnlyInDM(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleGetConversationContextReconcilesAnchoredPosts(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.api.mmClient = mmapi.NewClient(e.client)
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	fake := &FakeLLM{TokenCount: 100, TokenLimit: 200000}
+	mmBot := &model.Bot{UserId: testBotUserID, Username: "ai", DisplayName: "AI"}
+	e.setBots(bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "AI"}, llm.ServiceConfig{}, mmBot, fake))
+
+	channelID := testChannelID
+	u1PostID := anchoredUserPostID
+	b1PostID := anchoredAssistantPostID
+	e.conversationStore.conversations["conv-context-reconcile"] = &store.Conversation{
+		ID:           "conv-context-reconcile",
+		UserID:       testUserID,
+		BotID:        testBotUserID,
+		ChannelID:    &channelID,
+		SystemPrompt: "Be helpful.",
+		Operation:    "conversation",
+	}
+	e.conversationStore.turns["conv-context-reconcile"] = []store.Turn{
+		{
+			ID:             "turn-1",
+			ConversationID: "conv-context-reconcile",
+			PostID:         &u1PostID,
+			Role:           "user",
+			Sequence:       1,
+			Content:        mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "SECRET_OLD_USER_TEXT"}}),
+		},
+		{
+			ID:             "turn-2",
+			ConversationID: "conv-context-reconcile",
+			PostID:         &b1PostID,
+			Role:           "assistant",
+			Sequence:       2,
+			Content:        mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "SECRET_DELETED_ASSISTANT_TEXT"}}),
+		},
+	}
+
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("GetPost", u1PostID).Return(&model.Post{Id: u1PostID, UserId: testUserID, ChannelId: channelID, Message: "edited user message", EditAt: 100}, nil).Maybe()
+	e.mockAPI.On("GetPost", b1PostID).Return(&model.Post{Id: b1PostID, UserId: testBotUserID, ChannelId: channelID, Message: "SECRET_DELETED_ASSISTANT_TEXT", DeleteAt: 200}, nil).Maybe()
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil).Maybe()
+	e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
+	e.mockAPI.On("GetTeam", mock.AnythingOfType("string")).Return(&model.Team{}, nil).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/conversations/conv-context-reconcile/context", nil)
+	request.Header.Add("Mattermost-User-ID", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	counted := fake.LastRequest()
+	require.Len(t, counted.Posts, 3)
+	assert.Equal(t, "edited user message", counted.Posts[1].Message)
+	assert.Equal(t, conversation.DeletedPostPlaceholder, counted.Posts[2].Message)
 }

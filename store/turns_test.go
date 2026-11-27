@@ -544,6 +544,12 @@ func TestUpdateTurnPostID(t *testing.T) {
 				gone, err := s.GetTurnByPostID("post-anchor")
 				require.NoError(t, err)
 				assert.Nil(t, gone)
+
+				// Demoting preserves the originating post in RunPostID.
+				var runPostID *string
+				require.NoError(t, s.DB().Get(&runPostID, `SELECT RunPostID FROM LLM_Turns WHERE ID = $1`, turnID))
+				require.NotNil(t, runPostID)
+				assert.Equal(t, "post-anchor", *runPostID)
 			},
 		},
 		{
