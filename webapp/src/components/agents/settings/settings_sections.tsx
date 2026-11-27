@@ -77,6 +77,9 @@ export const defaultConfig: PluginConfig = {
     allowUnsafeLinks: false,
     allowedLinkDomains: '',
     enableHTMLArtifacts: false,
+    enableChannelArtifacts: false,
+    channelArtifactsMaxPerChannel: 50,
+    channelArtifactVersionsToKeep: 20,
     enableChannelMentionToolCalling: false,
     enableAmbientAutoReply: false,
     allowNativeWebSearchInChannels: false,
@@ -252,6 +255,48 @@ const SettingsSectionContent = ({section, value, savedConfig, runtimeBots, runti
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'Renders agent-attached HTML files as sandboxed artifacts when a viewer clicks Run.'})}
                     />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable channel artifacts'/>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableChannelArtifacts)}
+                        onChange={(to) => {
+                            updateConfig({enableChannelArtifacts: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled (and HTML artifacts are enabled), people who may add bookmarks in a channel, and agents on their behalf, can save HTML artifacts to the channel. Members open them from the Channel artifacts panel. The library keeps a link to each artifact\'s original message and file, not a copy: an artifact is available only while that message exists and follows its retention. Channels only: direct and group messages have no library.'})}
+                    />
+                    {Boolean(value.enableChannelArtifacts) && (
+                        <>
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Max artifacts per channel'})}
+                                type='number'
+                                min='1'
+                                value={String(value.channelArtifactsMaxPerChannel || 50)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactsMaxPerChannel: Number.isNaN(parsed) || parsed < 1 ? 50 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of saved artifacts in one channel. Default is 50.'})}
+                            />
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Versions to keep per artifact'})}
+                                type='number'
+                                min='1'
+                                value={String(value.channelArtifactVersionsToKeep || 20)}
+                                onChange={(e) => {
+                                    const parsed = parseInt(e.target.value, 10);
+                                    updateConfig({channelArtifactVersionsToKeep: Number.isNaN(parsed) || parsed < 1 ? 20 : parsed});
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'How many versions of one artifact to keep. Older version records are removed when a new version is saved; the original messages are never deleted. Default is 20.'})}
+                            />
+                        </>
+                    )}
                     <BooleanItem
                         label={
                             <Horizontal>

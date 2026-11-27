@@ -126,12 +126,13 @@ export function isConsentPromptPending(): boolean {
     return pendingPrompt !== null;
 }
 
-// cancelPendingConsent drops a pending prompt for fileId without recording a
-// decision; the waiting request is answered with permission_denied. Used when
-// the prompt would become hidden (e.g. fullscreen opening over the card) so
-// another, visible frame can ask instead.
-export function cancelPendingConsent(fileId: string) {
-    if (pendingPrompt?.fileId === fileId) {
+// cancelPendingConsent drops a pending prompt without recording a decision;
+// the waiting request is answered with permission_denied. Used when the prompt
+// would become hidden (e.g. fullscreen opening over the card) so another,
+// visible frame can ask instead. Without a fileId it drops whatever prompt is
+// pending, for a viewer that covers every other frame on the page.
+export function cancelPendingConsent(fileId?: string) {
+    if (pendingPrompt && (fileId === undefined || pendingPrompt.fileId === fileId)) { // eslint-disable-line no-undefined
         pendingPrompt.cancel();
     }
 }

@@ -45,7 +45,7 @@ Back up the library with the plugin's database tables. See [Back up and automate
 
 ## Agents and the library
 
-Agents can read the library with the `list_channel_artifacts` and `get_channel_artifact` tools, which are read-only. See [Mattermost MCP tool reference](mcp_tools.md#channel-artifacts). The tools aren't offered while the library is off, or to an agent request that isn't in a public or private channel.
+Agents can read the library with the `list_channel_artifacts` and `get_channel_artifact` tools, which are read-only. See [Mattermost MCP tool reference](mcp_tools.md#channel-artifacts). The tools aren't offered while the library is off, or to an agent request that isn't in a public or private channel. While they are offered, the agent's instructions mention the library, so you can ask for a saved page without naming a tool, for example "What's the go/no-go deadline in our cutover runbook?" or "Add a comms lead row to the runbook page and save it."
 
 Agents can also manage the library directly with two built-in tools:
 

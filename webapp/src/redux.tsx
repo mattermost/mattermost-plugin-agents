@@ -6,7 +6,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import {dictationAvailability} from './dictation/availability';
-import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
+import {ChannelArtifactEntry, getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
@@ -23,20 +23,7 @@ export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
 export const SetLinkPolicyHandler = 'SET_LINK_POLICY';
 
 export async function setupRedux(registry: any, store: WebappStore) {
-    const reducer = combineReducers({
-        callsPostButtonClickedTranscription,
-        bots,
-        selectedPostId,
-        rhsTab,
-        aiThreads,
-        linkPolicy,
-        htmlArtifactsEnabled,
-        customPrompts,
-        pinnedPromptIds,
-        showCustomPromptsModal,
-        dictationAvailability,
-    });
-    registry.registerReducer(reducer);
+    registry.registerReducer(pluginReducer);
 
     if (licenseAllows(store.getState(), 'meetings')) {
         store.dispatch({
@@ -96,6 +83,110 @@ function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_HTML_ARTIFACTS_ENABLED':
         return action.htmlArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsEnabled(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+// A change that arrived while the list was loading; it is replayed over the
+// response so a save or websocket event during the fetch is not lost.
+type PendingChange = {upsert: ChannelArtifactEntry} | {remove: string};
+
+export type ChannelLibraryState = {
+    status: 'loading' | 'ready' | 'error';
+    pending?: PendingChange[];
+    entries: ChannelArtifactEntry[];
+    canAdd: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+    maxPerChannel: number;
+};
+
+export type ChannelArtifactLibrary = Record<string, ChannelLibraryState>;
+
+function upsertEntry(entries: ChannelArtifactEntry[], entry: ChannelArtifactEntry): ChannelArtifactEntry[] {
+    return entries.some((e) => e.id === entry.id) ? entries.map((e) => (e.id === entry.id ? entry : e)) : [entry, ...entries];
+}
+
+const emptyLibrary: ChannelLibraryState = {status: 'loading', entries: [], canAdd: false, canEdit: false, canDelete: false, maxPerChannel: 0};
+
+// One cached library per channel, shared by every card, panel and badge.
+// Websocket events and local changes keep it current; a failed load is kept so
+// the next consumer that asks retries it.
+function channelArtifactLibrary(state: ChannelArtifactLibrary = {}, action: any): ChannelArtifactLibrary {
+    switch (action.type) {
+    case 'CHANNEL_ARTIFACTS_LOADING': {
+        const current = state[action.channelId];
+        return {...state, [action.channelId]: {...(current || emptyLibrary), status: 'loading', pending: []}};
+    }
+    case 'CHANNEL_ARTIFACTS_LOADED': {
+        let entries: ChannelArtifactEntry[] = action.list.entries || [];
+        for (const change of state[action.channelId]?.pending ?? []) {
+            entries = 'upsert' in change ? upsertEntry(entries, change.upsert) : entries.filter((entry) => entry.id !== change.remove);
+        }
+        return {
+            ...state,
+            [action.channelId]: {
+                status: 'ready',
+                entries,
+                canAdd: Boolean(action.list.can_add),
+                canEdit: Boolean(action.list.can_edit),
+                canDelete: Boolean(action.list.can_delete),
+                maxPerChannel: action.list.max_per_channel || 0,
+            },
+        };
+    }
+    case 'CHANNEL_ARTIFACTS_FAILED': {
+        const current = state[action.channelId] || emptyLibrary;
+        return {...state, [action.channelId]: {...current, status: 'error', pending: []}};
+    }
+    case 'CHANNEL_ARTIFACT_UPSERT': {
+        const current = state[action.entry.channel_id];
+        if (!current || current.status === 'error') {
+            return state;
+        }
+        const pending = current.status === 'loading' ? [...(current.pending ?? []), {upsert: action.entry}] : current.pending;
+        return {...state, [action.entry.channel_id]: {...current, pending, entries: upsertEntry(current.entries, action.entry)}};
+    }
+    case 'CHANNEL_ARTIFACT_REMOVE': {
+        const current = state[action.channelId];
+        if (!current) {
+            return state;
+        }
+        const pending = current.status === 'loading' ? [...(current.pending ?? []), {remove: action.id as string}] : current.pending;
+        return {...state, [action.channelId]: {...current, pending, entries: current.entries.filter((entry) => entry.id !== action.id)}};
+    }
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return action.channelArtifactsEnabled ? state : {};
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsLoaded(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return true;
+    default:
+        return state;
+    }
+}
+
+function channelArtifactsLoadFailed(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_CHANNEL_ARTIFACTS_ENABLED':
+        return false;
+    case 'SET_CHANNEL_ARTIFACTS_LOAD_FAILED':
+        return true;
     default:
         return state;
     }
@@ -240,3 +331,21 @@ export function fetchPinnedPromptIds() {
         }
     };
 }
+
+export const pluginReducer = combineReducers({
+    callsPostButtonClickedTranscription,
+    bots,
+    selectedPostId,
+    rhsTab,
+    aiThreads,
+    linkPolicy,
+    htmlArtifactsEnabled,
+    channelArtifactsEnabled,
+    channelArtifactsLoaded,
+    channelArtifactsLoadFailed,
+    channelArtifactLibrary,
+    customPrompts,
+    pinnedPromptIds,
+    showCustomPromptsModal,
+    dictationAvailability,
+});

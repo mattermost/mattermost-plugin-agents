@@ -74,15 +74,38 @@ export function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
+export type ArtifactKind = 'file' | 'library';
+
+export type ArtifactRef = {
+    kind: ArtifactKind;
+    id: string;
+};
+
 // Path of the sandboxed HTML artifact document served by the plugin, without
 // the per-load nonce the server requires.
 export function artifactPath(fileId: string): string {
-    return `${baseRoute()}/artifacts/${encodeURIComponent(fileId)}`;
+    return artifactPathFor({kind: 'file', id: fileId});
+}
+
+export function artifactPathFor(ref: ArtifactRef): string {
+    if (ref.kind === 'library') {
+        return `${baseRoute()}/channel-artifacts/${encodeURIComponent(ref.id)}`;
+    }
+    return `${baseRoute()}/artifacts/${encodeURIComponent(ref.id)}`;
 }
 
 // URL of the artifact document for one host load of its frame.
 export function artifactURL(fileId: string, nonce: string): string {
-    return `${artifactPath(fileId)}?n=${encodeURIComponent(nonce)}`;
+    return artifactURLFor({kind: 'file', id: fileId}, nonce);
+}
+
+export function artifactURLFor(ref: ArtifactRef, nonce: string, version?: number): string {
+    const params = new URLSearchParams();
+    params.set('n', nonce);
+    if (version && version > 0) {
+        params.set('version', String(version));
+    }
+    return `${artifactPathFor(ref)}?${params.toString()}`;
 }
 
 export interface ArtifactTokenInfo {
@@ -96,7 +119,16 @@ export interface ArtifactTokenInfo {
 // bridge script to this page. The token is only valid for the frame load
 // that uses the same nonce.
 export async function getArtifactToken(fileId: string, nonce: string): Promise<ArtifactTokenInfo> {
-    const url = `${artifactPath(fileId)}/token?n=${encodeURIComponent(nonce)}`;
+    return getArtifactTokenFor({kind: 'file', id: fileId}, nonce);
+}
+
+export async function getArtifactTokenFor(ref: ArtifactRef, nonce: string, version?: number): Promise<ArtifactTokenInfo> {
+    const params = new URLSearchParams();
+    params.set('n', nonce);
+    if (version && version > 0) {
+        params.set('version', String(version));
+    }
+    const url = `${artifactPathFor(ref)}/token?${params.toString()}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -114,6 +146,165 @@ export async function getArtifactToken(fileId: string, nonce: string): Promise<A
         status_code: response.status,
         url,
     });
+}
+
+export type ChannelArtifactEntry = {
+    id: string;
+    channel_id: string;
+    title: string;
+
+    // The current version number.
+    version: number;
+    sha256: string;
+    size: number;
+    source_post_id: string;
+    source_file_id: string;
+    source_bot_user_id: string;
+    source_agent_display_name?: string;
+    created_by: string;
+    create_at: number;
+    updated_by: string;
+    update_at: number;
+
+    // False when the message or file the current version came from was deleted.
+    available: boolean;
+};
+
+export type ChannelArtifactList = {
+    entries: ChannelArtifactEntry[];
+    can_add: boolean;
+    can_edit: boolean;
+    can_delete: boolean;
+    max_per_channel: number;
+};
+
+function artifactError(url: string, response: Response): ClientError {
+    return new ClientError(Client4.url, {message: '', status_code: response.status, url});
+}
+
+export async function listChannelArtifacts(channelId: string): Promise<ChannelArtifactList> {
+    const url = `${baseRoute()}/channel-artifacts?channel_id=${encodeURIComponent(channelId)}`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw artifactError(url, response);
+}
+
+export async function getChannelArtifact(id: string): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/info`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw artifactError(url, response);
+}
+
+// A 409 whose body names an artifact means identical content is already saved;
+// the error message is "duplicate:<id>". Any other 409 is the channel limit.
+export async function createChannelArtifact(body: {
+    channel_id: string;
+    post_id: string;
+    file_id: string;
+    title?: string;
+    replace_id?: string;
+}): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    if (response.status === 409) {
+        const data: unknown = await response.json().catch(() => null);
+        const artifactId = (data as {artifact_id?: string} | null)?.artifact_id;
+        if (artifactId) {
+            throw new ClientError(Client4.url, {message: `duplicate:${artifactId}`, status_code: response.status, url});
+        }
+    }
+    throw artifactError(url, response);
+}
+
+export async function patchChannelArtifact(id: string, body: {title: string}): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PATCH',
+        body: JSON.stringify(body),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    throw artifactError(url, response);
+}
+
+// Removes the library entry and its versions. The original message and file stay.
+export async function deleteChannelArtifact(id: string): Promise<void> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}`;
+    const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
+    if (response.ok) {
+        return;
+    }
+    throw artifactError(url, response);
+}
+
+export async function deleteChannelArtifactVersion(id: string, version: number): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/versions/${version}`;
+    const response = await fetch(url, Client4.getOptions({method: 'DELETE'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw artifactError(url, response);
+}
+
+export function channelArtifactDownloadURL(id: string, version?: number): string {
+    const base = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/download`;
+    if (version && version > 0) {
+        return `${base}?version=${version}`;
+    }
+    return base;
+}
+
+export type ChannelArtifactVersionRecord = {
+    version: number;
+    sha256: string;
+    size: number;
+    source_post_id: string;
+    source_file_id: string;
+    source_bot_user_id: string;
+    source_agent_display_name?: string;
+    created_by: string;
+    create_at: number;
+    head: boolean;
+
+    // False when the message or file this version came from was deleted.
+    available: boolean;
+};
+
+export type ChannelArtifactVersionsResponse = {
+    versions: ChannelArtifactVersionRecord[];
+};
+
+export async function listChannelArtifactVersions(id: string): Promise<ChannelArtifactVersionsResponse> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/versions`;
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    throw artifactError(url, response);
+}
+
+export async function rollbackChannelArtifact(id: string, version: number): Promise<ChannelArtifactEntry> {
+    const url = `${baseRoute()}/channel-artifacts/${encodeURIComponent(id)}/rollback`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({version}),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+    throw artifactError(url, response);
 }
 
 export function fileDownloadURL(fileId: string): string {
