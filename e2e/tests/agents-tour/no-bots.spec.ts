@@ -38,7 +38,6 @@ test.describe('Agents Tour - No Bots Configured', () => {
         const pulsatingDot = page.getByTestId('agents-tour-dot');
         await expect(pulsatingDot).not.toBeVisible({ timeout: 5000 });
 
-        const tourPopover = page.locator('.tour-tip-tippy');
-        await expect(tourPopover).not.toBeVisible();
+        await expect(page.getByText('Agents are ready to help')).not.toBeVisible();
     });
 });

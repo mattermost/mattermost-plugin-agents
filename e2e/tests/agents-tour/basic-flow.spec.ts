@@ -32,27 +32,29 @@ const getTourPreferenceValue = async () => {
     return tourPref?.value;
 };
 
-const openTour = async (page: Page): Promise<{pulsatingDot: Locator; tourPopover: Locator}> => {
+// TourPoint's tip-origin host (.tour-tip-tippy) is intentionally 0×0, so assert
+// on visible tour content instead of the host's bounding box.
+const tourTitle = (page: Page) => page.getByText('Agents are ready to help');
+
+const openTour = async (page: Page): Promise<{pulsatingDot: Locator; tourTitle: Locator}> => {
     const pulsatingDot = page.getByTestId('agents-tour-dot').or(page.locator('[class*="DotContainer"]').first());
     await expect(pulsatingDot).toBeVisible({timeout: 10000});
     await pulsatingDot.click();
 
-    const tourPopover = page.locator('.tour-tip-tippy');
-    await expect(tourPopover).toBeVisible({timeout: 5000});
-    await expect(page.getByText('Agents are ready to help')).toBeVisible();
+    await expect(tourTitle(page)).toBeVisible({timeout: 5000});
     await expect(page.getByText('AI agents now live here')).toBeVisible();
 
-    return {pulsatingDot, tourPopover};
+    return {pulsatingDot, tourTitle: tourTitle(page)};
 };
 
-const expectTourFinished = async (page: Page, pulsatingDot: Locator, tourPopover: Locator) => {
-    await expect(tourPopover).not.toBeVisible({timeout: 5000});
+const expectTourFinished = async (page: Page, pulsatingDot: Locator, title: Locator) => {
+    await expect(title).not.toBeVisible({timeout: 5000});
     expect(await getTourPreferenceValue()).toBe(TOUR_FINISHED_VALUE);
 
     await page.reload();
     await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
     await expect(pulsatingDot).not.toBeVisible({timeout: 5000});
-    await expect(tourPopover).not.toBeVisible();
+    await expect(tourTitle(page)).not.toBeVisible();
 };
 
 const test = containerTest(async (own) => {
@@ -88,7 +90,7 @@ test.describe('Agents Tour - Basic Flow', () => {
         await mmPage.login(mattermost.url(), username, password);
         await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 30000 });
 
-        const {pulsatingDot, tourPopover} = await openTour(page);
+        const {pulsatingDot, tourTitle: title} = await openTour(page);
 
         const overlay = page.getByTestId('agents-tour-overlay').or(page.locator('[class*="TourOverlay"]'));
         await expect(overlay).toBeVisible();
@@ -97,9 +99,9 @@ test.describe('Agents Tour - Basic Flow', () => {
         await closeButton.click();
 
         // 7. Verify popover disappears immediately
-        await expect(tourPopover).not.toBeVisible({ timeout: 5000 });
+        await expect(title).not.toBeVisible({ timeout: 5000 });
 
-        await expectTourFinished(page, pulsatingDot, tourPopover);
+        await expectTourFinished(page, pulsatingDot, title);
 
         // 10. Verify Agents icon is still functional
         const appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
@@ -111,7 +113,7 @@ test.describe('Agents Tour - Basic Flow', () => {
         await mmPage.login(mattermost.url(), username, password);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
-        const {pulsatingDot, tourPopover} = await openTour(page);
+        const {pulsatingDot, tourTitle: title} = await openTour(page);
 
         // Dispatching on the body exercises Tippy's outside-click handler.
         await page.evaluate(() => {
@@ -124,7 +126,7 @@ test.describe('Agents Tour - Basic Flow', () => {
             }
         });
 
-        await expectTourFinished(page, pulsatingDot, tourPopover);
+        await expectTourFinished(page, pulsatingDot, title);
     });
 
     test('Dismiss via Escape finishes the tour', async ({page}) => {
@@ -132,11 +134,11 @@ test.describe('Agents Tour - Basic Flow', () => {
         await mmPage.login(mattermost.url(), username, password);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
-        const {pulsatingDot, tourPopover} = await openTour(page);
+        const {pulsatingDot, tourTitle: title} = await openTour(page);
 
         await page.keyboard.press('Escape');
 
-        await expectTourFinished(page, pulsatingDot, tourPopover);
+        await expectTourFinished(page, pulsatingDot, title);
     });
 
     test('Pulsing dot stays aligned with the Agents icon after a layout shift (MM-67439)', async ({page}) => {
