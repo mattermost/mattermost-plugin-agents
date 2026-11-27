@@ -25,7 +25,7 @@ import {TooltipTrigger} from '@/components/dropdown';
 import {useSelectedThreadBot} from './use_selected_thread_bot';
 
 // The RHS header title: Back to the chat history, then the agent chat's title (the same as the Agents
-// product's chat header). The chat history has a generic title with New chat.
+// product's chat header). The chat history is titled "Agent chats", with no avatar, and New chat.
 const RHSTitle = () => {
     const intl = useIntl();
     const {bots, activeBot, setActiveBot} = useBotlist();
@@ -70,17 +70,25 @@ const RHSTitle = () => {
         </WithTooltip>
     );
 
-    // The chat history lists every agent's chats, so it has the generic title (no agent menu),
-    // as do loading, no agents, and an unresolved active agent.
+    // History lists every agent's chats, so it is "Agent chats" with no avatar and no agent menu.
+    // Loading, no agents, and an unresolved active agent keep the generic title and icon.
     if (onHistory || !bots || bots.length === 0 || !titleBot) {
         return (
             <Container data-testid='rhs-title'>
                 {back}
-                <FallbackIcon
-                    src={aiIcon}
-                    alt=''
-                />
-                <Name><FormattedMessage defaultMessage='Agents'/></Name>
+                {!onHistory && (
+                    <FallbackIcon
+                        src={aiIcon}
+                        alt=''
+                    />
+                )}
+                <Name>
+                    {onHistory ? (
+                        <FormattedMessage defaultMessage='Agent chats'/>
+                    ) : (
+                        <FormattedMessage defaultMessage='Agents'/>
+                    )}
+                </Name>
                 {(onHistory || threadOpen) && (
                     <Actions>
                         <NewChatButton

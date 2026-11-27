@@ -194,8 +194,8 @@ test.describe('Chat History', () => {
     await expect(item).toHaveCount(1);
     await expect(item).toContainText(/1 reply/);
 
-    // The history has the generic title, and Back is not offered there.
-    await expect(page.getByTestId('rhs-title')).toContainText('Agents');
+    // The history is titled Agent chats, and Back is not offered there.
+    await expect(page.getByTestId('rhs-title')).toContainText('Agent chats');
     await expect(aiPlugin.chatHistoryButton).toHaveCount(0);
   });
 });
