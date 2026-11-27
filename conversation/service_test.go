@@ -2714,7 +2714,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		mmClient.AssertNotCalled(t, "GetFile", "img1")
 		assert.Empty(t, userPost.Files, "image bytes must not be sent when vision is disabled")
 		assert.Contains(t, userPost.Message,
-			"[Image attached: pic.png. Image input is disabled for this agent, so you cannot see it.]")
+			"[Image attached: pic.png (File ID: img1). Image input is disabled for this agent, so you cannot see it.]")
 		assert.Contains(t, userPost.Message, "Content: hello",
 			"text-file content must still flow through to the LLM even when vision is off")
 	})
@@ -2924,7 +2924,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Empty(t, userPost.Files,
 			"image bytes must not be sent on the channel-mention path when vision is disabled")
 		assert.Contains(t, userPost.Message,
-			"[Image attached: pic.png. Image input is disabled for this agent, so you cannot see it.]")
+			"[Image attached: pic.png (File ID: img1). Image input is disabled for this agent, so you cannot see it.]")
 		assert.Contains(t, userPost.Message, "Content: hello",
 			"text-file content must still flow through to the LLM via the channel-mention path")
 	})

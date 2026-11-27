@@ -66,7 +66,7 @@ func TestToolCatalogContainsExpectedFamilies(t *testing.T) {
 		// teams
 		"get_team_member", "get_team_stats", "search_teams", "invite_users_to_team", "update_team",
 		// files
-		"get_file_info", "get_post_files", "get_file_link", "search_files", "upload_file",
+		"get_file_info", "get_post_files", "get_file_link", "search_files", "upload_file", "copy_file_to_channel",
 		// integrations
 		"get_bot", "list_bots", "list_incoming_webhooks", "list_outgoing_webhooks",
 		// groups

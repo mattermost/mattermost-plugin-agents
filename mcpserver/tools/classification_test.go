@@ -141,12 +141,13 @@ var expectedToolReadOnly = map[string]bool{
 	"search_users": true,
 
 	// files
-	"read_file":      true,
-	"get_file_info":  true,
-	"get_post_files": true,
-	"get_file_link":  true,
-	"search_files":   true,
-	"upload_file":    false,
+	"read_file":            true,
+	"get_file_info":        true,
+	"get_post_files":       true,
+	"get_file_link":        true,
+	"search_files":         true,
+	"upload_file":          false,
+	"copy_file_to_channel": false,
 
 	// integrations
 	"get_bot":                true,

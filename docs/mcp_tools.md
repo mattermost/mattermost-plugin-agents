@@ -1,6 +1,6 @@
 # Mattermost MCP tool reference
 
-The 124 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 74 are read-only and 50 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 123 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
+The 125 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 74 are read-only and 51 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 124 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
 
 ## How the tools behave
 
@@ -171,6 +171,7 @@ The 124 tools of the built-in Mattermost MCP server, each marked read-only or st
 | `get_file_link` | Read-only | Get a public link to a file. The link bypasses normal file access checks |
 | `search_files` | Read-only | Search file attachments by filename/content within a team |
 | `upload_file` | Changes state | Upload a file from a local path or URL. Listed on every server, but works only on the standalone stdio server (local access mode). Elsewhere it returns an error. Use `files` on `create_post` instead |
+| `copy_file_to_channel` | Changes state | Copy an existing Mattermost file (up to 100 MiB) into another channel (or board) as the signed-in user and return the new file ID |
 
 ## Search
 
