@@ -100,6 +100,7 @@ Available only when **Enable Tools** is on.
 - Each tool shows its effective approval policy and expands to show its full description and input schema. Tools disabled globally by an administrator appear as **Disabled by admin** and can't be enabled for the agent. Select **Refresh Tools** to reload the catalog.
 - For an OAuth-backed server, select **Connect** here to sign in. Turning on a server that isn't connected yet grants the agent every tool the server exposes once someone connects.
 - **Use service accounts for authentication.** Switches the agent's external MCP servers from per-user OAuth to shared admin-configured credentials. Only System Admins can turn it on. See [Service account authentication](mcp_integrations.md#service-account-authentication).
+- **Run tools in channels without asking.** Shown while service accounts are on. Lets the agent run tools in channels without Accept or Reject, on a short-lived read-only session limited to the channel, public channels on teams anyone can join, and the additional channels you pick. Only System Admins can change it. See [Scoped channel mode](mcp_integrations.md#scoped-channel-mode).
 
 Granting a tool to an agent doesn't override approval policies. See [Tool approval and credentials](tool_approval.md).
 
@@ -123,7 +124,7 @@ If you leave the editor with unsaved changes, a **Discard changes?** prompt appe
 
 ### What's editable vs locked
 
-While **Use service accounts for authentication** is on, only System Admins can edit channel access, user access, agent admins, MCP tool grants, **Automatically enable all MCP tools**, and the service account setting. Everything else stays editable by anyone who can manage the agent, who can also turn the setting off or delete the agent. While it's off, anyone who can manage the agent can edit everything.
+While **Use service accounts for authentication** is on, only System Admins can edit channel access, user access, agent admins, MCP tool grants, **Automatically enable all MCP tools**, scoped channel mode and its additional channels, and the service account setting. Everything else stays editable by anyone who can manage the agent, who can also turn the setting off or delete the agent. While it's off, anyone who can manage the agent can edit everything.
 
 ### Rename an agent
 

@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -79,6 +80,10 @@ type MCPTool struct {
 	// ReadOnly is true when the tool only retrieves data. State-changing tools
 	// are available at Enterprise and above.
 	ReadOnly bool
+
+	// ScopedUnsupported is true for a read-only tool that cannot work under a
+	// scoped session; see scopedUnsupportedTools.
+	ScopedUnsupported bool
 }
 
 type ToolProvider interface {
@@ -169,6 +174,9 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	var mcpTools []MCPTool
 	for _, group := range groups {
 		mcpTools = append(mcpTools, group()...)
+	}
+	for i := range mcpTools {
+		_, mcpTools[i].ScopedUnsupported = scopedUnsupportedTools[mcpTools[i].Name]
 	}
 	return mcpTools
 }
@@ -278,6 +286,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			ReadOnlyHint: mcpTool.ReadOnly,
 		},
 	}
+	if mcpTool.ScopedUnsupported {
+		tool.Meta = mcp.Meta{llm.ScopedUnsupportedMetaKey: true}
+	}
 
 	// Set the InputSchema from the MCPTool schema
 	if mcpTool.Schema != nil {
@@ -332,7 +343,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			p.logger.Debug("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + err.Error()},
+					&mcp.TextContent{Text: toolErrorText(err)},
 				},
 				IsError: true,
 			}, nil
@@ -353,6 +364,31 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 
 	// Register the tool using the Server.AddTool method
 	server.AddTool(tool, handler)
+}
+
+// scopedOutOfScopeErrorID is the Mattermost error ID of a request a scoped
+// session may not make. The server answers the same way for something that
+// does not exist and for something outside the scope, so the model is told
+// both.
+const scopedOutOfScopeErrorID = "api.context.scoped_session_out_of_scope"
+
+// scopedOutOfScopeMessage is what a scoped agent's model sees for such a
+// failure, in place of the server's internal error.
+const scopedOutOfScopeMessage = "Error: not found, or not accessible in this agent's scope"
+
+func toolErrorText(err error) string {
+	if isOutOfScopeError(err) {
+		return scopedOutOfScopeMessage
+	}
+	return "Error: " + err.Error()
+}
+
+// isOutOfScopeError reports whether err is the server's answer to a request a
+// scoped session may not make, which is also its answer to one for something
+// that does not exist.
+func isOutOfScopeError(err error) bool {
+	var appErr *model.AppError
+	return (errors.As(err, &appErr) && strings.HasPrefix(appErr.Id, scopedOutOfScopeErrorID)) || strings.Contains(err.Error(), scopedOutOfScopeErrorID)
 }
 
 // authenticatedClientAndUserID returns the authenticated client and, when the

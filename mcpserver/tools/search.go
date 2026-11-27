@@ -162,7 +162,7 @@ func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, clien
 // several teams have a channel with that name, the returned guidance lists them
 // for the model to pick one.
 func resolveInChannelName(ctx context.Context, client *model.Client4, name string) (*model.Channel, string, error) {
-	channels, _, err := client.GetChannelsForUserWithLastDeleteAt(ctx, "me", 0)
+	channels, err := channelsByName(ctx, client, name)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to resolve channel %q: %w", name, err)
 	}
@@ -187,6 +187,25 @@ func resolveInChannelName(ctx context.Context, client *model.Client4, name strin
 		format.WriteChannel(&sb, format.ChannelEntry{Channel: channel, TeamID: channel.TeamId, MemberCount: -1})
 	}
 	return nil, sb.String(), nil
+}
+
+// channelsByName returns the caller's channels that may be named name: all of
+// its own channels, or for a scoped run, which has none, the in-scope channels
+// matching name.
+func channelsByName(ctx context.Context, client *model.Client4, name string) ([]*model.Channel, error) {
+	if runsScoped(ctx) {
+		found, _, err := client.SearchAllChannelsForUser(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		channels := make([]*model.Channel, 0, len(found))
+		for i := range found {
+			channels = append(channels, &found[i].Channel)
+		}
+		return channels, nil
+	}
+	channels, _, err := client.GetChannelsForUserWithLastDeleteAt(ctx, "me", 0)
+	return channels, err
 }
 
 // searchPostResult holds a post result with metadata for deduplication and formatting.

@@ -19,6 +19,8 @@ An agent runs tools in one of two modes. The mode is a setting on the agent, not
 
 **Service account authentication.** External MCP servers get shared credentials, while Mattermost and plugin tools still run as the initiator. The initiator still approves each call. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 
+**Scoped channel mode.** An agent in this mode runs its named read-only Mattermost tools (and opted-in built-in web search) in channels without approval, on a read-only session limited to the channel, public channels on its team and open teams, and admin-picked channels. External MCP tools still follow their configured tool approval policy. Bot-triggered turns still run only tools set to auto-run everywhere. See [Scoped channel mode](mcp_integrations.md#scoped-channel-mode).
+
 ## Approval policies
 
 Admins set a policy for each tool on the **Tools** tab of the MCP settings. The agent's tool grants decide what the agent may use. They never change the policy.

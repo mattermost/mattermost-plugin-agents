@@ -8,6 +8,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession/scopedtest"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,18 +20,19 @@ import (
 func TestAllowsChannelContent(t *testing.T) {
 	triggerID := model.NewId()
 	openTeam := &model.Team{Id: model.NewId(), AllowOpenInvite: true}
-	closedTeam := &model.Team{Id: model.NewId()}
+	inviteOnlyTeam := &model.Team{Id: model.NewId()}
 	policyTeam := &model.Team{Id: model.NewId(), PolicyEnforced: true}
 	deletedTeam := &model.Team{Id: model.NewId(), DeleteAt: 1}
 	openPublic := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen}
-	listed := &model.Channel{Id: triggerID, TeamId: closedTeam.Id, Type: model.ChannelTypePrivate}
+	inviteOnlyPublic := &model.Channel{Id: model.NewId(), TeamId: inviteOnlyTeam.Id, Type: model.ChannelTypeOpen}
+	listed := &model.Channel{Id: triggerID, TeamId: inviteOnlyTeam.Id, Type: model.ChannelTypePrivate}
 	listedOnPolicy := &model.Channel{Id: triggerID, TeamId: policyTeam.Id, Type: model.ChannelTypePrivate}
 	listedOnDeleted := &model.Channel{Id: triggerID, TeamId: deletedTeam.Id, Type: model.ChannelTypePrivate}
 	scope := &model.SessionScope{
 		Permissions: model.ScopeReadPermissions,
-		Resources:   model.SessionScopeResources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true},
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true, PublicChannelTeamIDs: []string{inviteOnlyTeam.Id}},
 	}
-
+	compliance := model.SessionScopeLimits{ComplianceMode: true}
 	noJoin := model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}
 
 	tests := []struct {
@@ -41,15 +43,19 @@ func TestAllowsChannelContent(t *testing.T) {
 		limits  model.SessionScopeLimits
 		allowed bool
 	}{
-		{name: "listed private channel the bot is not in", scope: scope, channel: listed, team: closedTeam, allowed: true},
+		{name: "listed private channel the bot is not in", scope: scope, channel: listed, team: inviteOnlyTeam, allowed: true},
 		{name: "listed channel on a policy-enforced team", scope: scope, channel: listedOnPolicy, team: policyTeam},
 		{name: "listed channel on a deleted team", scope: scope, channel: listedOnDeleted, team: deletedTeam},
 		{name: "public channel on an open team", scope: scope, channel: openPublic, team: openTeam, allowed: true},
-		{name: "public channel on an open team with the grant off", scope: scope, channel: openPublic, team: openTeam, limits: noJoin},
-		{name: "listed channel with the open-team grant off", scope: scope, channel: listed, team: closedTeam, limits: noJoin, allowed: true},
-		{name: "scope without the content permission", scope: &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources}, channel: listed, team: closedTeam},
-		{name: "empty scope from a malformed prop", scope: &model.SessionScope{}, channel: listed, team: closedTeam},
-		{name: "no scope", channel: listed, team: closedTeam},
+		{name: "public channel on the triggering team, which is not open", scope: scope, channel: inviteOnlyPublic, team: inviteOnlyTeam, allowed: true},
+		{name: "open-team grant off because people cannot join teams", scope: scope, channel: openPublic, team: openTeam, limits: noJoin},
+		{name: "triggering team's grant survives people not being able to join teams", scope: scope, channel: inviteOnlyPublic, team: inviteOnlyTeam, limits: noJoin, allowed: true},
+		{name: "compliance mode turns off both public grants", scope: scope, channel: inviteOnlyPublic, team: inviteOnlyTeam, limits: compliance},
+		{name: "listed channel in compliance mode", scope: scope, channel: listed, team: inviteOnlyTeam, limits: compliance, allowed: true},
+		{name: "listed channel with the open-team grant off", scope: scope, channel: listed, team: inviteOnlyTeam, limits: noJoin, allowed: true},
+		{name: "scope without the content permission", scope: &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources}, channel: listed, team: inviteOnlyTeam},
+		{name: "empty scope from a malformed prop", scope: &model.SessionScope{}, channel: listed, team: inviteOnlyTeam},
+		{name: "no scope", channel: listed, team: inviteOnlyTeam},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -59,7 +65,7 @@ func TestAllowsChannelContent(t *testing.T) {
 }
 
 func TestContentChannels(t *testing.T) {
-	resources := model.SessionScopeResources{ChannelIDs: []string{"a", "b"}, OpenTeamPublicChannels: true}
+	resources := model.SessionScopeResources{ChannelIDs: []string{"a", "b"}, OpenTeamPublicChannels: true, PublicChannelTeamIDs: []string{"t"}}
 	tests := []struct {
 		name     string
 		scope    *model.SessionScope
@@ -67,7 +73,18 @@ func TestContentChannels(t *testing.T) {
 		expected model.SessionScopeResources
 	}{
 		{name: "full scope", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, expected: resources},
-		{name: "open-team grant off drops open teams", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}, expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}}},
+		{
+			name:     "people who cannot join teams drop the open-team grant only",
+			scope:    &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources},
+			limits:   model.SessionScopeLimits{UsersCannotJoinOpenTeams: true},
+			expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}, PublicChannelTeamIDs: []string{"t"}},
+		},
+		{
+			name:     "compliance mode drops both public grants",
+			scope:    &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources},
+			limits:   model.SessionScopeLimits{ComplianceMode: true},
+			expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}},
+		},
 		{name: "no content permission reads nothing", scope: &model.SessionScope{Resources: resources}, expected: model.SessionScopeResources{}},
 	}
 	for _, tt := range tests {
@@ -175,17 +192,86 @@ func TestServerLimits(t *testing.T) {
 		name     string
 		settings ServerSettings
 		limits   model.SessionScopeLimits
+		reason   PublicGrantsOff
 	}{
-		{name: "no limits when compliance is off and system_user can join", settings: fakeSettings{cfg: cfg(&off), join: true}},
-		{name: "compliance mode", settings: fakeSettings{cfg: cfg(&on), join: true}, limits: model.SessionScopeLimits{ComplianceMode: true}},
-		{name: "system_user cannot join public teams", settings: fakeSettings{cfg: cfg(&off)}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}},
-		{name: "compliance setting missing means compliance is off", settings: fakeSettings{cfg: cfg(nil), join: true}},
-		{name: "config missing", settings: fakeSettings{join: true}, limits: failClosed},
-		{name: "no settings", limits: failClosed},
+		{name: "no limits when compliance is off and system_user can join", settings: fakeSettings{cfg: cfg(&off), join: true}, reason: PublicGrantsOn},
+		{name: "compliance mode", settings: fakeSettings{cfg: cfg(&on), join: true}, limits: model.SessionScopeLimits{ComplianceMode: true}, reason: PublicGrantsOffCompliance},
+		{name: "system_user cannot join public teams", settings: fakeSettings{cfg: cfg(&off)}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}, reason: PublicGrantsOffUsersCannotJoin},
+		{name: "compliance setting missing means compliance is off", settings: fakeSettings{cfg: cfg(nil), join: true}, reason: PublicGrantsOn},
+		{name: "compliance setting missing and system_user cannot join", settings: fakeSettings{cfg: cfg(nil)}, limits: model.SessionScopeLimits{UsersCannotJoinOpenTeams: true}, reason: PublicGrantsOffUsersCannotJoin},
+		{name: "config missing", settings: fakeSettings{join: true}, limits: failClosed, reason: PublicGrantsOffUnknown},
+		{name: "no settings", limits: failClosed, reason: PublicGrantsOffUnknown},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.limits, ServerLimits(tt.settings))
+			assert.Equal(t, tt.reason, PublicGrantsOffReason(tt.settings))
+		})
+	}
+}
+
+func TestTeamClosedReasons(t *testing.T) {
+	tests := []struct {
+		name     string
+		team     *model.Team
+		expected []TeamClosedReason
+	}{
+		{name: "open team", team: &model.Team{AllowOpenInvite: true}},
+		{name: "invite only", team: &model.Team{}, expected: []TeamClosedReason{TeamClosedInviteOnly}},
+		{name: "domain restricted", team: &model.Team{AllowOpenInvite: true, AllowedDomains: "example.com"}, expected: []TeamClosedReason{TeamClosedDomainRestricted}},
+		{name: "group constrained", team: &model.Team{AllowOpenInvite: true, GroupConstrained: model.NewPointer(true)}, expected: []TeamClosedReason{TeamClosedGroupConstrained}},
+		{name: "policy enforced", team: &model.Team{AllowOpenInvite: true, PolicyEnforced: true}, expected: []TeamClosedReason{TeamClosedPolicyEnforced}},
+		{name: "archived", team: &model.Team{AllowOpenInvite: true, DeleteAt: 1}, expected: []TeamClosedReason{TeamClosedArchived}},
+		{
+			name:     "several reasons",
+			team:     &model.Team{AllowedDomains: "example.com", PolicyEnforced: true},
+			expected: []TeamClosedReason{TeamClosedInviteOnly, TeamClosedDomainRestricted, TeamClosedPolicyEnforced},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reasons := TeamClosedReasons(tt.team)
+			assert.Equal(t, tt.expected, reasons)
+			assert.Equal(t, tt.team.IsOpenToAllUsers(), len(reasons) == 0, "reasons must agree with the server's open-team rule")
+		})
+	}
+}
+
+func TestTeamGrantOff(t *testing.T) {
+	tests := []struct {
+		reason PublicGrantsOff
+		off    bool
+	}{
+		{reason: PublicGrantsOn},
+		{reason: PublicGrantsOffUsersCannotJoin},
+		{reason: PublicGrantsOffCompliance, off: true},
+		{reason: PublicGrantsOffUnknown, off: true},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.reason), func(t *testing.T) {
+			assert.Equal(t, tt.off, TeamGrantOff(tt.reason))
+		})
+	}
+}
+
+// A false compliance setting reaches the plugin as nil over the plugin RPC, so
+// the grants must stay on for it.
+func TestServerLimitsWithRPCDecodedConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		compliance bool
+		limits     model.SessionScopeLimits
+	}{
+		{name: "compliance off", limits: model.SessionScopeLimits{}},
+		{name: "compliance on", compliance: true, limits: model.SessionScopeLimits{ComplianceMode: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := scopedtest.RPCConfig(t, &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: model.NewPointer(tt.compliance)}})
+			if !tt.compliance {
+				require.Nil(t, cfg.ComplianceSettings.Enable, "the RPC drops a false pointer; this test is about that")
+			}
+			assert.Equal(t, tt.limits, ServerLimits(fakeSettings{cfg: cfg, join: true}))
 		})
 	}
 }

@@ -9,6 +9,8 @@
 package scopedsession
 
 import (
+	"slices"
+
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -45,20 +47,120 @@ type ServerSettings interface {
 // open-team grant off. Without a readable config both are off, so public
 // reads fail closed.
 func ServerLimits(settings ServerSettings) model.SessionScopeLimits {
+	limits, _ := serverLimits(settings)
+	return limits
+}
+
+func serverLimits(settings ServerSettings) (limits model.SessionScopeLimits, readable bool) {
 	failClosed := model.SessionScopeLimits{ComplianceMode: true, UsersCannotJoinOpenTeams: true}
 	if settings == nil {
-		return failClosed
+		return failClosed, false
 	}
 	cfg := settings.GetConfig()
 	if cfg == nil {
-		return failClosed
+		return failClosed, false
 	}
 	// The plugin RPC transmits a false pointer as nil, so a missing setting is
 	// compliance mode off, the default.
 	if cfg.ComplianceSettings.Enable != nil && *cfg.ComplianceSettings.Enable {
-		return model.SessionScopeLimits{ComplianceMode: true}
+		return model.SessionScopeLimits{ComplianceMode: true}, true
 	}
 	return model.SessionScopeLimits{
 		UsersCannotJoinOpenTeams: !settings.RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id),
+	}, true
+}
+
+// PublicGrantsOff says why a public-channel grant is off.
+type PublicGrantsOff string
+
+const (
+	PublicGrantsOn PublicGrantsOff = ""
+	// PublicGrantsOffUnknown: the server's settings could not be read, so both
+	// grants are off.
+	PublicGrantsOffUnknown PublicGrantsOff = "unknown"
+	// PublicGrantsOffCompliance: compliance mode turns both grants off.
+	PublicGrantsOffCompliance PublicGrantsOff = "compliance_mode"
+	// PublicGrantsOffUsersCannotJoin: people cannot join teams on their own,
+	// which turns off the open-team grant only.
+	PublicGrantsOffUsersCannotJoin PublicGrantsOff = "users_cannot_join_teams"
+)
+
+// PublicGrantsOffReason says why the open-team grant is off, or PublicGrantsOn.
+// The grant to the triggering team's public channels is off exactly when the
+// reason is PublicGrantsOffCompliance or PublicGrantsOffUnknown; see
+// TeamGrantOff.
+func PublicGrantsOffReason(settings ServerSettings) PublicGrantsOff {
+	limits, readable := serverLimits(settings)
+	switch {
+	case !readable:
+		return PublicGrantsOffUnknown
+	case limits.ComplianceMode:
+		return PublicGrantsOffCompliance
+	case limits.UsersCannotJoinOpenTeams:
+		return PublicGrantsOffUsersCannotJoin
 	}
+	return PublicGrantsOn
+}
+
+// TeamGrantOff reports whether the grant to the triggering team's public
+// channels is off under reason.
+func TeamGrantOff(reason PublicGrantsOff) bool {
+	return reason == PublicGrantsOffCompliance || reason == PublicGrantsOffUnknown
+}
+
+// NewRunScope is the scope of one channel-triggered run: read access to the
+// listed channels, to every public channel on teamID (the team of the channel
+// that triggered the run), and to every public channel on an open team.
+func NewRunScope(requesterID string, channelIDs []string, teamID string) *model.SessionScope {
+	return &model.SessionScope{
+		Permissions: slices.Clone(model.ScopeReadPermissions),
+		Resources: model.SessionScopeResources{
+			ChannelIDs:             slices.Clone(channelIDs),
+			OpenTeamPublicChannels: true,
+			PublicChannelTeamIDs:   []string{teamID},
+		},
+		OnBehalfOfUserID: requesterID,
+	}
+}
+
+// TeamClosedReason says why a team does not count as open to all users.
+type TeamClosedReason string
+
+const (
+	TeamClosedArchived         TeamClosedReason = "archived"
+	TeamClosedInviteOnly       TeamClosedReason = "invite_only"
+	TeamClosedGroupConstrained TeamClosedReason = "group_constrained"
+	TeamClosedDomainRestricted TeamClosedReason = "domain_restricted"
+	TeamClosedPolicyEnforced   TeamClosedReason = "policy_enforced"
+	TeamClosedOther            TeamClosedReason = "other"
+)
+
+// TeamClosedReasons explains why team is not open to all users. The server's
+// Team.IsOpenToAllUsers decides: the result is empty exactly when it is true,
+// and a team it rejects for a reason not listed here is reported as
+// TeamClosedOther.
+func TeamClosedReasons(team *model.Team) []TeamClosedReason {
+	if team.IsOpenToAllUsers() {
+		return nil
+	}
+	var reasons []TeamClosedReason
+	if team.DeleteAt != 0 {
+		reasons = append(reasons, TeamClosedArchived)
+	}
+	if !team.AllowOpenInvite {
+		reasons = append(reasons, TeamClosedInviteOnly)
+	}
+	if team.IsGroupConstrained() {
+		reasons = append(reasons, TeamClosedGroupConstrained)
+	}
+	if team.AllowedDomains != "" {
+		reasons = append(reasons, TeamClosedDomainRestricted)
+	}
+	if team.PolicyEnforced {
+		reasons = append(reasons, TeamClosedPolicyEnforced)
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, TeamClosedOther)
+	}
+	return reasons
 }

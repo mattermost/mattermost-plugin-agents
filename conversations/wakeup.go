@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -522,7 +523,7 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	policy, err := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: user, channel: channel, conv: conv, post: post})
 	_, isLicenseErr := errors.AsType[*enterprise.LicenseError](err)
 	switch {
-	case errors.Is(err, bots.ErrUsageRestriction), errors.Is(err, ErrAnalysisSourceUnavailable), isLicenseErr:
+	case errors.Is(err, bots.ErrUsageRestriction), errors.Is(err, ErrAnalysisSourceUnavailable), errors.Is(err, llmcontext.ErrScopedRequesterCannotReadTeamChannels), isLicenseErr:
 		return c.dropWake("turn not allowed", err, "user_id", user.Id, "bot_id", bot.GetMMBot().UserId, "channel_id", channel.Id)
 	case err != nil:
 		return fmt.Errorf("failed to resolve turn policy: %w", err)

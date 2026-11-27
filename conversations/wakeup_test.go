@@ -418,6 +418,16 @@ func TestResumeConversationDrops(t *testing.T) {
 			botCfg:  func(cfg *llm.BotConfig) { cfg.ChannelAccessLevel = llm.ChannelAccessLevelNone },
 		},
 		{
+			name:    "requester cannot use scoped channel mode",
+			user:    &model.User{Id: wakeUserID},
+			canRead: true,
+			channel: openChannel,
+			botCfg: func(cfg *llm.BotConfig) {
+				cfg.UseServiceAccountAuth = true
+				cfg.ScopedChannelMode = true
+			},
+		},
+		{
 			name:       "wake chain limit reached",
 			user:       &model.User{Id: wakeUserID},
 			canRead:    true,
@@ -859,8 +869,9 @@ func TestRegenerationCancelsThreadWakeWithoutNote(t *testing.T) {
 		post:    post,
 	})
 	require.NoError(t, err)
-	streamResult, _, err := c.regenerateViaConversation(context.Background(), policy, post)
+	streamResult, _, release, err := c.regenerateViaConversation(context.Background(), policy, post)
 	require.NoError(t, err)
+	defer release()
 	_, err = streamResult.ReadAll()
 	require.NoError(t, err)
 

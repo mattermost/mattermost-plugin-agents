@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -59,6 +61,9 @@ type turnPolicy struct {
 	// in a channel (auto_run_everywhere), for runs nobody is present to
 	// approve.
 	autoEverywhereOnly bool
+	// scoped runs the turn's tools on a scoped session limited to the channel
+	// content the requester can read, so every tool may run without approval.
+	scoped bool
 }
 
 // resolveTurnPolicy checks that req may run and derives how it runs. Gates
@@ -78,6 +83,11 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 	} else {
 		if err := c.bots.CheckUsageRestrictions(ctx, req.user.Id, req.bot, req.channel); err != nil {
 			return nil, err
+		}
+		if llmcontext.ScopedChannelModeConfigured(req.bot) && llmcontext.ScopedChannelModeAppliesTo(req.channel) &&
+			(c.contextBuilder == nil ||
+				(c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel) && !c.contextBuilder.RequesterCanUseScopedChannelMode(req.user.Id, req.channel))) {
+			return nil, llmcontext.ErrScopedRequesterCannotReadTeamChannels
 		}
 		if err := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); err != nil {
 			return nil, err
@@ -112,6 +122,7 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		p.interactive = initiator != nil && initiatingUser != nil && !isAutomatedInvoker(initiator, initiatingUser)
 	} else {
 		p.setChannelRunTools(initiator, initiatingUser)
+		p.scoped = p.toolsEnabled && c.contextBuilder != nil && c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel)
 	}
 	return p, nil
 }
@@ -309,6 +320,9 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if p.isDM {
 		opts = append(opts, builder.WithLLMContextDirectMessage())
 	}
+	if p.scoped {
+		opts = append(opts, builder.WithLLMContextScopedChannelTurn(p.scopedTurn()))
+	}
 	if p.autoEverywhereOnly {
 		opts = append(opts, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
@@ -325,6 +339,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 		skillsCfg.Skills.EnabledSharedIDs = nil
 	}
 	if err := builder.AddSkillTools(llmContext, skillsCfg); err != nil {
+		llmContext.ReleaseScopedSession()
 		return nil, fmt.Errorf("failed to load skills: %w", err)
 	}
 	switch {
@@ -341,43 +356,93 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	return llmContext, nil
 }
 
+// scopedTurn identifies the turn in the scoped session's audit records.
+func (p *turnPolicy) scopedTurn() llm.ScopedTurn {
+	turn := llm.ScopedTurn{}
+	switch {
+	case p.trigger != nil:
+		turn.TriggerPostID = p.trigger.Id
+		turn.ThreadRootID = cmp.Or(p.trigger.RootId, p.trigger.Id)
+	case p.post != nil:
+		respondingTo, _ := p.post.GetProp(streaming.RespondingToProp).(string)
+		turn.TriggerPostID = cmp.Or(respondingTo, p.post.Id)
+		turn.ThreadRootID = cmp.Or(p.post.RootId, p.post.Id)
+	}
+	if p.conv != nil {
+		turn.ConversationID = p.conv.ID
+		if p.conv.RootPostID != nil {
+			turn.ThreadRootID = *p.conv.RootPostID
+		}
+	} else {
+		turn.ConversationID = p.c.existingThreadConversationID(p.bot, p.user, turn.ThreadRootID)
+	}
+	turn.ConversationPending = turn.ConversationID == ""
+	return turn
+}
+
 // autoExecute decides, per tool call, whether the call runs without the
 // requester's approval.
 func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 	return func(tc llm.ToolCall) bool {
-		if !p.toolsEnabled {
-			return false
-		}
-		if isMCPMetaToolCall(tc, llmCtx) {
-			return true
-		}
-		var lookup llm.ToolLookup
-		var found bool
-		if llmCtx != nil {
-			lookup, found = llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
-		}
-		if !found {
-			return false
-		}
-		if p.c.remoteMCPDecisionAllowed(lookup.ServerOrigin) != nil {
-			return false
-		}
-		// Only honored for built-ins: an MCP tool carrying the flag must
-		// still go through policy.
-		if isAutoExecuteBuiltIn(lookup.Tool) {
-			return true
-		}
-		policy, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
-		if !enabled {
-			return false
-		}
-		// The legacy auto_run policy is DM-only so a channel-visible reply
-		// cannot reveal unshared tool output without an explicit Share.
-		if p.isDM {
-			return mcp.IsToolPolicyAutoRunInDM(policy)
-		}
-		return mcp.IsToolPolicyAutoRunEverywhere(policy)
+		return p.autoExecuteDecision(llmCtx, tc, true)
 	}
+}
+
+func (p *turnPolicy) autoExecuteDecision(llmCtx *llm.Context, tc llm.ToolCall, checkSessionLive bool) bool {
+	if !p.toolsEnabled {
+		return false
+	}
+	if isMCPMetaToolCall(tc, llmCtx) {
+		return true
+	}
+	var lookup llm.ToolLookup
+	var found bool
+	if llmCtx != nil {
+		lookup, found = llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
+	}
+	if !found {
+		return false
+	}
+	if p.c.remoteMCPDecisionAllowed(lookup.ServerOrigin) != nil {
+		return false
+	}
+	// Once a scoped run's session has ended (run finished or agent config
+	// lapsed), nothing runs unasked.
+	if llmCtx.ToolsScoped && checkSessionLive && llmCtx.ScopedSessionReleased() {
+		return false
+	}
+	// Scoped channel mode skips approval only for tools bounded by the scoped
+	// session (read-only embedded Mattermost tools) and explicitly opted-in
+	// built-ins. External remote MCP tools still follow their configured tool
+	// approval policy below.
+	if llmCtx.ToolsScoped && (lookup.ServerOrigin == "" || mcp.ServerKind(lookup.ServerOrigin) == mcp.ServerKindEmbedded) {
+		if lookup.Tool.UserInteraction != "" {
+			return false
+		}
+		// A tool the admin has disabled never runs, whatever the catalog
+		// holds. Built-ins have no per-tool policy.
+		if lookup.ServerOrigin != "" {
+			if _, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName); !enabled {
+				return false
+			}
+		}
+		return true
+	}
+	// Only honored for built-ins: an MCP tool carrying the flag must
+	// still go through policy.
+	if isAutoExecuteBuiltIn(lookup.Tool) {
+		return true
+	}
+	policy, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
+	if !enabled {
+		return false
+	}
+	// The legacy auto_run policy is DM-only so a channel-visible reply
+	// cannot reveal unshared tool output without an explicit Share.
+	if p.isDM {
+		return mcp.IsToolPolicyAutoRunInDM(policy)
+	}
+	return mcp.IsToolPolicyAutoRunEverywhere(policy)
 }
 
 // remoteMCPDecisionAllowed returns ErrRemoteMCPNotLicensed when executing, or
@@ -394,17 +459,18 @@ func (c *Conversations) remoteMCPDecisionAllowed(serverOrigin string) error {
 // sharedForTurns reports whether tool rounds the turn ran automatically may
 // be written as shared, skipping the result-approval step. DM results are
 // always shared; in a channel every call must be one the policy auto-runs
-// there, which only auto_run_everywhere tools are.
+// there. Session liveness is not re-checked here because these calls already
+// ran while the session was live; a mid-run revocation must not hide results
+// that already executed.
 func (p *turnPolicy) sharedForTurns(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
 	if p.isDM {
 		return true
 	}
-	autoExecute := p.autoExecute(llmCtx)
 	sawToolCall := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
 			sawToolCall = true
-			if !autoExecute(tc) {
+			if !p.autoExecuteDecision(llmCtx, tc, false) {
 				return false
 			}
 		}
