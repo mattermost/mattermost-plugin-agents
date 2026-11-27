@@ -2,6 +2,7 @@ import { expect } from '@playwright/test';
 import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
+import { showAgentDMAsMessages } from 'helpers/agent-dm-view';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
 import {
     RunAgentContainer,
@@ -143,6 +144,7 @@ test.describe('Agent CRUD', () => {
 
         const teams = await adminClient.getMyTeams();
         await page.goto(`${mattermost.url()}/${teams[0].name}/messages/@${newName}`);
+        await showAgentDMAsMessages(page, dm.id);
         await expect(page.getByTestId('post-message-text').getByText(historyMessage)).toBeVisible({ timeout: 15000 });
     });
 

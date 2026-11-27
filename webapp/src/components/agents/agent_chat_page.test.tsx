@@ -289,6 +289,17 @@ describe('AgentChatPage', () => {
         expect(fakeAdvancedTextEditorUploads).toEqual([]);
     });
 
+    test('an open DM channel the bots list does not have yet is used as is, not created again', async () => {
+        mockGetBotDirectChannel.mockRejectedValue(new Error('nope'));
+        mockGetChannel.mockResolvedValue({id: 'dm1'});
+        mockGetChannelMember.mockResolvedValue({channel_id: 'dm1', roles: 'channel_user'});
+        renderPage(makeStore({bots: [makeBot('bot1', '')]}), {dmChannelId: 'dm1'});
+
+        await screen.findByTestId('host-advanced-text-editor');
+        expect(mockGetBotDirectChannel).not.toHaveBeenCalled();
+        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({channelId: 'dm1'}));
+    });
+
     test('shows an error and no composer when the DM channel cannot be created', async () => {
         mockGetBotDirectChannel.mockRejectedValue(new Error('nope'));
         renderPage(makeStore({bots: [makeBot('bot1', '')]}));

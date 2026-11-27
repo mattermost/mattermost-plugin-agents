@@ -67,8 +67,9 @@ type WebSocketHandlers = Map<string, (msg: unknown) => void>;
 // Only the registry members initialize() calls unconditionally, plus the
 // channel-settings tab (its presence is what makes the bots cache load-bearing
 // for a synchronous shouldRender).
-function makeRegistry(websocketHandlers: WebSocketHandlers) {
+function makeRegistry(websocketHandlers: WebSocketHandlers, extra: Record<string, unknown> = {}) {
     return {
+        ...extra,
         registerReducer: jest.fn(),
         registerDesktopNotificationHook: jest.fn(),
         registerTranslations: jest.fn(),
@@ -96,7 +97,7 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065', state
     };
 }
 
-async function initializePlugin(siteURL?: string, state?: Record<string, unknown>) {
+async function initializePlugin(siteURL?: string, extraRegistry: Record<string, unknown> = {}, state?: Record<string, unknown>) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
 
@@ -105,7 +106,7 @@ async function initializePlugin(siteURL?: string, state?: Record<string, unknown
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    const registry = makeRegistry(websocketHandlers);
+    const registry = makeRegistry(websocketHandlers, extraRegistry);
     await new Plugin().initialize(registry, makeStore(dispatch, siteURL, state));
 
     return {websocketHandlers, dispatch, registry};
@@ -261,6 +262,38 @@ describe('dictation', () => {
     });
 });
 
+describe('agent DM channel view', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIBots.mockReset();
+        mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+    });
+
+    test.each([
+        ['registerSidebarChannelChildrenComponent, where its chats are listed', {registerChannelViewComponent: jest.fn()}],
+        ['registerChannelViewComponent', {registerSidebarChannelChildrenComponent: jest.fn()}],
+    ])('is not registered on a server without %s', async (_name, registry) => {
+        await initializePlugin('http://localhost:8065', registry);
+
+        expect(Object.values(registry).every((fn) => !fn.mock.calls.length)).toBe(true);
+    });
+
+    test('registers the agent DM view and its chats under the agent in the sidebar', async () => {
+        const registerChannelViewComponent = jest.fn();
+        const registerSidebarChannelChildrenComponent = jest.fn();
+        await initializePlugin('http://localhost:8065', {registerChannelViewComponent, registerSidebarChannelChildrenComponent});
+
+        // eslint-disable-next-line global-require
+        const {isAgentDMChannel} = require('./agent_dm_view');
+        // eslint-disable-next-line global-require
+        const AgentDMChannelView = require('./components/agents/agent_dm_channel_view').default;
+        // eslint-disable-next-line global-require
+        const AgentDMSidebarChats = require('./components/agents/agent_dm_sidebar_chats').default;
+        expect(registerChannelViewComponent).toHaveBeenCalledWith({matcher: isAgentDMChannel, component: AgentDMChannelView});
+        expect(registerSidebarChannelChildrenComponent).toHaveBeenCalledWith({matcher: isAgentDMChannel, component: AgentDMSidebarChats});
+    });
+});
+
 describe('agent thread list websocket handlers', () => {
     beforeEach(() => {
         jest.resetModules();
@@ -283,7 +316,7 @@ describe('agent thread list websocket handlers', () => {
             },
             'plugins-mattermost-ai': {aiThreads: {threads: [], loading: false, error: false, requestId: 0}, bots: []},
         };
-        const {websocketHandlers} = await initializePlugin('http://localhost:8065', state);
+        const {websocketHandlers} = await initializePlugin('http://localhost:8065', {}, state);
         await flush();
 
         jest.useFakeTimers();

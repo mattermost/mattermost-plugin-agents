@@ -28,16 +28,23 @@ import {useAgentEditAccess} from './use_agent_edit_access';
 
 interface AgentChatPageProps {
     botId: string;
+
+    // The agent's DM channel where the caller already has it open; the bots list lacks it for a DM
+    // opened after the list was fetched.
+    dmChannelId?: string;
     rootId?: string;
     toChat: (botId: string, rootId?: string) => void;
     toAll: () => void;
 }
 
-const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
+const AgentChatPage = ({botId, dmChannelId, rootId, toChat, toAll}: AgentChatPageProps) => {
     const intl = useIntl();
     const dispatch = useDispatch();
     const {bots} = useBotlist();
-    const bot = useMemo(() => bots?.find((b) => b.id === botId) ?? null, [bots, botId]);
+    const bot = useMemo(() => {
+        const found = bots?.find((b) => b.id === botId) ?? null;
+        return found && dmChannelId ? {...found, dmChannelID: dmChannelId} : found;
+    }, [bots, botId, dmChannelId]);
     const dm = useAgentDMChannel(bot);
     const {access, reload: reloadAccess} = useAgentEditAccess(bot ? botId : '');
     const [settingsOpen, setSettingsOpen] = useState(false);
