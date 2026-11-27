@@ -14,6 +14,7 @@ import {LinkRendering, linkRendering} from '@/utils/link_allowlist';
 
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
+import {noMotionWhenReduced} from './llmbot_post/motion';
 import {StreamingMarkdown} from './llmbot_post/streaming_markdown';
 
 export type ChannelNamesMap = {
@@ -34,10 +35,16 @@ interface Props {
     reveal?: boolean;
 }
 
-const blinkKeyframes = keyframes`
-	0% { opacity: 0.48; }
-	20% { opacity: 0.48; }
-	100% { opacity: 0.12; }
+// Soft pulse for the streaming caret; mirrors the wait-status PulseDot cadence.
+const pulseKeyframes = keyframes`
+	0%, 100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.35;
+		transform: scale(0.75);
+	}
 `;
 
 const TextContainer = styled.div<{$showCursor?: boolean}>`
@@ -58,13 +65,17 @@ const TextContainer = styled.div<{$showCursor?: boolean}>`
 		>p:last-child::after,
 		>p:empty::after {
 			content: '';
-			width: 7px;
-			height: 16px;
+			width: var(--spacing-xxs);
+			height: var(--spacing-xxs);
+			border-radius: 50%;
 			background: rgba(var(--center-channel-color-rgb), 0.48);
 			display: inline-block;
-			margin-left: 3px;
+			vertical-align: middle;
+			margin-left: var(--spacing-xxxs);
 
-			animation: ${blinkKeyframes} 500ms ease-in-out infinite;
+			animation: ${pulseKeyframes} 1.4s ease-in-out infinite;
+
+			${noMotionWhenReduced}
 		}
 	`}
 `;
