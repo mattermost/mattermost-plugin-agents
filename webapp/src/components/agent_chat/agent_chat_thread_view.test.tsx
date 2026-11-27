@@ -7,6 +7,7 @@ import {createStore} from 'redux';
 import {act, fireEvent, render, screen} from '@testing-library/react';
 
 import AgentChatThreadView from './agent_chat_thread_view';
+import {AGENT_HIDDEN_COMPOSER_CONTROLS} from './host_composer_controls';
 
 const mockGetProfilesByIds = jest.fn();
 jest.mock('@/client', () => ({
@@ -136,7 +137,7 @@ describe('AgentChatThreadView', () => {
         renderView({layout, isThreadView, agentName});
 
         expect(screen.getByTestId('thread-pane').contains(screen.getByTestId('thread-viewer'))).toBe(true);
-        expect(mockThreadViewerProps).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView, inputPlaceholder: placeholder}));
+        expect(mockThreadViewerProps).toHaveBeenLastCalledWith(expect.objectContaining({rootPostId: 'root1', isThreadView, inputPlaceholder: placeholder, agentMode: true, hiddenControls: AGENT_HIDDEN_COMPOSER_CONTROLS}));
     });
 
     test('loads the profiles of thread posters the store lacks, for the host composer\'s @mention list', async () => {

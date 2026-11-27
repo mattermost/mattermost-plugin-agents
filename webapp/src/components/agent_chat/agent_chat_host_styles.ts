@@ -232,12 +232,16 @@ export const hostComposerInset = (inset: string) => css`
 `;
 
 // The ThreadViewer's reply composer, lined up with the posts above it: with a column it is capped,
-// centered and inset like the column (centeredColumn); in a panel it takes the panel's padding
-// (paddedRows). The archived / deactivated-user notices the host renders instead are left alone.
+// centered and inset like the column (centeredColumn); in a panel it keeps the host Thread RHS
+// vertical inset (no extra bottom padding) and only the panel's side padding (paddedRows). The
+// archived / deactivated-user notices the host renders instead are left alone.
 const hostReplyComposerStyles = ({columnMaxWidth}: HostThreadChatStylesOptions) => css`
     ${HOST_REPLY_COMPOSER} {
         box-sizing: border-box;
-        padding-bottom: ${columnMaxWidth ? 'var(--spacing-xxl)' : CHAT_PANEL_PADDING};
+
+        /* Product view: match the channel composer's 24px bottom. RHS panel: match the host
+         * Thread RHS, which leaves comment-create without a bottom pad. */
+        padding-bottom: ${columnMaxWidth ? 'var(--spacing-xxl)' : '0'};
 
         ${columnMaxWidth && css`
             width: calc(100% - 2 * var(--spacing-m));

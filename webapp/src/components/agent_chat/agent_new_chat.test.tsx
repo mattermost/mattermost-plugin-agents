@@ -14,6 +14,7 @@ import {lastAdvancedTextEditorProps} from '../../../tests/fake_advanced_text_edi
 import {usePinnedSkillsLayoutMock} from '../../../tests/pinned_skills_layout_mock';
 
 import AgentNewChat, {NEW_CHAT_GREETINGS} from './agent_new_chat';
+import {AGENT_HIDDEN_COMPOSER_CONTROLS} from './host_composer_controls';
 
 jest.mock('@/client', () => ({
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
@@ -139,7 +140,7 @@ describe('AgentNewChat', () => {
     ])('in the $layout layout, the host composer posts a root post to the agent\'s DM', ({layout, location}) => {
         render(ui(layout));
         expect(screen.getByTestId('agent-chat-new-composer')).toBeTruthy();
-        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({location, channelId: 'dm1', rootId: '', placeholder: 'Message Matty'}));
+        expect(lastAdvancedTextEditorProps()).toEqual(expect.objectContaining({location, channelId: 'dm1', rootId: '', placeholder: 'Message Matty', agentMode: true, hiddenControls: AGENT_HIDDEN_COMPOSER_CONTROLS}));
     });
 
     describe('pinned skills', () => {
