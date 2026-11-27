@@ -138,7 +138,7 @@ func setupTestService(t *testing.T) (*Service, *store.Store) {
 	require.NoError(t, err)
 
 	bots := &testBotLookup{botUserIDs: map[string]bool{}}
-	svc := NewService(s, nil, nil, bots)
+	svc := NewService(s, nil, livePostClient{}, bots)
 	return svc, s
 }
 
@@ -2483,6 +2483,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 // when appending a new user turn to an existing conversation.
 func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 	// No .Maybe(): GetFileInfo for the appended attachment MUST run so
 	// MIME comes from the server, not the filename extension.
 	mmClient.On("GetFileInfo", "doc2").Return(&model.FileInfo{
@@ -3642,4 +3643,207 @@ func TestRegenerateDeletesRoundsWrittenAfterALaterUserTurn(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, userTurns, "both user turns stay")
+}
+
+type deletedRootClient struct {
+	mmapi.Client
+}
+
+func (deletedRootClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID, DeleteAt: model.GetMillis()}, nil
+}
+
+// restoredByRivalStore simulates a concurrent reply restoring an archived
+// conversation before this caller's restore runs.
+type restoredByRivalStore struct {
+	*store.Store
+}
+
+func (r *restoredByRivalStore) RestoreConversation(id string, archivedAt int64) (*store.Conversation, error) {
+	if _, err := r.Store.RestoreConversation(id, archivedAt); err != nil {
+		return nil, err
+	}
+	return nil, store.ErrConversationConflict
+}
+
+// conflictOnCreateStore simulates a concurrent CreateConversation winning the
+// unique constraint after this caller's initial lookup found no row.
+type conflictOnCreateStore struct {
+	*store.Store
+	rivalConv *store.Conversation
+}
+
+func (c *conflictOnCreateStore) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
+	return nil, store.ErrConversationNotFound
+}
+
+func (c *conflictOnCreateStore) CreateConversation(conv *store.Conversation) error {
+	if err := c.Store.CreateConversation(c.rivalConv); err != nil {
+		return err
+	}
+	return store.ErrConversationConflict
+}
+
+// rootDeletedAfterCallsClient reports the root live for allowLive calls, then deleted.
+type rootDeletedAfterCallsClient struct {
+	mmapi.Client
+	allowLive int
+	calls     int
+}
+
+func (c *rootDeletedAfterCallsClient) GetPost(postID string) (*model.Post, error) {
+	c.calls++
+	if c.calls <= c.allowLive {
+		return &model.Post{Id: postID}, nil
+	}
+	return &model.Post{Id: postID, DeleteAt: model.GetMillis()}, nil
+}
+
+func TestGetOrCreateConversation_RefusesDeletedRoot(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T, svc *Service, s *store.Store) (convID string, wantTurns int, err error)
+	}{
+		{
+			name: "active conversation with deleted root",
+			run: func(t *testing.T, svc *Service, s *store.Store) (string, int, error) {
+				rootPostID := "deleted_active_root"
+				userID, botID := model.NewId(), model.NewId()
+				created, err := svc.CreateConversation(CreateConversationParams{
+					UserID: userID, BotID: botID, RootPostID: &rootPostID,
+					Operation: "conversation", SystemPrompt: "prompt",
+					UserMessage: "hello", UserPostID: new("post1"),
+				})
+				require.NoError(t, err)
+				svc.mmClient = deletedRootClient{}
+				_, err = svc.GetOrCreateConversation(GetOrCreateParams{
+					UserID: userID, BotID: botID, ChannelID: "chan1", RootPostID: rootPostID,
+					Operation: "conversation", UserMessage: "second", UserPostID: new("post2"),
+				})
+				return created.ConversationID, 1, err
+			},
+		},
+		{
+			name: "new conversation on deleted root",
+			run: func(t *testing.T, svc *Service, s *store.Store) (string, int, error) {
+				rootPostID := "deleted_new_root"
+				userID, botID := model.NewId(), model.NewId()
+				svc.mmClient = deletedRootClient{}
+				_, err := svc.GetOrCreateConversation(GetOrCreateParams{
+					UserID: userID, BotID: botID, ChannelID: "chan1", RootPostID: rootPostID,
+					Operation: "conversation", UserMessage: "first", UserPostID: new("post1"),
+				})
+				_, lookupErr := s.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+				require.ErrorIs(t, lookupErr, store.ErrConversationNotFound, "no conversation is created for a deleted root")
+				return "", 0, err
+			},
+		},
+		{
+			name: "concurrent create conflict with root deleted meanwhile",
+			run: func(t *testing.T, svc *Service, s *store.Store) (string, int, error) {
+				rootPostID := "deleted_conflict_root"
+				userID, botID := model.NewId(), model.NewId()
+				now := model.GetMillis()
+				rival := &store.Conversation{
+					ID: model.NewId(), UserID: userID, BotID: botID,
+					RootPostID: &rootPostID, Operation: "conversation",
+					CreatedAt: now, UpdatedAt: now,
+				}
+				svc.store = &conflictOnCreateStore{Store: s, rivalConv: rival}
+				svc.mmClient = &rootDeletedAfterCallsClient{allowLive: 1}
+				_, err := svc.GetOrCreateConversation(GetOrCreateParams{
+					UserID: userID, BotID: botID, ChannelID: "chan1", RootPostID: rootPostID,
+					Operation: "conversation", UserMessage: "second", UserPostID: new("post2"),
+				})
+				return rival.ID, 0, err
+			},
+		},
+		{
+			name: "archived retry path with root deleted meanwhile",
+			run: func(t *testing.T, svc *Service, s *store.Store) (string, int, error) {
+				rootPostID := "deleted_retry_root"
+				userID, botID := model.NewId(), model.NewId()
+				created, err := svc.CreateConversation(CreateConversationParams{
+					UserID: userID, BotID: botID, RootPostID: &rootPostID,
+					Operation: "conversation", SystemPrompt: "prompt",
+					UserMessage: "first", UserPostID: new("post1"),
+				})
+				require.NoError(t, err)
+				require.NoError(t, s.ArchiveConversation(created.ConversationID, 1000))
+				svc.store = &restoredByRivalStore{Store: s}
+				// Entry check and ActivateConversation's check see live; retry recheck sees deleted.
+				svc.mmClient = &rootDeletedAfterCallsClient{allowLive: 2}
+				_, err = svc.GetOrCreateConversation(GetOrCreateParams{
+					UserID: userID, BotID: botID, ChannelID: "chan1", RootPostID: rootPostID,
+					Operation: "conversation", UserMessage: "second", UserPostID: new("post2"),
+				})
+				return created.ConversationID, 1, err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			convID, wantTurns, err := tt.run(t, svc, s)
+			require.ErrorIs(t, err, ErrRootPostDeleted)
+			if convID != "" {
+				turns, turnsErr := s.GetTurnsForConversation(convID)
+				require.NoError(t, turnsErr)
+				assert.Len(t, turns, wantTurns, "no user turn is recorded on a deleted thread")
+			}
+		})
+	}
+}
+
+type failingPostClient struct {
+	mmapi.Client
+	err error
+}
+
+func (f failingPostClient) GetPost(string) (*model.Post, error) {
+	return nil, f.err
+}
+
+func TestBuildRegenerateRequest_RefusesDeletedRootBeforeScrubbing(t *testing.T) {
+	lookupErr := errors.New("post store unavailable")
+	tests := []struct {
+		name    string
+		client  mmapi.Client
+		wantErr error
+	}{
+		{name: "root post deleted", client: deletedRootClient{}, wantErr: ErrRootPostDeleted},
+		{name: "root post lookup fails", client: failingPostClient{err: lookupErr}, wantErr: lookupErr},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			rootPostID := "regen_root"
+			respPostID := "regen_resp"
+			created, err := svc.CreateConversation(CreateConversationParams{
+				UserID: model.NewId(), BotID: model.NewId(), RootPostID: &rootPostID,
+				Operation: "conversation", SystemPrompt: "prompt",
+				UserMessage: "hello", UserPostID: new("post1"),
+			})
+			require.NoError(t, err)
+			require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+				ID: model.NewId(), ConversationID: created.ConversationID,
+				PostID: &respPostID, Role: "assistant",
+				Content:   json.RawMessage(`[{"type":"text","text":"prior answer"}]`),
+				CreatedAt: model.GetMillis(),
+			}))
+
+			conv, err := svc.GetConversation(created.ConversationID)
+			require.NoError(t, err)
+			svc.mmClient = tt.client
+
+			_, err = svc.BuildRegenerateRequest(conv, &llm.Context{}, respPostID, BuildOptions{})
+			require.ErrorIs(t, err, tt.wantErr)
+
+			turns, err := s.GetTurnsForConversation(created.ConversationID)
+			require.NoError(t, err)
+			require.Len(t, turns, 2, "prior response turns must stay intact when root check fails")
+		})
+	}
 }

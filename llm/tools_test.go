@@ -611,6 +611,72 @@ func TestNormalizeMCPServerOrigins(t *testing.T) {
 		NormalizeMCPServerOrigins([]string{" https://example.com/ ", "", "https://example.com", "https://other.example.com///"}))
 }
 
+func TestRemapEnabledMCPTools(t *testing.T) {
+	const (
+		oldURL = "https://mcp.atlassian.com/v2/mcp"
+		newURL = "https://mcp.atlassian.com/v2/mcp?tools=all"
+		other  = "https://github.example.com/mcp"
+	)
+
+	tests := []struct {
+		name        string
+		tools       []EnabledMCPTool
+		remaps      map[string]string
+		wantTools   []EnabledMCPTool
+		wantChanged bool
+	}{
+		{
+			name:        "nil tools unchanged",
+			tools:       nil,
+			remaps:      map[string]string{oldURL: newURL},
+			wantTools:   nil,
+			wantChanged: false,
+		},
+		{
+			name:        "unrelated origins untouched",
+			tools:       []EnabledMCPTool{{ServerOrigin: other, ToolName: "list_prs"}},
+			remaps:      map[string]string{oldURL: newURL},
+			wantTools:   []EnabledMCPTool{{ServerOrigin: other, ToolName: "list_prs"}},
+			wantChanged: false,
+		},
+		{
+			name: "remaps matching tools, trailing-slash variants, and wildcards while keeping others",
+			tools: []EnabledMCPTool{
+				{ServerOrigin: oldURL, ToolName: "getJiraIssue"},
+				{ServerOrigin: oldURL + "/", ToolName: MCPServerToolWildcard},
+				{ServerOrigin: other, ToolName: "list_prs"},
+			},
+			remaps: map[string]string{oldURL: newURL},
+			wantTools: []EnabledMCPTool{
+				{ServerOrigin: newURL, ToolName: "getJiraIssue"},
+				{ServerOrigin: newURL, ToolName: MCPServerToolWildcard},
+				{ServerOrigin: other, ToolName: "list_prs"},
+			},
+			wantChanged: true,
+		},
+		{
+			name: "deduplicates entries that converge onto the same origin and tool",
+			tools: []EnabledMCPTool{
+				{ServerOrigin: oldURL, ToolName: "getJiraIssue"},
+				{ServerOrigin: newURL, ToolName: "getJiraIssue"},
+			},
+			remaps: map[string]string{oldURL: newURL},
+			wantTools: []EnabledMCPTool{
+				{ServerOrigin: newURL, ToolName: "getJiraIssue"},
+			},
+			wantChanged: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := RemapEnabledMCPTools(tt.tools, tt.remaps)
+			assert.Equal(t, tt.wantChanged, changed)
+			assert.Equal(t, tt.wantTools, got)
+		})
+	}
+}
+
 func TestRetainOnlyMCPTools(t *testing.T) {
 	tests := []struct {
 		name          string

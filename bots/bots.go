@@ -27,7 +27,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
-	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // botOwnerID owns the Mattermost bot accounts the plugin creates.
@@ -922,16 +921,8 @@ func (b *MMBots) GetTranscribe() Transcriber {
 
 	service := bot.service
 
-	// Map service type to Bifrost provider
-	var provider schemas.ModelProvider
-	switch service.Type {
-	case llm.ServiceTypeOpenAI:
-		provider = schemas.OpenAI
-	case llm.ServiceTypeOpenAICompatible:
-		provider = schemas.OpenAI
-	case llm.ServiceTypeAzure:
-		provider = schemas.Azure
-	default:
+	provider, err := bifrost.ProviderForServiceType(service.Type, bifrost.TranscriptionServiceTypes)
+	if err != nil {
 		b.pluginAPI.Log.Error("Unsupported service type for transcript generator",
 			"bot_name", bot.GetMMBot().Username,
 			"service_type", service.Type)

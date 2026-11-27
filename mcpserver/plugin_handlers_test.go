@@ -403,7 +403,9 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil, nil, allowAllStateChangingTools, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
-	h.proxyDiscoveryTimeout = 25 * time.Millisecond
+	// The healthy plugin shares this deadline, so it must be far above its
+	// discovery time on a loaded runner; only the hung plugin should reach it.
+	h.proxyDiscoveryTimeout = time.Second
 
 	reg.set([]mcppkg.PluginServerConfig{
 		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},

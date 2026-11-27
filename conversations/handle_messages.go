@@ -418,6 +418,9 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 	if errors.Is(policyErr, bots.ErrUsageRestriction) {
 		return policyErr
 	}
+	if errors.Is(policyErr, conversation.ErrRootPostDeleted) {
+		return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
+	}
 
 	responseRootID := post.Id
 	if post.RootId != "" {

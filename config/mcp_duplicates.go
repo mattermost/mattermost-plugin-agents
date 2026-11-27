@@ -6,10 +6,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // ErrDuplicateMCPServer reports a remote MCP server list that reuses a name or
@@ -125,6 +129,107 @@ func isDefaultPortForScheme(scheme, port string) bool {
 	return (scheme == "http" && port == "80") || (scheme == "https" && port == "443")
 }
 
+// MCPServerURLRemap describes a remote MCP server whose BaseURL changed
+// across a configuration save while keeping its identity and origin
+// (scheme, host, port).
+type MCPServerURLRemap struct {
+	ServerID   string
+	ServerName string
+	OldURL     string
+	NewURL     string
+}
+
+func canonicalMCPOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		default:
+			return ""
+		}
+	}
+	return scheme + "://" + u.Hostname() + ":" + port
+}
+
+// MCPServerOriginChanged reports whether two remote MCP server URLs point at
+// different origins (scheme, host, port). URLs whose origin cannot be
+// determined count as changed unless identical.
+func MCPServerOriginChanged(before, after string) bool {
+	a := strings.ToLower(canonicalMCPOrigin(before))
+	b := strings.ToLower(canonicalMCPOrigin(after))
+	if a == "" || b == "" {
+		return before != after
+	}
+	return a != b
+}
+
+// MCPServerURLRemaps returns same-origin URL edits for remote MCP servers
+// matched by stable ID (or by name for legacy ID-less entries).
+func MCPServerURLRemaps(prev, next []MCPServerConfig) []MCPServerURLRemap {
+	nextByID := make(map[string]int, len(next))
+	nextByName := make(map[string]int, len(next))
+	for i, s := range next {
+		if s.ID != "" {
+			nextByID[s.ID] = i
+		}
+		nextByName[s.Name] = i
+	}
+
+	var remaps []MCPServerURLRemap
+	for _, old := range prev {
+		lookup, key := nextByID, old.ID
+		if old.ID == "" {
+			lookup, key = nextByName, old.Name
+		}
+		i, kept := lookup[key]
+		if !kept {
+			continue
+		}
+		updated := next[i]
+		if old.BaseURL == "" || updated.BaseURL == "" || old.BaseURL == updated.BaseURL {
+			continue
+		}
+		if MCPServerOriginChanged(old.BaseURL, updated.BaseURL) {
+			continue
+		}
+		remaps = append(remaps, MCPServerURLRemap{
+			ServerID:   updated.ID,
+			ServerName: updated.Name,
+			OldURL:     old.BaseURL,
+			NewURL:     updated.BaseURL,
+		})
+	}
+	return remaps
+}
+
+// MCPServerURLRemapMap converts remaps into a lookup from
+// llm.NormalizeMCPServerOrigin(OldURL) to NewURL.
+func MCPServerURLRemapMap(remaps []MCPServerURLRemap) map[string]string {
+	if len(remaps) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(remaps))
+	for _, r := range remaps {
+		oldNorm := llm.NormalizeMCPServerOrigin(r.OldURL)
+		if oldNorm == "" {
+			continue
+		}
+		out[oldNorm] = r.NewURL
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ServerConflicts returns every remote MCP server entry that collides with
 // another entry, by name or by canonical endpoint URL. All members of a
 // colliding group are reported: with nothing to distinguish them, none can be
@@ -175,8 +280,9 @@ func (c MCPConfig) ServerConflicts() []MCPServerConflict {
 // has not connected the server.
 const MaxMCPServerDescriptionRunes = 500
 
-// Validate reports duplicate remote MCP server names and endpoint URLs, and
-// descriptions longer than MaxMCPServerDescriptionRunes. It is used to reject
+// Validate reports duplicate remote MCP server names and endpoint URLs,
+// descriptions longer than MaxMCPServerDescriptionRunes, and OAuth
+// authorization parameters that are unnamed or reserved. It is used to reject
 // a new or updated configuration before it is persisted; already-stored
 // duplicates are tolerated at runtime (see ServerConflicts) so a bad stored
 // config cannot block plugin activation.
@@ -185,6 +291,22 @@ func (c MCPConfig) Validate() error {
 	for _, server := range c.Servers {
 		if n := utf8.RuneCountInString(server.Description); n > MaxMCPServerDescriptionRunes {
 			err = errors.Join(err, fmt.Errorf("MCP server %q description is %d characters; the limit is %d", server.Name, n, MaxMCPServerDescriptionRunes))
+		}
+		if len(server.AuthorizationParams) > MaxMCPAuthorizationParams {
+			err = errors.Join(err, fmt.Errorf("MCP server %q has %d OAuth authorization parameters; the limit is %d", server.Name, len(server.AuthorizationParams), MaxMCPAuthorizationParams))
+		}
+		seenParamNames := make(map[string]string, len(server.AuthorizationParams))
+		for _, key := range slices.Sorted(maps.Keys(server.AuthorizationParams)) {
+			if paramErr := ValidateMCPAuthorizationParam(key, server.AuthorizationParams[key]); paramErr != nil {
+				err = errors.Join(err, fmt.Errorf("MCP server %q %w", server.Name, paramErr))
+				continue
+			}
+			lower := strings.ToLower(key)
+			if prev, dup := seenParamNames[lower]; dup {
+				err = errors.Join(err, fmt.Errorf("MCP server %q sets the OAuth authorization parameter %q more than once (%q and %q)", server.Name, lower, prev, key))
+				continue
+			}
+			seenParamNames[lower] = key
 		}
 	}
 

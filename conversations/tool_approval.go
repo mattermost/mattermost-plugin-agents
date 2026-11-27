@@ -916,14 +916,21 @@ func (c *Conversations) streamToolFollowUp(
 // since no one vetted them before tools may auto-run.
 func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool, buildOpts conversation.BuildOptions) (*llm.CompletionRequest, error) {
 	if !isDM && conv.RootPostID != nil {
-		// Best-effort: if the live thread can't be fetched (deleted root,
-		// permissions, API blip), degrade to turns-only context rather than
-		// failing the resume. BuildChannelMentionRequest does the same on
-		// empty thread data.
 		threadData, err := mmapi.GetThreadData(c.mmClient, *conv.RootPostID)
 		if err != nil {
+			if mmapi.IsNotFound(err) {
+				return nil, fmt.Errorf("%w: %w", conversation.ErrRootPostDeleted, err)
+			}
+			if rootErr := conversation.CheckRootPost(c.mmClient, conv); rootErr != nil {
+				return nil, rootErr
+			}
 			c.mmClient.LogWarn("Failed to get thread data for tool follow-up, falling back to turns-only context", "error", err)
 			return c.convService.BuildCompletionRequest(conv, llmContext, buildOpts)
+		}
+		for _, p := range threadData.Posts {
+			if p.Id == *conv.RootPostID && p.DeleteAt != 0 {
+				return nil, conversation.ErrRootPostDeleted
+			}
 		}
 		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData, buildOpts)
 	}

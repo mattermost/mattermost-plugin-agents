@@ -428,7 +428,10 @@ func (s *Store) SetAgentVersionsToKeep(n int) {
 // pruneAgentVersionsTx deletes the versions of agentID that fall outside the
 // number to keep, given its latest version.
 func (s *Store) pruneAgentVersionsTx(tx *sqlx.Tx, agentID string, latest int) error {
-	keep := s.agentVersionsToKeep.Load()
+	return pruneAgentVersionsWithLimitTx(tx, agentID, latest, s.agentVersionsToKeep.Load())
+}
+
+func pruneAgentVersionsWithLimitTx(tx *sqlx.Tx, agentID string, latest int, keep int64) error {
 	if keep <= 0 || int64(latest) <= keep {
 		return nil
 	}

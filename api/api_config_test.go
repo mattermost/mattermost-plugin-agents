@@ -28,9 +28,10 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	cfg     *config.Config
-	getErr  error
-	saveErr error
+	cfg        *config.Config
+	getErr     error
+	saveErr    error
+	agentStore *mockAgentStore
 
 	// serviceIDMigrationDone mirrors the store's migration marker driving the
 	// post-migration UUID format rejection in UpdateConfig.
@@ -54,24 +55,39 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 }
 
 func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	outcome, err := s.UpdateConfigWithOutcome(transform)
+	return outcome.Config, err
+}
+
+func (s *testConfigStore) UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error) {
 	if s.getErr != nil {
-		return config.Config{}, s.getErr
+		return store.ConfigUpdateOutcome{}, s.getErr
 	}
-	next, err := transform(s.cfg)
+	prev := s.cfg
+	next, err := transform(prev)
 	if err != nil {
-		return config.Config{}, err
+		return store.ConfigUpdateOutcome{}, err
 	}
 	if s.serviceIDMigrationDone {
 		for i := range next.Services {
 			if len(next.Services[i].ID) == 36 {
-				return next, store.ErrLegacyUUIDServiceID
+				return store.ConfigUpdateOutcome{Config: next}, store.ErrLegacyUUIDServiceID
+			}
+		}
+	}
+	var remappedAgentIDs []string
+	if s.agentStore != nil && prev != nil {
+		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
+			remappedAgentIDs, err = s.agentStore.RemapAgentMCPServerOrigins(remaps)
+			if err != nil {
+				return store.ConfigUpdateOutcome{}, err
 			}
 		}
 	}
 	if err := s.SaveConfig(next); err != nil {
-		return next, err
+		return store.ConfigUpdateOutcome{Config: next}, err
 	}
-	return next, nil
+	return store.ConfigUpdateOutcome{Config: next, RemappedAgentIDs: remappedAgentIDs}, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.
@@ -512,6 +528,88 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "saves dictation on an openai service separate from the agents' service",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-anthropic", Name: "Claude", Type: llm.ServiceTypeAnthropic},
+					{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai"},
+				},
+				Bots:      []llm.BotConfig{{ID: "bot-1", Name: "ai", ServiceID: "svc-anthropic"}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"}, store.cfg.Dictation)
+			},
+		},
+		{
+			name: "rejects dictation on a service of the wrong type",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-anthropic", Name: "Claude", Type: llm.ServiceTypeAnthropic}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-anthropic", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+		},
+		{
+			name: "rejects dictation on a missing service",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-gone", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation on a service without an API key",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation on a service whose API URL carries credentials",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{{
+					ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai",
+					APIURL: "https://user:secret@proxy.example.com",
+				}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation without a model",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai"}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
 			name:           "rejects invalid JSON",
 			requestBody:    "not-json",
 			expectedStatus: http.StatusBadRequest,
@@ -807,4 +905,74 @@ func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {
 	require.Equal(t, "Find Mattermost people", loadedCfg.MCP.EmbeddedServer.ToolConfigs[0].RetrievalDescriptionOverride)
 	require.Equal(t, 1, updater.callCount)
 	require.Equal(t, 1, notifier.callCount)
+}
+
+func TestAdminConfigMCPAuthorizationParams(t *testing.T) {
+	testCases := []struct {
+		name       string
+		params     map[string]string
+		wantStatus int
+	}{
+		{
+			name:       "valid parameters are persisted in clear text",
+			params:     map[string]string{"access_type": "offline", "prompt": "consent"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "reserved parameter is rejected without overwriting stored config",
+			params:     map[string]string{"state": "fixed"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "padded value is rejected without overwriting stored config",
+			params:     map[string]string{"access_type": " offline "},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			initial := &config.Config{
+				MCP: config.MCPConfig{
+					Enabled: true,
+					Servers: []config.MCPServerConfig{
+						{
+							ID:                  "srv-1",
+							Name:                "YouTrack",
+							Enabled:             true,
+							BaseURL:             "https://youtrack.example.com/mcp",
+							AuthorizationParams: map[string]string{"access_type": "offline"},
+						},
+					},
+				},
+			}
+			store := &testConfigStore{cfg: initial}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router := setupTestRouter(store, updater, notifier)
+
+			saveCfg := *initial.Clone()
+			saveCfg.MCP.Servers[0].AuthorizationParams = tc.params
+			body, err := json.Marshal(saveCfg)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.wantStatus, w.Code)
+
+			if tc.wantStatus != http.StatusOK {
+				require.Equal(t, map[string]string{"access_type": "offline"}, store.cfg.MCP.Servers[0].AuthorizationParams)
+				require.Equal(t, 0, updater.callCount)
+				return
+			}
+
+			var loadedCfg config.Config
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &loadedCfg))
+			require.Len(t, loadedCfg.MCP.Servers, 1)
+			require.Equal(t, tc.params, loadedCfg.MCP.Servers[0].AuthorizationParams)
+			require.Equal(t, 1, updater.callCount)
+		})
+	}
 }

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -66,6 +67,67 @@ func TestMCPConfigValidateDescriptionLength(t *testing.T) {
 			}
 			require.Error(t, err)
 			require.Contains(t, err.Error(), `MCP server "Jira" description`)
+		})
+	}
+}
+
+func TestMCPConfigValidateAuthorizationParams(t *testing.T) {
+	testCases := []struct {
+		name    string
+		params  map[string]string
+		wantErr string
+	}{
+		{name: "no parameters"},
+		{name: "provider parameters", params: map[string]string{"access_type": "offline", "prompt": "consent"}},
+		{name: "empty name", params: map[string]string{"": "offline"}, wantErr: "empty name"},
+		{name: "blank name", params: map[string]string{"  ": "offline"}, wantErr: "empty name"},
+		{name: "response_type", params: map[string]string{"response_type": "token"}, wantErr: `"response_type"`},
+		{name: "client_id", params: map[string]string{"client_id": "other"}, wantErr: `"client_id"`},
+		{name: "redirect_uri", params: map[string]string{"redirect_uri": "https://evil.example.com"}, wantErr: `"redirect_uri"`},
+		{name: "state", params: map[string]string{"state": "fixed"}, wantErr: `"state"`},
+		{name: "scope", params: map[string]string{"scope": "admin"}, wantErr: `"scope"`},
+		{name: "code_challenge", params: map[string]string{"code_challenge": "fixed"}, wantErr: `"code_challenge"`},
+		{name: "code_challenge_method", params: map[string]string{"code_challenge_method": "plain"}, wantErr: `"code_challenge_method"`},
+		{name: "resource", params: map[string]string{"resource": "https://other.example.com"}, wantErr: `"resource"`},
+		{name: "reserved name in another case", params: map[string]string{"State": "fixed"}, wantErr: `"State"`},
+		{name: "reserved name with spaces", params: map[string]string{" state ": "fixed"}, wantErr: `" state "`},
+		{name: "response_mode", params: map[string]string{"response_mode": "form_post"}, wantErr: `"response_mode"`},
+		{name: "request", params: map[string]string{"request": "jwt"}, wantErr: `"request"`},
+		{name: "request_uri", params: map[string]string{"request_uri": "urn:example"}, wantErr: `"request_uri"`},
+		{name: "name with surrounding spaces", params: map[string]string{" access_type ": "offline"}, wantErr: `" access_type "`},
+		{name: "name with a character outside RFC 6749", params: map[string]string{"access&type": "offline"}, wantErr: `"access&type"`},
+		{name: "name over length limit", params: map[string]string{strings.Repeat("a", MaxMCPAuthorizationParamNameBytes+1): "offline"}, wantErr: "longer than"},
+		{name: "empty value", params: map[string]string{"access_type": ""}, wantErr: `"access_type"`},
+		{name: "blank value", params: map[string]string{"access_type": "  "}, wantErr: `"access_type"`},
+		{name: "value with surrounding spaces", params: map[string]string{"access_type": " offline "}, wantErr: "leading or trailing whitespace"},
+		{name: "value over length limit", params: map[string]string{"access_type": strings.Repeat("a", MaxMCPAuthorizationParamValueBytes+1)}, wantErr: "longer than"},
+		{name: "duplicate names differing only in case", params: map[string]string{"access_type": "offline", "Access_Type": "online"}, wantErr: "more than once"},
+		{
+			name: "too many parameters",
+			params: func() map[string]string {
+				m := make(map[string]string, MaxMCPAuthorizationParams+1)
+				for i := range MaxMCPAuthorizationParams + 1 {
+					m[fmt.Sprintf("param_%d", i)] = "value"
+				}
+				return m
+			}(),
+			wantErr: "the limit is",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := MCPConfig{Servers: []MCPServerConfig{
+				{Name: "YouTrack", BaseURL: "https://youtrack.example.com/mcp", AuthorizationParams: tc.params},
+			}}
+
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, `MCP server "YouTrack"`)
+			require.ErrorContains(t, err, tc.wantErr)
 		})
 	}
 }

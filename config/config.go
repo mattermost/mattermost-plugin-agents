@@ -70,6 +70,20 @@ type Config struct {
 	// change it, through its own route; saving the rest of the configuration
 	// never does.
 	SettingsAccess *SettingsAccess `json:"settingsAccess,omitempty"`
+	// Dictation picks the transcription service for live dictation,
+	// independently of any agent. The zero value means disabled.
+	Dictation DictationConfig `json:"dictation"`
+}
+
+// DictationConfig configures live dictation in the message box.
+type DictationConfig struct {
+	Enabled bool `json:"enabled"`
+	// ServiceID is an llm.ServiceConfig.ID, never a service name.
+	ServiceID string `json:"serviceID"`
+	// Model is an OpenAI model name, or an Azure deployment name.
+	Model string `json:"model"`
+	// Language is an optional ISO-639-1 hint, e.g. "en".
+	Language string `json:"language,omitempty"`
 }
 
 type WebSearchConfig struct {
