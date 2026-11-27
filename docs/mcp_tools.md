@@ -1,6 +1,6 @@
 # Mattermost MCP tool reference
 
-The 124 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 74 are read-only and 50 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 123 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
+The 126 tools of the built-in Mattermost MCP server, each marked read-only or state-changing. 76 are read-only and 50 change state. The count includes `upload_file`, which works only on the standalone stdio server, so 125 are usable by agents in Mattermost and over HTTP. The same tools serve agents inside Mattermost and, when an admin enables the HTTP endpoint, external MCP clients. See [Mattermost MCP server](mcp_server.md) for connecting a client.
 
 ## How the tools behave
 
@@ -112,6 +112,17 @@ The 124 tools of the built-in Mattermost MCP server, each marked read-only or st
 | `create_channel_bookmark` | Changes state | Add a link or file bookmark to a channel |
 | `update_channel_bookmark` | Changes state | Edit a channel bookmark (name, link, or emoji) |
 | `delete_channel_bookmark` | Changes state | Remove a channel bookmark |
+
+## Channel artifacts
+
+Both tools are hidden while channel artifacts are off, and agents inside Mattermost aren't offered them in direct or group messages. See [Channel artifacts](channel_artifacts.md) for what the library stores and how reads are checked.
+
+| Tool | Type | What it does |
+|---|---|---|
+| `list_channel_artifacts` | Read-only | List the HTML apps saved to a channel: id, title, version, source agent, and whether the source message and file still exist |
+| `get_channel_artifact` | Read-only | Read one saved app's metadata and HTML source as text, in windows of up to 20,000 characters (`offset`, `content_limit`, `version`) |
+
+Content is read under your file download policy. A deleted source returns an error. Agents inside Mattermost can also save and remove artifacts with the built-in `SaveChannelArtifact` and `RemoveChannelArtifact` tools, which aren't part of the MCP server.
 
 ## Users and profiles
 

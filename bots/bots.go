@@ -1094,6 +1094,16 @@ func (b *MMBots) IsAnyBot(userID string) bool {
 	return b.GetBotByID(userID) != nil
 }
 
+// AgentDisplayName returns the display name of the agent with this bot user
+// ID, or "" when no agent has it.
+func (b *MMBots) AgentDisplayName(userID string) string {
+	bot := b.GetBotByID(userID)
+	if bot == nil || bot.GetMMBot() == nil {
+		return ""
+	}
+	return bot.GetMMBot().DisplayName
+}
+
 // GetBotMentioned returns the bot mentioned in the text, if any. A bot is
 // mentioned only under a username its Mattermost account currently holds.
 func (b *MMBots) GetBotMentioned(text string) *Bot {

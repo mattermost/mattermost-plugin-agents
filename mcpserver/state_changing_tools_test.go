@@ -23,7 +23,7 @@ func newTestInMemoryServer(t *testing.T, allowStateChangingTools func() bool) *m
 		MMServerURL: "http://localhost:8065",
 		DevMode:     false,
 	}
-	server, err := mcpserver.NewInMemoryServer(config, &testLogger{t: t}, nil, nil, allowStateChangingTools)
+	server, err := mcpserver.NewInMemoryServer(config, &testLogger{t: t}, nil, nil, nil, allowStateChangingTools)
 	require.NoError(t, err)
 	return server
 }
@@ -160,4 +160,17 @@ func TestInMemoryServerNilPredicateFailsClosed(t *testing.T) {
 	require.NoError(t, err, "tools/call must return an MCP result, not a transport error")
 	require.True(t, result.IsError)
 	assert.Contains(t, toolResultText(t, result), "Enterprise")
+}
+
+func TestInMemoryServerWithoutAChannelArtifactsServiceOffersNoLibraryTools(t *testing.T) {
+	server := newTestInMemoryServer(t, func() bool { return true })
+
+	names, _ := listInMemoryToolNames(t, server)
+	require.NotEmpty(t, names)
+	assert.NotContains(t, names, "list_channel_artifacts")
+	assert.NotContains(t, names, "get_channel_artifact")
+
+	result := callInMemoryTool(t, server, "list_channel_artifacts")
+	assert.True(t, result.IsError)
+	assert.Contains(t, toolResultText(t, result), "not available")
 }

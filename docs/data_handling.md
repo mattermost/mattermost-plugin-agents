@@ -57,6 +57,7 @@ In channels, a result the initiator keeps private isn't sent to the LLM for the 
 | Data | Where | Content |
 |---|---|---|
 | Conversations | Plugin tables in the Mattermost database | Messages, tool calls and results, and titles. A conversation is soft-deleted when its root post is deleted. |
+| Channel artifacts | Plugin tables | Titles, version numbers, and references (post ID, file ID, SHA-256, size) to the messages that hold each saved HTML app. The HTML itself stays in the original post and follows its retention. See [Channel artifacts](channel_artifacts.md#where-the-content-lives). |
 | Semantic search index | Plugin table in the database | Post text chunks and their vectors. Deleting a post removes its embeddings. |
 | Configuration and agents | Plugin tables | Service credentials, MCP server settings, agent instructions, and version history. |
 | Token usage log | `logs/agents/token_usage.log`, if enabled | Counts and identifiers. No message content. |

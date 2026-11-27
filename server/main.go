@@ -16,8 +16,10 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelartifacts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -63,6 +65,7 @@ type Plugin struct {
 	bots                 *bots.MMBots
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
+	channelArtifacts     *channelartifacts.Service
 	mcpClientManager     *mcp.ClientManager
 	mcpHandlers          *mcpserver.PluginMCPHandlers
 	mcpLifecycle         *pluginMCPLifecycle
@@ -480,6 +483,21 @@ func (p *Plugin) OnActivate() error {
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
+	channelArtifactsService := channelartifacts.NewService(channelartifacts.NewStore(dbClient.DB), mmClient, bots)
+	mcpChannelArtifacts := api.NewMCPChannelArtifacts(channelArtifactsService, mmClient, &p.configuration)
+	toolProvider.SetChannelArtifactTools(&mmtools.ChannelArtifactTools{
+		Service: channelArtifactsService,
+		Client:  mmClient,
+		Enabled: p.configuration.EnableChannelArtifacts,
+		Limits: func() channelartifacts.Limits {
+			return channelartifacts.Limits{
+				MaxSize:        api.ArtifactRenderLimit(mmClient.GetConfig()),
+				MaxPerChannel:  p.configuration.ChannelArtifactsMaxPerChannel(),
+				VersionsToKeep: p.configuration.ChannelArtifactVersionsToKeep(),
+			}
+		},
+		Audit: p.auditChannelArtifactTool,
+	})
 	var (
 		embeddedMu     sync.Mutex
 		embeddedServer *EmbeddedMCPServer
@@ -495,7 +513,7 @@ func (p *Plugin) OnActivate() error {
 		defer embeddedMu.Unlock()
 
 		if embeddedServer == nil {
-			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
+			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, mcpChannelArtifacts, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
 			})
 			if embeddedErr != nil {
@@ -593,7 +611,7 @@ func (p *Plugin) OnActivate() error {
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
 	pluginServers := licensedPluginServers{registry: mcpClientManager, allowed: remoteMCPAllowed}
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, func() bool {
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, searchService, fileContentService, mcpChannelArtifacts, func() bool {
 		return licenseChecker.Allows(enterprise.CapStateChangingTools)
 	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
@@ -645,6 +663,7 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
+	apiService.SetChannelArtifacts(channelArtifactsService)
 
 	p.dictationService = p.newDictationService(pluginAPI, licenseChecker, accessChecker, mmClient)
 	apiService.SetDictationService(p.dictationService)
@@ -659,6 +678,12 @@ func (p *Plugin) OnActivate() error {
 	p.bots = bots
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
+	p.channelArtifacts = channelArtifactsService
+	if removed, sweepErr := channelArtifactsService.SweepDeletedChannels(); sweepErr != nil {
+		pluginAPI.Log.Error("Failed to sweep channel artifact rows of deleted channels", "error", sweepErr)
+	} else if removed > 0 {
+		pluginAPI.Log.Info("Removed channel artifact rows of deleted channels", "artifacts", removed)
+	}
 	p.mcpClientManager = mcpClientManager
 	p.mcpHandlers = mcpHandlers
 	p.streamingService = streamingService
@@ -858,21 +883,41 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
-	if p.indexerService == nil {
-		return 0, nil
+	var count int64
+	if p.indexerService != nil {
+		n, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
+			return 0, err
+		}
+		count = n
+		if count > 0 {
+			p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+		}
 	}
 
-	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
-	if err != nil {
-		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
-		return 0, err
-	}
-
-	if count > 0 {
-		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+	if p.channelArtifacts != nil {
+		removed, err := p.channelArtifacts.SweepDeletedChannels()
+		if err != nil {
+			p.pluginAPI.Log.Error("Failed to sweep channel artifact rows of deleted channels", "error", err)
+			return count + removed, err
+		}
+		if removed > 0 {
+			p.pluginAPI.Log.Info("Data retention removed channel artifact rows of deleted channels", "artifacts", removed)
+			count += removed
+		}
 	}
 
 	return count, nil
+}
+
+// auditChannelArtifactTool records a library change the agent made for a user.
+func (p *Plugin) auditChannelArtifactTool(event, status, userID, channelID, artifactID string) {
+	rec := plugin.MakeAuditRecord(event, status)
+	rec.Actor.UserId = userID
+	audit.AddParam(rec, audit.KeyChannelID, channelID)
+	audit.AddParam(rec, audit.KeyChannelArtifactID, artifactID)
+	p.API.LogAuditRec(rec)
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

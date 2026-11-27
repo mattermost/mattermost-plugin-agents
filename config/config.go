@@ -16,6 +16,12 @@ import (
 )
 
 const (
+	// DefaultChannelArtifactsMaxPerChannel and DefaultChannelArtifactVersionsToKeep
+	// apply when the matching setting is unset; they mirror the channelartifacts
+	// package defaults and the System Console placeholders.
+	DefaultChannelArtifactsMaxPerChannel = 50
+	DefaultChannelArtifactVersionsToKeep = 20
+
 	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN" // #nosec G101 -- env var key name, not a credential
 	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
@@ -38,6 +44,9 @@ type Config struct {
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	AllowedLinkDomains              string                           `json:"allowedLinkDomains"`
 	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
+	EnableChannelArtifacts          bool                             `json:"enableChannelArtifacts"`
+	ChannelArtifactsMaxPerChannel   int                              `json:"channelArtifactsMaxPerChannel"`
+	ChannelArtifactVersionsToKeep   int                              `json:"channelArtifactVersionsToKeep"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	EnableAmbientAutoReply          bool                             `json:"enableAmbientAutoReply"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
@@ -213,6 +222,30 @@ func (c *Container) LinkPolicy() LinkPolicy {
 // as sandboxed interactive artifacts.
 func (c *Container) EnableHTMLArtifacts() bool {
 	return c.Config().EnableHTMLArtifacts
+}
+
+// EnableChannelArtifacts reports whether the channel artifact library is on.
+// It requires EnableHTMLArtifacts, because the library only holds HTML artifacts.
+func (c *Container) EnableChannelArtifacts() bool {
+	cfg := c.Config()
+	return cfg.EnableHTMLArtifacts && cfg.EnableChannelArtifacts
+}
+
+// ChannelArtifactsMaxPerChannel returns the per-channel artifact cap; 0 or less means the default.
+func (c *Container) ChannelArtifactsMaxPerChannel() int {
+	if n := c.Config().ChannelArtifactsMaxPerChannel; n > 0 {
+		return n
+	}
+	return DefaultChannelArtifactsMaxPerChannel
+}
+
+// ChannelArtifactVersionsToKeep returns how many versions of one artifact the
+// library keeps; 0 or less means the default.
+func (c *Container) ChannelArtifactVersionsToKeep() int {
+	if n := c.Config().ChannelArtifactVersionsToKeep; n > 0 {
+		return n
+	}
+	return DefaultChannelArtifactVersionsToKeep
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {

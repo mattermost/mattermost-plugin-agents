@@ -64,8 +64,9 @@ type PluginMCPHandlers struct {
 
 	// The plugin's own search and file-content services, called in-process
 	// rather than over an HTTP callback through the public site URL.
-	searchService      tools.SemanticSearchService
-	fileContentService tools.FileContentService
+	searchService           tools.SemanticSearchService
+	fileContentService      tools.FileContentService
+	channelArtifactsService tools.ChannelArtifactsService
 
 	accessChecker           mcppkg.ServerAccessChecker
 	embeddedServerID        func() string
@@ -93,9 +94,11 @@ type PluginMCPHandlers struct {
 
 // NewPluginMCPHandlers creates MCP handlers for the Mattermost plugin.
 // registry may be nil to disable plugin-server aggregation. searchService and
-// fileContentService are the plugin's in-process services; either may be nil
-// when the capability is unavailable. Callers must
-// inject auth (bearer token or user-ID) via plugin middleware.
+// fileContentService are optional; nil means the corresponding capability is
+// unavailable. A nil channelArtifactsService falls back to the plugin HTTP
+// callback client rather than disabling channel artifacts; the plugin passes
+// an in-process service. Callers must inject auth (bearer token or user-ID)
+// via plugin middleware.
 // allowStateChangingTools is a runtime predicate evaluated per request; a nil
 // predicate means state-changing tools are not available.
 // Runtime services, when supplied, are the access checker followed by the
@@ -108,6 +111,7 @@ func NewPluginMCPHandlers(
 	sourcePluginAPI mmapi.Client,
 	searchService tools.SemanticSearchService,
 	fileContentService tools.FileContentService,
+	channelArtifactsService tools.ChannelArtifactsService,
 	allowStateChangingTools func() bool,
 	runtimeServices ...any,
 ) (*PluginMCPHandlers, error) {
@@ -153,6 +157,7 @@ func NewPluginMCPHandlers(
 		sourcePluginAPI:         sourcePluginAPI,
 		searchService:           searchService,
 		fileContentService:      fileContentService,
+		channelArtifactsService: channelArtifactsService,
 		accessChecker:           accessChecker,
 		embeddedServerID:        embeddedServerID,
 		allowStateChangingTools: allowStateChangingTools,
@@ -224,6 +229,7 @@ func (h *PluginMCPHandlers) buildServer() (*mcp.Server, map[string]error) {
 		tools.AccessModeRemote,
 		h.searchService,
 		h.fileContentService,
+		h.channelArtifactsService,
 		h.allowStateChangingTools,
 	)
 	toolProvider.ProvideTools(mcpServer)

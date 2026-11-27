@@ -33,9 +33,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 69 read tools",
+			name:      "Mattermost seeds 71 read tools",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 69,
+			wantCount: 71,
 		},
 		{
 			name:    "unknown host returns nil",
@@ -108,6 +108,8 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		requireToolConfig(t, configs, "get_user", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "get_channel_member", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "search_files", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "list_channel_artifacts", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "get_channel_artifact", ToolPolicyAutoRunInDM, true)
 		// Write tools are never seeded.
 		requireNoToolConfig(t, configs, "create_post")
 		requireNoToolConfig(t, configs, "update_user")

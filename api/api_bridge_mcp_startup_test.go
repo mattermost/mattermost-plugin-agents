@@ -61,7 +61,7 @@ func TestHandleMCPRegister_SourcePluginStillStarting(t *testing.T) {
 	)}
 	source.state.Store(int32(model.PluginStateStarting))
 
-	handlers, err := mcpserver.NewPluginMCPHandlers("https://mm.test", "http://mm.internal", nil, e.mcp, source, nil, nil, func() bool { return true })
+	handlers, err := mcpserver.NewPluginMCPHandlers("https://mm.test", "http://mm.internal", nil, e.mcp, source, nil, nil, nil, func() bool { return true })
 	require.NoError(t, err)
 	t.Cleanup(handlers.Close)
 	e.api.mcpHandlers = handlers
