@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -109,6 +110,16 @@ func originChanged(before, after string) bool {
 // sameServerOrigin reports whether two server URLs share an origin.
 func sameServerOrigin(a, b string) bool {
 	return !originChanged(a, b)
+}
+
+// ServerURLRemaps returns a map from NormalizeMCPServerOrigin(oldURL) to newURL
+// for remote MCP servers that kept their identity and origin (scheme, host, port)
+// across a config save from prev to next while changing their BaseURL (for
+// example, adding, changing, or removing a query string or path). Callers use
+// this to keep URL-keyed references (agent tool allowlists, user preferences)
+// following the same server.
+func ServerURLRemaps(prev, next []ServerConfig) map[string]string {
+	return config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev, next))
 }
 
 // ClearServerOAuthState deletes every user's stored OAuth grant and

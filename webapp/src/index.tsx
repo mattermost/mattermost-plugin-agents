@@ -67,6 +67,9 @@ import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
+import DictationButton from './components/dictation/dictation_button';
+import {refreshDictationAvailability, scheduleDictationAvailabilityRefresh} from './dictation/availability';
+import {notifyDictationSessionEnded} from './dictation/session_events';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -205,6 +208,7 @@ export default class Plugin {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                refreshDictationAvailability(store.dispatch);
             });
         }
 
@@ -242,7 +246,29 @@ export default class Plugin {
             );
         }
 
-        registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
+        // The plugin server announces dictation availability changes from plugin
+        // config and license changes itself, but not from server config changes,
+        // which can change the license level of a development server.
+        registry.registerWebSocketEventHandler('config_changed', () => {
+            refreshRuntimeBotsCache();
+            scheduleDictationAvailabilityRefresh(store.dispatch);
+        });
+
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_dictation_availability_changed', () => {
+            scheduleDictationAvailabilityRefresh(store.dispatch);
+        });
+
+        // The server ended one of this user's dictation sessions.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_dictation_session_ended',
+            (msg: PluginWebSocketMessage<{session_id?: unknown; reason?: unknown}>) => {
+                notifyDictationSessionEnded(msg.data?.session_id, msg.data?.reason);
+            },
+        );
+
+        if (registry.registerPostEditorActionComponent) {
+            registry.registerPostEditorActionComponent(DictationButton);
+        }
 
         // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
         registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);

@@ -5,6 +5,7 @@ import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
+import {dictationAvailability} from './dictation/availability';
 import {ChannelArtifactEntry, getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
@@ -346,4 +347,5 @@ export const pluginReducer = combineReducers({
     customPrompts,
     pinnedPromptIds,
     showCustomPromptsModal,
+    dictationAvailability,
 });

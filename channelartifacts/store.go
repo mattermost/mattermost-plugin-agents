@@ -118,15 +118,15 @@ func (s *Store) Version(id string, version int) (*VersionRecord, error) {
 	return &rec, nil
 }
 
-// headWithSHA returns the artifact in the channel whose current version has sha
-// and whose source still exists. An unavailable entry does not block saving the
-// same HTML again from a file that does exist.
-func headWithSHA(tx *sqlx.Tx, channelID, sha string) (string, error) {
+// headWithSHA returns the artifact in the channel, other than excludeID, whose
+// current version has sha and whose source still exists. An unavailable entry
+// does not block saving the same HTML again from a file that does exist.
+func headWithSHA(tx *sqlx.Tx, channelID, sha, excludeID string) (string, error) {
 	var id string
 	err := tx.Get(&id, `
 		SELECT a.ID FROM Agents_ChannelArtifacts a
 		JOIN Agents_ChannelArtifactVersions v ON v.ArtifactID = a.ID AND v.Version = a.HeadVersion
-		WHERE a.ChannelID = $1 AND v.SHA256 = $2 AND `+sourceAvailable+` LIMIT 1`, channelID, sha)
+		WHERE a.ChannelID = $1 AND v.SHA256 = $2 AND a.ID <> $3 AND `+sourceAvailable+` LIMIT 1`, channelID, sha, excludeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -163,7 +163,7 @@ func (s *Store) Create(id, channelID, title string, v NewVersion, maxPerChannel 
 		if count >= maxPerChannel {
 			return ErrLimitReached
 		}
-		dup, err := headWithSHA(tx, channelID, v.SHA256)
+		dup, err := headWithSHA(tx, channelID, v.SHA256, "")
 		if err != nil {
 			return err
 		}
@@ -196,7 +196,7 @@ func (s *Store) AddVersion(id string, v NewVersion, versionsToKeep int) error {
 		if err := lockChannel(tx, channelID); err != nil {
 			return err
 		}
-		dup, err := headWithSHA(tx, channelID, v.SHA256)
+		dup, err := headWithSHA(tx, channelID, v.SHA256, "")
 		if err != nil {
 			return err
 		}
@@ -245,32 +245,69 @@ func (s *Store) Rename(id, title, userID string, at int64) error {
 	return nil
 }
 
-// SetHead makes an existing version current.
+// SetHead makes an existing version current. It fails with a DuplicateError
+// when another artifact in the channel already has that content as its current
+// version.
 func (s *Store) SetHead(id string, version int, userID string, at int64) error {
-	ok, err := s.execRows(`
-		UPDATE Agents_ChannelArtifacts SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4
-		WHERE ID = $1 AND EXISTS (SELECT 1 FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1 AND Version = $2)`,
-		id, version, userID, at)
+	return s.tx(func(tx *sqlx.Tx) error {
+		var channelID string
+		if err := tx.Get(&channelID, `SELECT ChannelID FROM Agents_ChannelArtifacts WHERE ID = $1 FOR UPDATE`, id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("failed to get channel artifact: %w", err)
+		}
+		if err := lockChannel(tx, channelID); err != nil {
+			return err
+		}
+		var sha string
+		if err := tx.Get(&sha, `SELECT SHA256 FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1 AND Version = $2`, id, version); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("failed to get channel artifact version: %w", err)
+		}
+		if err := rejectDuplicateHead(tx, channelID, sha, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			UPDATE Agents_ChannelArtifacts SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4
+			WHERE ID = $1`, id, version, userID, at); err != nil {
+			return fmt.Errorf("failed to move channel artifact head: %w", err)
+		}
+		return nil
+	})
+}
+
+func rejectDuplicateHead(tx *sqlx.Tx, channelID, sha, excludeID string) error {
+	dup, err := headWithSHA(tx, channelID, sha, excludeID)
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return ErrNotFound
+	if dup != "" {
+		return &DuplicateError{ArtifactID: dup}
 	}
 	return nil
 }
 
 // DeleteVersion removes one version row. When it was the current version the
-// newest remaining one becomes current. The last remaining version cannot be
-// deleted; purge the artifact instead.
+// newest remaining one becomes current, unless another artifact in the channel
+// already has that content as its current version (a DuplicateError). The last
+// remaining version cannot be deleted; purge the artifact instead.
 func (s *Store) DeleteVersion(id string, version int, userID string, at int64) error {
 	return s.tx(func(tx *sqlx.Tx) error {
-		var head int
-		if err := tx.Get(&head, `SELECT HeadVersion FROM Agents_ChannelArtifacts WHERE ID = $1 FOR UPDATE`, id); err != nil {
+		var artifact struct {
+			ChannelID   string
+			HeadVersion int
+		}
+		if err := tx.Get(&artifact, `SELECT ChannelID, HeadVersion FROM Agents_ChannelArtifacts WHERE ID = $1 FOR UPDATE`, id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return fmt.Errorf("failed to get channel artifact: %w", err)
+		}
+		if err := lockChannel(tx, artifact.ChannelID); err != nil {
+			return err
 		}
 		var count int
 		if err := tx.Get(&count, `SELECT COUNT(*) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1`, id); err != nil {
@@ -286,15 +323,22 @@ func (s *Store) DeleteVersion(id string, version int, userID string, at int64) e
 		if count <= 1 {
 			return ErrInvalidInput
 		}
-		if version != head {
+		if version != artifact.HeadVersion {
 			return nil
 		}
-		_, err = tx.Exec(`
-			UPDATE Agents_ChannelArtifacts
-			SET HeadVersion = (SELECT MAX(Version) FROM Agents_ChannelArtifactVersions WHERE ArtifactID = $1),
-				UpdatedBy = $2, UpdateAt = $3
-			WHERE ID = $1`, id, userID, at)
-		if err != nil {
+		var newHead int
+		var sha string
+		if err = tx.QueryRowx(`
+			SELECT Version, SHA256 FROM Agents_ChannelArtifactVersions
+			WHERE ArtifactID = $1 ORDER BY Version DESC LIMIT 1`, id).Scan(&newHead, &sha); err != nil {
+			return fmt.Errorf("failed to find the next channel artifact head: %w", err)
+		}
+		if err = rejectDuplicateHead(tx, artifact.ChannelID, sha, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`
+			UPDATE Agents_ChannelArtifacts SET HeadVersion = $2, UpdatedBy = $3, UpdateAt = $4
+			WHERE ID = $1`, id, newHead, userID, at); err != nil {
 			return fmt.Errorf("failed to move channel artifact head: %w", err)
 		}
 		return nil

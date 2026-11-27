@@ -36,8 +36,9 @@ type fullFlowAuthCode struct {
 }
 
 type fullFlowOAuthServer struct {
-	mu      sync.Mutex
-	baseURL string
+	mu               sync.Mutex
+	baseURL          string
+	expectedResource string
 
 	clientID      string
 	clientSecret  string
@@ -131,6 +132,12 @@ func newFullFlowOAuthServer(t *testing.T) *fullFlowOAuthServer {
 }
 
 func (s *fullFlowOAuthServer) mcpURL() string { return s.baseURL + "/mcp" }
+func (s *fullFlowOAuthServer) resourceURL() string {
+	if s.expectedResource != "" {
+		return s.expectedResource
+	}
+	return s.mcpURL()
+}
 func (s *fullFlowOAuthServer) prmURL() string {
 	return s.baseURL + "/.well-known/oauth-protected-resource/mcp"
 }
@@ -214,7 +221,7 @@ func (s *fullFlowOAuthServer) handleAuthorize(w http.ResponseWriter, r *http.Req
 	}
 	// RFC 8707: the MCP spec requires the canonical resource on the
 	// authorization request.
-	if q.Get("resource") != s.mcpURL() {
+	if q.Get("resource") != s.resourceURL() {
 		http.Error(w, "missing or wrong resource parameter", http.StatusBadRequest)
 		return
 	}
@@ -277,7 +284,7 @@ func (s *fullFlowOAuthServer) handleToken(w http.ResponseWriter, r *http.Request
 	case "authorization_code":
 		// RFC 8707: the MCP spec requires the canonical resource on the
 		// token request.
-		if r.PostFormValue("resource") != s.mcpURL() {
+		if r.PostFormValue("resource") != s.resourceURL() {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_target")
 			return
 		}
@@ -298,7 +305,7 @@ func (s *fullFlowOAuthServer) handleToken(w http.ResponseWriter, r *http.Request
 	case "refresh_token":
 		// RFC 8707: the MCP spec requires the canonical resource on refresh
 		// requests too.
-		if r.PostFormValue("resource") != s.mcpURL() {
+		if r.PostFormValue("resource") != s.resourceURL() {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_target")
 			return
 		}

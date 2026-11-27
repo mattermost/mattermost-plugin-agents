@@ -3,7 +3,7 @@
 
 // The Settings view's sections, in tab order. Each is a URL segment:
 // /plug/<plugin>/agents/settings/<section>.
-export const SETTINGS_SECTIONS = ['general', 'services', 'mcp', 'search', 'web-search', 'debug'] as const;
+export const SETTINGS_SECTIONS = ['general', 'services', 'mcp', 'search', 'web-search', 'dictation', 'debug'] as const;
 
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 

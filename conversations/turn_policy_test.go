@@ -390,6 +390,7 @@ func TestToolApprovalUsesTheRunsActivation(t *testing.T) {
 			botPost := env.seedRun(t, env.channel, root, initiator, pendingWeatherBlock(), nil)
 			if tc.hideInitiator {
 				delete(env.mmClient.posts, initiator.Id)
+				env.mmClient.gonePosts = map[string]bool{initiator.Id: true}
 			}
 			if tc.initiatorErr != nil {
 				env.mmClient.postErrors = map[string]error{initiator.Id: tc.initiatorErr}
@@ -534,6 +535,7 @@ func TestAnalysisFollowUpRechecksSourceAccess(t *testing.T) {
 		mentionOtherAgent bool
 		unreadable        bool
 		threadGone        bool
+		threadDeleted     bool
 		lookupFails       bool
 		// regenerate regenerates the analysis post, or with
 		// regenerateFollowUp, the agent's answer to a follow-up, instead of
@@ -547,8 +549,10 @@ func TestAnalysisFollowUpRechecksSourceAccess(t *testing.T) {
 		{name: "thread follow-up while the thread is readable", source: analyzedThread, wantAnswered: true},
 		{name: "thread follow-up after losing access to the thread", source: analyzedThread, unreadable: true, wantPlaceholder: analysisSourceDeniedEN},
 		{name: "thread follow-up after the thread was deleted", source: analyzedThread, threadGone: true, wantPlaceholder: analysisSourceDeniedEN},
+		{name: "thread follow-up after the thread was soft-deleted", source: analyzedThread, threadDeleted: true, wantPlaceholder: analysisSourceDeniedEN},
 		{name: "thread follow-up when the thread cannot be looked up", source: analyzedThread, lookupFails: true, wantPlaceholder: genericLLMErrorEN},
 		{name: "thread regenerate after losing access to the thread", source: analyzedThread, unreadable: true, regenerate: true, wantErr: conversations.ErrAnalysisSourceUnavailable},
+		{name: "thread regenerate after the thread was soft-deleted", source: analyzedThread, threadDeleted: true, regenerate: true, wantErr: conversations.ErrAnalysisSourceUnavailable},
 		{name: "thread regenerate when the thread cannot be looked up", source: analyzedThread, lookupFails: true, regenerate: true},
 		{name: "legacy thread regenerate without a conversation", source: analyzedThread, noConversation: true, unreadable: true, regenerate: true},
 		{name: "legacy thread follow-up after losing access to the thread", source: analyzedThread, noConversation: true, unreadable: true, wantPlaceholder: analysisSourceDeniedEN},
@@ -566,8 +570,14 @@ func TestAnalysisFollowUpRechecksSourceAccess(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupPolicyEnv(t, []llm.BotConfig{policyBotConfig(), autoReplySecondBotConfig()}, dmMakeTextStream("follow-up answer"))
-			if !tc.threadGone {
-				env.mmClient.posts[policyThreadPostID] = &model.Post{Id: policyThreadPostID, ChannelId: policySecretChannel, UserId: autoReplyOtherUserID, Message: "secret plans"}
+			if tc.threadGone {
+				env.mmClient.gonePosts = map[string]bool{policyThreadPostID: true}
+			} else {
+				deleteAt := int64(0)
+				if tc.threadDeleted {
+					deleteAt = model.GetMillis()
+				}
+				env.mmClient.posts[policyThreadPostID] = &model.Post{Id: policyThreadPostID, ChannelId: policySecretChannel, UserId: autoReplyOtherUserID, Message: "secret plans", DeleteAt: deleteAt}
 			}
 			if tc.lookupFails {
 				env.mmClient.postErrors = map[string]error{policyThreadPostID: errors.New("database unavailable")}
