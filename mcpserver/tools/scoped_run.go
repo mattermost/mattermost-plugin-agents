@@ -19,10 +19,11 @@ func runsScoped(ctx context.Context) bool {
 }
 
 // channelsOnTeam lists the channels of teamID the caller can see: its own
-// channels there, or for a scoped run the in-scope channels on the team.
-func channelsOnTeam(ctx context.Context, client *model.Client4, teamID string) ([]*model.Channel, error) {
+// channels there, or for a scoped run the in-scope channels on the team
+// matching term (so server-side filtering applies before the search page limit).
+func channelsOnTeam(ctx context.Context, client *model.Client4, teamID, term string) ([]*model.Channel, error) {
 	if runsScoped(ctx) {
-		found, _, err := client.SearchAllChannelsForUserWithOpts(ctx, &model.ChannelSearch{TeamIds: []string{teamID}})
+		found, _, err := client.SearchAllChannelsForUserWithOpts(ctx, &model.ChannelSearch{TeamIds: []string{teamID}, Term: term})
 		if err != nil {
 			return nil, err
 		}

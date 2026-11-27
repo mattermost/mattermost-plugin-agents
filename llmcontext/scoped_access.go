@@ -214,8 +214,10 @@ func (b *Builder) scopedExtraChannels(channelIDs []string) ([]ScopedAccessChanne
 		}
 
 		entry := ScopedAccessChannel{ID: id, DisplayName: channel.DisplayName, Type: string(channel.Type)}
+		var team *model.Team
 		if channel.TeamId != "" {
-			team, teamErr := b.pluginAPI.Team.Get(channel.TeamId)
+			var teamErr error
+			team, teamErr = b.pluginAPI.Team.Get(channel.TeamId)
 			if teamErr != nil {
 				return nil, fmt.Errorf("failed to get scoped extra channel's team: %w", teamErr)
 			}
@@ -223,9 +225,9 @@ func (b *Builder) scopedExtraChannels(channelIDs []string) ([]ScopedAccessChanne
 		}
 
 		switch {
-		case model.SessionScopeAllowsChannel(scopedsession.NewRunScope("", []string{id}, ""), channel, nil, model.SessionScopeLimits{}):
+		case model.SessionScopeAllowsChannel(scopedsession.NewRunScope("", []string{id}, ""), channel, team, model.SessionScopeLimits{}):
 			entry.Status = ScopedExtraChannelReadable
-		case channel.DeleteAt != 0:
+		case channel.DeleteAt != 0 || (team != nil && team.DeleteAt != 0):
 			entry.Status = ScopedExtraChannelArchived
 		case channel.IsGroupOrDirect():
 			entry.Status = ScopedExtraChannelUnsupportedType

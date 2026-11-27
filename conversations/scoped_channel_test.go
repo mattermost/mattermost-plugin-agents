@@ -45,8 +45,11 @@ const (
 	scopedUserID      = "scopeduser1234567890123456"
 	scopedChannelID   = "scopedchannel1234567890123"
 	scopedTeamID      = "scopedteam1234567890123456"
+	scopedEmbedded    = mcp.EmbeddedClientKey
+	scopedToolName    = "read_channel"
 	scopedRemote      = "https://jira.example.com"
-	scopedToolName    = "jira__get_issue"
+	scopedRemoteTool  = "jira__get_issue"
+	scopedRemoteBare  = "get_issue"
 )
 
 type scopedTestMinter struct {
@@ -76,11 +79,11 @@ func (m *scopedTestMinter) snapshot() (minted []*model.Session, revoked []string
 	return append([]*model.Session(nil), m.minted...), append([]string(nil), m.revoked...)
 }
 
-// scopedCatalogManager mints through a real ClientManager and serves one
-// remote "ask" tool.
+// scopedCatalogManager mints through a real ClientManager and serves an
+// embedded read-only Mattermost "ask" tool plus a remote MCP tool.
 type scopedCatalogManager struct {
 	*mcp.ClientManager
-	tool llm.Tool
+	tools []llm.Tool
 
 	mu       sync.Mutex
 	scoped   int
@@ -95,10 +98,13 @@ func (m *scopedCatalogManager) GetToolsWithSelection(_ context.Context, req mcp.
 		m.unscoped++
 	}
 	m.mu.Unlock()
-	if !selection.Allows(m.tool.ServerOrigin) {
-		return nil, nil
+	var out []llm.Tool
+	for _, tool := range m.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			out = append(out, tool)
+		}
 	}
-	return []llm.Tool{m.tool}, nil
+	return out, nil
 }
 
 type scopedSilentLogger struct{}
@@ -230,6 +236,22 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 
 	tool := llm.Tool{
 		Name:         scopedToolName,
+		Description:  "read posts in a channel",
+		ServerOrigin: scopedEmbedded,
+		ReadOnly:     true,
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			env.runsMu.Lock()
+			env.toolRuns++
+			env.runsMu.Unlock()
+			if opts.onToolRun != nil {
+				opts.onToolRun(env)
+			}
+			return "JIRA-1 is the evidence", nil
+		},
+	}
+	remoteTool := llm.Tool{
+		Name:         scopedRemoteTool,
 		Description:  "fetch a Jira issue",
 		ServerOrigin: scopedRemote,
 		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
@@ -248,9 +270,12 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	if !opts.noScopedSessions {
 		manager.SetScopedSessions(env.minter)
 	}
-	env.catalog = &scopedCatalogManager{ClientManager: manager, tool: tool}
+	env.catalog = &scopedCatalogManager{ClientManager: manager, tools: []llm.Tool{tool, remoteTool}}
 
-	enabledTools := []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: "get_issue"}}
+	enabledTools := []llm.EnabledMCPTool{
+		{ServerOrigin: scopedEmbedded, ToolName: scopedToolName},
+		{ServerOrigin: scopedRemote, ToolName: scopedRemoteBare},
+	}
 	for _, name := range opts.namedBuiltins {
 		enabledTools = append(enabledTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
 	}
@@ -307,9 +332,11 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 		contextBuilder.SetSkillProvider(failingSkillProvider{err: opts.skillErr})
 	}
 	policies := newDMPolicyChecker()
-	policies.policies[scopedRemote+":get_issue"] = cmp.Or(opts.toolPolicy, mcp.ToolPolicyAsk)
+	policies.policies[scopedEmbedded+":"+scopedToolName] = cmp.Or(opts.toolPolicy, mcp.ToolPolicyAsk)
+	policies.policies[scopedRemote+":"+scopedRemoteBare] = cmp.Or(opts.toolPolicy, mcp.ToolPolicyAsk)
 	if opts.toolDisabled {
-		delete(policies.policies, scopedRemote+":get_issue")
+		delete(policies.policies, scopedEmbedded+":"+scopedToolName)
+		delete(policies.policies, scopedRemote+":"+scopedRemoteBare)
 	}
 	env.mm = mmClient
 	env.conversations = conversations.New(promptsManager, mmClient, env.streaming, contextBuilder, botService, nil, licenseChecker, i18n.Init(),
@@ -358,7 +385,7 @@ func scopedToolBlocks(t *testing.T, env *scopedTestEnv) (toolUse, toolResult []c
 // In a channel, a scoped agent runs an "ask" tool without approval and
 // shares its result; the same agent in a DM still waits for approval.
 func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
-	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 
 	t.Run("channel mention runs on a scoped session without approval", func(t *testing.T) {
 		channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypePrivate, Name: "evidence"}
@@ -413,6 +440,17 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 		assert.Empty(t, env.auditRecords(audit.EventAgentScopedToolCall))
 		toolUse, _ := scopedToolBlocks(t, env)
 		assert.Empty(t, toolUse, "a call awaiting approval is neither run nor persisted as a tool round")
+	})
+
+	t.Run("external remote MCP tools still follow their configured tool approval policy", func(t *testing.T) {
+		remoteCall := []llm.ToolCall{{ID: "remote-1", Name: scopedRemoteTool, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+		channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypePrivate, Name: "evidence"}
+
+		askEnv := setupScopedTestEnv(t, channel, scopedEnvOpts{toolPolicy: mcp.ToolPolicyAsk}, dmMakeToolCallStream(remoteCall))
+		assert.Equal(t, 0, askEnv.runs(), "external remote tool with ask policy waits for approval")
+
+		autoEnv := setupScopedTestEnv(t, channel, scopedEnvOpts{toolPolicy: mcp.ToolPolicyAutoRunEverywhere}, dmMakeToolCallStream(remoteCall), dmMakeTextStream("JIRA-1 has it"))
+		assert.Equal(t, 1, autoEnv.runs(), "external remote tool with auto_run_everywhere auto-runs")
 	})
 }
 
@@ -476,7 +514,7 @@ func TestScopedChannelTurnWebSearchNeedsNamedTool(t *testing.T) {
 // Regenerating and resuming a scoped channel turn mint a fresh session for
 // each run and revoke it when that run ends.
 func TestScopedChannelTurnResumes(t *testing.T) {
-	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
 	env := setupScopedTestEnv(t, channel, scopedEnvOpts{},
 		dmMakeToolCallStream(toolCall), dmMakeTextStream("first"),
@@ -520,7 +558,7 @@ func TestScopedChannelTurnResumes(t *testing.T) {
 			Type:             conversation.BlockTypeToolUse,
 			ID:               "call-2",
 			Name:             scopedToolName,
-			ServerOrigin:     scopedRemote,
+			ServerOrigin:     scopedEmbedded,
 			Input:            json.RawMessage(`{}`),
 			Status:           conversation.StatusPending,
 			WouldAutoExecute: true,
@@ -550,8 +588,8 @@ func TestScopedChannelTurnResumes(t *testing.T) {
 // When the agent's scoped mode lapses mid-run, the run's remaining tool calls
 // wait for approval instead of running.
 func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
-	first := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
-	second := []llm.ToolCall{{ID: "call-2", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	first := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
+	second := []llm.ToolCall{{ID: "call-2", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
 	revokeAll := func(env *scopedTestEnv) {
 		env.catalog.RevokeScopedSessionsWhere(func(*mcp.ScopedRun) bool { return true })
@@ -562,15 +600,20 @@ func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
 
 	assert.Equal(t, 1, env.runs(), "only the call made before the revocation runs")
 	assert.Len(t, env.auditRecords(audit.EventAgentScopedToolCall), 1)
-	toolUse, _ := scopedToolBlocks(t, env)
+	toolUse, toolResult := scopedToolBlocks(t, env)
 	require.Len(t, toolUse, 1, "the call after the revocation waits for approval")
 	assert.Equal(t, "call-1", toolUse[0].ID)
+	require.NotNil(t, toolUse[0].Shared)
+	assert.True(t, *toolUse[0].Shared, "the call that already ran before revocation stays shared")
+	require.Len(t, toolResult, 1)
+	require.NotNil(t, toolResult[0].Shared)
+	assert.True(t, *toolResult[0].Shared, "the result that already ran before revocation stays shared")
 }
 
 // A guest cannot browse the public channels a scoped session reads, so the
 // agent refuses their mention outright rather than falling back to approvals.
 func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
-	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 
 	requesters := []struct {
 		name string
@@ -626,7 +669,7 @@ func TestScopedChannelTurnRefusesGuestRequester(t *testing.T) {
 // catalog still holds it.
 func TestScopedChannelTurnDoesNotRunDisabledTool(t *testing.T) {
 	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
-	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 
 	tests := []struct {
 		name     string
@@ -649,7 +692,7 @@ func TestScopedChannelTurnDoesNotRunDisabledTool(t *testing.T) {
 // session only tools the admin lets auto-run everywhere run.
 func TestScopedChannelBotTurnKeepsAutoEverywhereFilter(t *testing.T) {
 	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
-	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 
 	tests := []struct {
 		name     string
@@ -699,10 +742,10 @@ func TestScopedChannelTurnErrorRevokesSession(t *testing.T) {
 // Removing a tool from a scoped agent's allowlist ends the runs that were
 // started with it, so the removed tool stops running without approval.
 func TestScopedChannelTurnStopsAutoRunningRemovedTool(t *testing.T) {
-	jira := llm.EnabledMCPTool{ServerOrigin: scopedRemote, ToolName: "get_issue"}
+	embedded := llm.EnabledMCPTool{ServerOrigin: scopedEmbedded, ToolName: scopedToolName}
 	webSearch := llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: "WebSearch"}
-	jiraCall := func(id string) []llm.ToolCall {
-		return []llm.ToolCall{{ID: id, Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	embeddedCall := func(id string) []llm.ToolCall {
+		return []llm.ToolCall{{ID: id, Name: scopedToolName, ServerOrigin: scopedEmbedded, Arguments: json.RawMessage(`{}`)}}
 	}
 	searchCall := []llm.ToolCall{{ID: "call-2", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"mattermost scoped sessions"}`)}}
 
@@ -713,7 +756,7 @@ func TestScopedChannelTurnStopsAutoRunningRemovedTool(t *testing.T) {
 		wantToolRuns int
 		wantSearches int32
 	}{
-		{name: "MCP tool", removed: jira, secondCall: jiraCall("call-2"), wantToolRuns: 1},
+		{name: "MCP tool", removed: embedded, secondCall: embeddedCall("call-2"), wantToolRuns: 1},
 		{name: "built-in web search", removed: webSearch, secondCall: searchCall, wantToolRuns: 1},
 	}
 	for _, tt := range tests {
@@ -730,7 +773,7 @@ func TestScopedChannelTurnStopsAutoRunningRemovedTool(t *testing.T) {
 				webSearchURL:  searx.URL,
 				namedBuiltins: []string{"WebSearch"},
 				onToolRun:     func(env *scopedTestEnv) { env.removeToolFromAgent(tt.removed) },
-			}, dmMakeToolCallStream(jiraCall("call-1")), dmMakeToolCallStream(tt.secondCall), dmMakeTextStream("done"))
+			}, dmMakeToolCallStream(embeddedCall("call-1")), dmMakeToolCallStream(tt.secondCall), dmMakeTextStream("done"))
 
 			assert.Equal(t, tt.wantToolRuns, env.runs(), "only the call made before the removal runs")
 			assert.EqualValues(t, tt.wantSearches, searches.Load(), "the removed web search never runs")

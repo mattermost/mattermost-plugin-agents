@@ -126,7 +126,7 @@ func TestScopedAccessReport(t *testing.T) {
 		{Id: groupID, DisplayName: "Group", AllowOpenInvite: true, GroupConstrained: model.NewPointer(true)},
 		{Id: policyID, DisplayName: "Policy", AllowOpenInvite: true, PolicyEnforced: true},
 	}
-	readableID, archivedID, missingID, dmID := model.NewId(), model.NewId(), model.NewId(), model.NewId()
+	readableID, archivedID, missingID, dmID, policyTeamChID := model.NewId(), model.NewId(), model.NewId(), model.NewId(), model.NewId()
 
 	tests := []struct {
 		name          string
@@ -172,15 +172,17 @@ func TestScopedAccessReport(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := scopedAccessEnvironment(t, scopedAccessAgent("", []string{readableID, archivedID, missingID, dmID}))
+			e := scopedAccessEnvironment(t, scopedAccessAgent("", []string{readableID, archivedID, missingID, dmID, policyTeamChID}))
 			e.OverrideConfig(scopedtest.RPCConfig(t, &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: model.NewPointer(tt.compliance)}}))
 			e.mockAPI.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin).Maybe()
 			e.mockAPI.On("GetTeams").Return(teams, nil)
 			e.mockAPI.On("GetTeam", openID).Return(teams[0], nil).Maybe()
+			e.mockAPI.On("GetTeam", policyID).Return(teams[4], nil).Maybe()
 			e.mockAPI.On("GetChannel", readableID).Return(&model.Channel{Id: readableID, TeamId: openID, Type: model.ChannelTypePrivate, DisplayName: "Private"}, nil)
 			e.mockAPI.On("GetChannel", archivedID).Return(&model.Channel{Id: archivedID, TeamId: openID, Type: model.ChannelTypeOpen, DeleteAt: 1}, nil)
 			e.mockAPI.On("GetChannel", missingID).Return(nil, model.NewAppError("GetChannel", "app.channel.missing", nil, "", http.StatusNotFound))
 			e.mockAPI.On("GetChannel", dmID).Return(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}, nil)
+			e.mockAPI.On("GetChannel", policyTeamChID).Return(&model.Channel{Id: policyTeamChID, TeamId: policyID, Type: model.ChannelTypePrivate, DisplayName: "Policy Team Private"}, nil)
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
 
 			recorder := doRequest(e.api, http.MethodGet, "/admin/agents/"+scopedAccessAgentID+"/scoped_access", nil, testUserID)
@@ -214,10 +216,11 @@ func TestScopedAccessReport(t *testing.T) {
 				statuses[channel.ID] = channel.Status
 			}
 			assert.Equal(t, map[string]string{
-				readableID: llmcontext.ScopedExtraChannelReadable,
-				archivedID: llmcontext.ScopedExtraChannelArchived,
-				missingID:  llmcontext.ScopedExtraChannelMissing,
-				dmID:       llmcontext.ScopedExtraChannelUnsupportedType,
+				readableID:     llmcontext.ScopedExtraChannelReadable,
+				archivedID:     llmcontext.ScopedExtraChannelArchived,
+				missingID:      llmcontext.ScopedExtraChannelMissing,
+				dmID:           llmcontext.ScopedExtraChannelUnsupportedType,
+				policyTeamChID: llmcontext.ScopedExtraChannelRestricted,
 			}, statuses)
 			assert.Equal(t, "Open", report.Channels.ExtraChannels[0].TeamName)
 

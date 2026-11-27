@@ -43,6 +43,10 @@ func scopedServer(t *testing.T, team *model.Team, channel *model.Channel) (*http
 			write(w, model.ChannelListWithTeamData{})
 			return
 		}
+		if search.Term != "" && !strings.Contains(strings.ToLower(channel.DisplayName), strings.ToLower(search.Term)) && !strings.Contains(strings.ToLower(channel.Name), strings.ToLower(search.Term)) {
+			write(w, model.ChannelListWithTeamData{})
+			return
+		}
 		write(w, model.ChannelListWithTeamData{{Channel: *channel}})
 	})
 	mux.HandleFunc("GET /api/v4/teams/{team}/channels/name/{name}", func(w http.ResponseWriter, r *http.Request) {

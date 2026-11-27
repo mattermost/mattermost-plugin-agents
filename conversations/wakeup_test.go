@@ -418,6 +418,16 @@ func TestResumeConversationDrops(t *testing.T) {
 			botCfg:  func(cfg *llm.BotConfig) { cfg.ChannelAccessLevel = llm.ChannelAccessLevelNone },
 		},
 		{
+			name:    "requester cannot use scoped channel mode",
+			user:    &model.User{Id: wakeUserID},
+			canRead: true,
+			channel: openChannel,
+			botCfg: func(cfg *llm.BotConfig) {
+				cfg.UseServiceAccountAuth = true
+				cfg.ScopedChannelMode = true
+			},
+		},
+		{
 			name:       "wake chain limit reached",
 			user:       &model.User{Id: wakeUserID},
 			canRead:    true,

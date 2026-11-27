@@ -645,9 +645,12 @@ func (a *API) checkBridgePermissions(ctx stdcontext.Context, userID, channelID s
 	return a.bots.CheckUsageRestrictions(ctx, userID, bot, channel)
 }
 
-func drainToolRunnerStream(stream *llm.TextStreamResult) error {
-	var firstErr error
+func drainToolRunnerStream(stream *llm.TextStreamResult) (unresolvedTools bool, firstErr error) {
 	for event := range stream.Stream {
+		if event.Type == llm.EventTypeToolCalls || event.Type == llm.EventTypeToolCallBatch {
+			unresolvedTools = true
+			continue
+		}
 		if event.Type != llm.EventTypeError {
 			continue
 		}
@@ -664,7 +667,7 @@ func drainToolRunnerStream(stream *llm.TextStreamResult) error {
 		}
 		firstErr = errors.New("tool runner stream failed")
 	}
-	return firstErr
+	return unresolvedTools, firstErr
 }
 
 // streamLLMResponse handles streaming LLM responses as Server-Sent Events.
@@ -767,9 +770,16 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, model llm.LanguageMo
 		return
 	}
 
-	if streamErr := drainToolRunnerStream(runResult.Stream); streamErr != nil {
+	unresolvedTools, streamErr := drainToolRunnerStream(runResult.Stream)
+	if streamErr != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", streamErr),
+		})
+		return
+	}
+	if unresolvedTools && llmRequest.Context != nil && llmRequest.Context.ToolsScoped && llmRequest.Context.ScopedSessionReleased() {
+		c.JSON(http.StatusConflict, bridgeclient.ErrorResponse{
+			Error: "scoped session ended before completing tool calls",
 		})
 		return
 	}

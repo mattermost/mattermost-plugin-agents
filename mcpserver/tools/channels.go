@@ -588,7 +588,7 @@ func (p *MattermostToolProvider) toolAddChannelMember(mcpContext *MCPToolContext
 func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context, client *model.Client4, displayName, teamID string) ([]*model.Channel, error) {
 	if teamID != "" {
 		// Search within specific team - should only return one result
-		channels, channelErr := channelsOnTeam(ctx, client, teamID)
+		channels, channelErr := channelsOnTeam(ctx, client, teamID, displayName)
 		if channelErr != nil {
 			return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
 		}
@@ -699,7 +699,7 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 // tryFindChannelBySubstring does a case-insensitive substring match on display names
 // within a specific team. Used as a fallback when exact matches fail.
 func (p *MattermostToolProvider) tryFindChannelBySubstring(ctx context.Context, client *model.Client4, term, teamID string) ([]*model.Channel, error) {
-	channels, channelErr := channelsOnTeam(ctx, client, teamID)
+	channels, channelErr := channelsOnTeam(ctx, client, teamID, term)
 	if channelErr != nil {
 		return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
 	}

@@ -1097,16 +1097,17 @@ func TestTurnEntryPointPolicyInvariants(t *testing.T) {
 				assert.Zero(t, env.executions.Load())
 			})
 
-			t.Run("a scoped agent runs every tool on sessions it revokes", func(t *testing.T) {
+			t.Run("a scoped agent runs embedded tools on sessions it revokes", func(t *testing.T) {
+				embeddedCall := llm.ToolCall{ID: "call-1", Name: policyTimeToolName, ServerOrigin: mcp.EmbeddedClientKey, Arguments: json.RawMessage(`{"city":"NYC"}`)}
 				env := setupInvariantEnv(t, scopedPolicyBotConfig(),
-					dmMakeToolCallStream([]llm.ToolCall{policyWeatherCall}),
-					dmMakeTextStream("It's sunny"),
+					dmMakeToolCallStream([]llm.ToolCall{embeddedCall}),
+					dmMakeTextStream("It's noon"),
 				)
 				scoped := env.enableScopedSessions(t)
-				// Scoped turns ignore the approval policy but not a disabled tool.
-				env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAsk)
+				// Scoped turns ignore the approval policy for embedded read tools, but not a disabled tool.
+				env.checker.setPolicy(mcp.EmbeddedClientKey, policyTimeToolName, mcp.ToolPolicyAsk)
 				if entry.unattended {
-					env.checker.setPolicy(policyToolOrigin, policyToolName, mcp.ToolPolicyAutoRunEverywhere)
+					env.checker.setPolicy(mcp.EmbeddedClientKey, policyTimeToolName, mcp.ToolPolicyAutoRunEverywhere)
 				}
 
 				require.NoError(t, entry.seed(t, env)())

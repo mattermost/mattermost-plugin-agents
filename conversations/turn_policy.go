@@ -384,59 +384,65 @@ func (p *turnPolicy) scopedTurn() llm.ScopedTurn {
 // requester's approval.
 func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 	return func(tc llm.ToolCall) bool {
-		if !p.toolsEnabled {
-			return false
-		}
-		if isMCPMetaToolCall(tc, llmCtx) {
-			return true
-		}
-		var lookup llm.ToolLookup
-		var found bool
-		if llmCtx != nil {
-			lookup, found = llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
-		}
-		if !found {
-			return false
-		}
-		if p.c.remoteMCPDecisionAllowed(lookup.ServerOrigin) != nil {
-			return false
-		}
-		if llmCtx.ToolsScoped {
-			// Once the run's session has ended, because the run finished or
-			// its agent's scoped mode lapsed, nothing runs unasked.
-			if llmCtx.ScopedSessionReleased() {
-				return false
-			}
-			// Everything a scoped catalog reads is within the scope, but an
-			// interaction tool needs the user's answer.
-			if lookup.Tool.UserInteraction != "" {
-				return false
-			}
-			// A tool the admin has disabled never runs, whatever the catalog
-			// holds. Built-ins have no per-tool policy.
-			if lookup.ServerOrigin != "" {
-				if _, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName); !enabled {
-					return false
-				}
-			}
-			return true
-		}
-		// Only honored for built-ins: an MCP tool carrying the flag must
-		// still go through policy.
-		if isAutoExecuteBuiltIn(lookup.Tool) {
-			return true
-		}
-		policy, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
-		if !enabled {
-			return false
-		}
-		// The legacy auto_run policy is DM-only so a channel-visible reply
-		// cannot reveal unshared tool output without an explicit Share.
-		if p.isDM {
-			return mcp.IsToolPolicyAutoRunInDM(policy)
-		}
-		return mcp.IsToolPolicyAutoRunEverywhere(policy)
+		return p.autoExecuteDecision(llmCtx, tc, true)
 	}
+}
+
+func (p *turnPolicy) autoExecuteDecision(llmCtx *llm.Context, tc llm.ToolCall, checkSessionLive bool) bool {
+	if !p.toolsEnabled {
+		return false
+	}
+	if isMCPMetaToolCall(tc, llmCtx) {
+		return true
+	}
+	var lookup llm.ToolLookup
+	var found bool
+	if llmCtx != nil {
+		lookup, found = llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
+	}
+	if !found {
+		return false
+	}
+	if p.c.remoteMCPDecisionAllowed(lookup.ServerOrigin) != nil {
+		return false
+	}
+	// Once a scoped run's session has ended (run finished or agent config
+	// lapsed), nothing runs unasked.
+	if llmCtx.ToolsScoped && checkSessionLive && llmCtx.ScopedSessionReleased() {
+		return false
+	}
+	// Scoped channel mode skips approval only for tools bounded by the scoped
+	// session (read-only embedded Mattermost tools) and explicitly opted-in
+	// built-ins. External remote MCP tools still follow their configured tool
+	// approval policy below.
+	if llmCtx.ToolsScoped && (lookup.ServerOrigin == "" || mcp.ServerKind(lookup.ServerOrigin) == mcp.ServerKindEmbedded) {
+		if lookup.Tool.UserInteraction != "" {
+			return false
+		}
+		// A tool the admin has disabled never runs, whatever the catalog
+		// holds. Built-ins have no per-tool policy.
+		if lookup.ServerOrigin != "" {
+			if _, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName); !enabled {
+				return false
+			}
+		}
+		return true
+	}
+	// Only honored for built-ins: an MCP tool carrying the flag must
+	// still go through policy.
+	if isAutoExecuteBuiltIn(lookup.Tool) {
+		return true
+	}
+	policy, enabled := p.c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
+	if !enabled {
+		return false
+	}
+	// The legacy auto_run policy is DM-only so a channel-visible reply
+	// cannot reveal unshared tool output without an explicit Share.
+	if p.isDM {
+		return mcp.IsToolPolicyAutoRunInDM(policy)
+	}
+	return mcp.IsToolPolicyAutoRunEverywhere(policy)
 }
 
 // remoteMCPDecisionAllowed returns ErrRemoteMCPNotLicensed when executing, or
@@ -453,17 +459,18 @@ func (c *Conversations) remoteMCPDecisionAllowed(serverOrigin string) error {
 // sharedForTurns reports whether tool rounds the turn ran automatically may
 // be written as shared, skipping the result-approval step. DM results are
 // always shared; in a channel every call must be one the policy auto-runs
-// there, which only auto_run_everywhere tools are.
+// there. Session liveness is not re-checked here because these calls already
+// ran while the session was live; a mid-run revocation must not hide results
+// that already executed.
 func (p *turnPolicy) sharedForTurns(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
 	if p.isDM {
 		return true
 	}
-	autoExecute := p.autoExecute(llmCtx)
 	sawToolCall := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
 			sawToolCall = true
-			if !autoExecute(tc) {
+			if !p.autoExecuteDecision(llmCtx, tc, false) {
 				return false
 			}
 		}

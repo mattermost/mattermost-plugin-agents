@@ -116,7 +116,7 @@ const ReportBody = ({report, hasUnsavedChanges}: {report: ScopedAccessReport; ha
                 />
             )}
             <Summary data-testid='scoped-access-summary'>
-                <FormattedMessage defaultMessage="In Mattermost this agent can only read. It never reads direct messages or private channels outside the ones listed here, and it can't post, edit, or delete anything beyond its own reply. External tools can do whatever their service account allows."/>
+                <FormattedMessage defaultMessage="In Mattermost this agent can only read. It never reads direct messages or private channels outside the ones listed here, and it can't post, edit, or delete anything beyond its own reply. External tools use the service account and follow their configured tool approval policy."/>
             </Summary>
             <ChannelsSection channels={report.channels}/>
             <ToolsSection tools={report.tools}/>

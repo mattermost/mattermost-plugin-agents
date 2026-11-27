@@ -323,6 +323,9 @@ func TestBridgeScopedRunStopsAutoRunningWhenRevoked(t *testing.T) {
 			}
 			if tt.wantReturned {
 				assert.Len(t, returned, 1, "the call is handed back to the caller")
+			} else {
+				assert.Equal(t, http.StatusConflict, recorder.Code, "non-streaming completion reports conflict instead of 200 with empty completion")
+				assert.Contains(t, recorder.Body.String(), "scoped session ended")
 			}
 		})
 	}

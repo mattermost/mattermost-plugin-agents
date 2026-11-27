@@ -437,8 +437,9 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		return nil, nil, nil, err
 	}
 	llmContext.ResponsePostID = post.Id
+	scopedHandedOff := false
 	defer func() {
-		if err != nil {
+		if !scopedHandedOff {
 			llmContext.ReleaseScopedSession()
 		}
 	}()
@@ -466,5 +467,6 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		return nil, nil, nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
+	scopedHandedOff = true
 	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), runResult.Done, llmContext.ReleaseScopedSession, nil
 }
