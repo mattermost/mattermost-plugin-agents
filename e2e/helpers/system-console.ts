@@ -2,7 +2,7 @@ import { Page, Locator, expect } from '@playwright/test';
 import { MATTERMOST_AI_PLUGIN_ID } from './plugin-http';
 
 /** A section of the Agents product's Settings view; also its URL segment. */
-export type SettingsSection = 'general' | 'services' | 'mcp' | 'search' | 'web-search' | 'debug';
+export type SettingsSection = 'general' | 'services' | 'mcp' | 'search' | 'web-search' | 'dictation' | 'debug';
 
 const SECTION_TABS: Record<SettingsSection, string> = {
     general: 'General',
@@ -10,6 +10,7 @@ const SECTION_TABS: Record<SettingsSection, string> = {
     mcp: 'MCP servers',
     search: 'Embedding search',
     'web-search': 'Web search',
+    dictation: 'Dictation',
     debug: 'Debug',
 };
 

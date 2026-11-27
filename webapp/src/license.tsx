@@ -42,7 +42,8 @@ export type Capability =
     | 'mcp_service_account'
     | 'shared_prompts'
     | 'channel_auto_reply'
-    | 'attribute_based_access';
+    | 'attribute_based_access'
+    | 'dictation';
 
 // capabilityMinLevel is the tier chart: the minimum level at which each capability is available.
 const capabilityMinLevel: Record<Capability, LicenseLevel> = {
@@ -62,6 +63,7 @@ const capabilityMinLevel: Record<Capability, LicenseLevel> = {
     meetings: LicenseLevel.Enterprise,
     mcp_service_account: LicenseLevel.Enterprise,
     shared_prompts: LicenseLevel.Enterprise,
+    dictation: LicenseLevel.Enterprise,
 
     channel_auto_reply: LicenseLevel.EnterpriseAdvanced,
     attribute_based_access: LicenseLevel.EnterpriseAdvanced,

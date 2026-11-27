@@ -6,8 +6,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,6 +301,142 @@ func TestResolveOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	require.Equal(t, "https://auth.example.com/authorize", config.Endpoint.AuthURL)
 	require.Equal(t, "https://auth.example.com/token", config.Endpoint.TokenURL)
 	require.Equal(t, "test-client", config.ClientID)
+}
+
+func TestInitiateOAuthFlowAuthorizationParams(t *testing.T) {
+	const spacedName = " access_type "
+
+	testCases := []struct {
+		name          string
+		params        map[string]string
+		endpointQuery string
+		want          map[string]string
+		absent        []string
+		wantErr       string
+	}{
+		{name: "no parameters", absent: []string{"access_type"}},
+		{
+			name:   "configured parameters are added",
+			params: map[string]string{"access_type": "offline", "prompt": "consent"},
+			want:   map[string]string{"access_type": "offline", "prompt": "consent"},
+		},
+		{
+			name: "reserved parameters in a stored config are ignored",
+			params: map[string]string{
+				"state":          "fixed",
+				"code_challenge": "fixed",
+				"resource":       "https://other.example.com",
+				"redirect_uri":   "https://other.example.com/callback",
+				"response_mode":  "form_post",
+			},
+			absent: []string{"response_mode"},
+		},
+		{
+			name:   "invalid entries in a stored config are ignored",
+			params: map[string]string{spacedName: "offline", "prompt": " ", "hint": " padded "},
+			absent: []string{spacedName, "access_type", "prompt", "hint"},
+		},
+		{
+			name:          "unrelated endpoint parameters are kept",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "tenant=acme",
+			want:          map[string]string{"access_type": "offline", "tenant": "acme"},
+		},
+		{
+			name:          "a parameter the endpoint already sets is refused",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "access_type=online",
+			wantErr:       `"access_type"`,
+		},
+		{
+			name:          "a parameter the endpoint already sets in another case is refused",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "Access_Type=online",
+			wantErr:       `"access_type"`,
+		},
+		{
+			name:          "a malformed endpoint query is refused",
+			params:        map[string]string{"access_type": "offline"},
+			endpointQuery: "tenant=%zz",
+			wantErr:       "invalid authorization endpoint query",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var serverURL string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/oauth-authorization-server" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				authorizationEndpoint := serverURL + "/authorize"
+				if tc.endpointQuery != "" {
+					authorizationEndpoint += "?" + tc.endpointQuery
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+					Issuer:                        serverURL,
+					AuthorizationEndpoint:         authorizationEndpoint,
+					TokenEndpoint:                 serverURL + "/token",
+					CodeChallengeMethodsSupported: []string{"S256"},
+				})
+			}))
+			defer server.Close()
+			serverURL = server.URL
+
+			manager, kv := newStatefulKVManager(t, nil, server.Client())
+			authURL, err := manager.InitiateOAuthFlowForServer(context.Background(), "user-id", ServerConfig{
+				ID:                  "server-id",
+				Name:                "YouTrack",
+				Enabled:             true,
+				BaseURL:             serverURL + "/mcp",
+				ClientID:            "static-client",
+				ClientSecret:        "static-secret",
+				AuthorizationParams: tc.params,
+			})
+
+			// Only a sign-in that goes ahead pins the issuer.
+			issuerPinned := slices.ContainsFunc(slices.Collect(maps.Keys(kv.data)), func(key string) bool {
+				return strings.HasPrefix(key, "mcp_oauth_issuer_pin_v1_")
+			})
+			assert.Equal(t, tc.wantErr == "", issuerPinned)
+
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			parsed, err := url.Parse(authURL)
+			require.NoError(t, err)
+			query, err := url.ParseQuery(parsed.RawQuery)
+			require.NoError(t, err)
+
+			for key, value := range tc.want {
+				assert.Equal(t, []string{value}, query[key], key)
+			}
+			for _, key := range tc.absent {
+				assert.NotContains(t, query, key)
+			}
+
+			// Whatever is configured, the flow's own parameters are present
+			// once, with the values the flow generated.
+			for _, key := range []string{"state", "code_challenge"} {
+				require.Len(t, query[key], 1, key)
+				assert.NotEmpty(t, query.Get(key), key)
+				assert.NotEqual(t, "fixed", query.Get(key), key)
+			}
+			for key, value := range map[string]string{
+				"response_type":         "code",
+				"client_id":             "static-client",
+				"redirect_uri":          "http://test.com/callback",
+				"resource":              serverURL + "/mcp",
+				"code_challenge_method": "S256",
+			} {
+				assert.Equal(t, []string{value}, query[key], key)
+			}
+		})
+	}
 }
 
 func TestResolveOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
