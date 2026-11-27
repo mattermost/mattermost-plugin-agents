@@ -21,9 +21,13 @@ func TestAllowsChannelContent(t *testing.T) {
 	triggerID := model.NewId()
 	openTeam := &model.Team{Id: model.NewId(), AllowOpenInvite: true}
 	inviteOnlyTeam := &model.Team{Id: model.NewId()}
+	policyTeam := &model.Team{Id: model.NewId(), PolicyEnforced: true}
+	deletedTeam := &model.Team{Id: model.NewId(), DeleteAt: 1}
 	openPublic := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen}
 	inviteOnlyPublic := &model.Channel{Id: model.NewId(), TeamId: inviteOnlyTeam.Id, Type: model.ChannelTypeOpen}
-	listed := &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate}
+	listed := &model.Channel{Id: triggerID, TeamId: inviteOnlyTeam.Id, Type: model.ChannelTypePrivate}
+	listedOnPolicy := &model.Channel{Id: triggerID, TeamId: policyTeam.Id, Type: model.ChannelTypePrivate}
+	listedOnDeleted := &model.Channel{Id: triggerID, TeamId: deletedTeam.Id, Type: model.ChannelTypePrivate}
 	scope := &model.SessionScope{
 		Permissions: model.ScopeReadPermissions,
 		Resources:   model.SessionScopeResources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true, PublicChannelTeamIDs: []string{inviteOnlyTeam.Id}},
@@ -39,16 +43,19 @@ func TestAllowsChannelContent(t *testing.T) {
 		limits  model.SessionScopeLimits
 		allowed bool
 	}{
-		{name: "listed private channel the bot is not in", scope: scope, channel: listed, allowed: true},
+		{name: "listed private channel the bot is not in", scope: scope, channel: listed, team: inviteOnlyTeam, allowed: true},
+		{name: "listed channel on a policy-enforced team", scope: scope, channel: listedOnPolicy, team: policyTeam},
+		{name: "listed channel on a deleted team", scope: scope, channel: listedOnDeleted, team: deletedTeam},
 		{name: "public channel on an open team", scope: scope, channel: openPublic, team: openTeam, allowed: true},
 		{name: "public channel on the triggering team, which is not open", scope: scope, channel: inviteOnlyPublic, team: inviteOnlyTeam, allowed: true},
 		{name: "open-team grant off because people cannot join teams", scope: scope, channel: openPublic, team: openTeam, limits: noJoin},
 		{name: "triggering team's grant survives people not being able to join teams", scope: scope, channel: inviteOnlyPublic, team: inviteOnlyTeam, limits: noJoin, allowed: true},
 		{name: "compliance mode turns off both public grants", scope: scope, channel: inviteOnlyPublic, team: inviteOnlyTeam, limits: compliance},
-		{name: "listed channel in compliance mode", scope: scope, channel: listed, limits: compliance, allowed: true},
-		{name: "scope without the content permission", scope: &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources}, channel: listed},
-		{name: "empty scope from a malformed prop", scope: &model.SessionScope{}, channel: listed},
-		{name: "no scope", channel: listed},
+		{name: "listed channel in compliance mode", scope: scope, channel: listed, team: inviteOnlyTeam, limits: compliance, allowed: true},
+		{name: "listed channel with the open-team grant off", scope: scope, channel: listed, team: inviteOnlyTeam, limits: noJoin, allowed: true},
+		{name: "scope without the content permission", scope: &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources}, channel: listed, team: inviteOnlyTeam},
+		{name: "empty scope from a malformed prop", scope: &model.SessionScope{}, channel: listed, team: inviteOnlyTeam},
+		{name: "no scope", channel: listed, team: inviteOnlyTeam},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,7 +136,7 @@ type fakeSessionAPI struct {
 	revoked   []string
 }
 
-func (f *fakeSessionAPI) CreateScopedSession(string, *model.SessionScope, int64) (*model.Session, *model.AppError) {
+func (f *fakeSessionAPI) CreateScopedSession(*model.CreateScopedSessionRequest) (*model.Session, *model.AppError) {
 	return f.session, f.createErr
 }
 

@@ -5,6 +5,7 @@ import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
+import {dictationAvailability} from './dictation/availability';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
@@ -34,6 +35,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
+        dictationAvailability,
     });
     registry.registerReducer(reducer);
 

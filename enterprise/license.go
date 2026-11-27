@@ -78,6 +78,7 @@ const (
 	CapStateChangingTools    Capability = "state_changing_tools"
 	CapChannelAutoReply      Capability = "channel_auto_reply"
 	CapAttributeBasedAccess  Capability = "attribute_based_access"
+	CapDictation             Capability = "dictation"
 	capabilityUnknownDisplay            = "This feature"
 )
 
@@ -105,6 +106,7 @@ var capabilities = map[Capability]capabilitySpec{
 	CapMeetings:             {LevelEnterprise, "Meeting transcription and summaries"},
 	CapMCPServiceAccount:    {LevelEnterprise, "MCP service-account authentication"},
 	CapSharedPrompts:        {LevelEnterprise, "Shared prompt libraries"},
+	CapDictation:            {LevelEnterprise, "Live dictation"},
 
 	CapChannelAutoReply:     {LevelEnterpriseAdvanced, "Channel agent auto-reply"},
 	CapAttributeBasedAccess: {LevelEnterpriseAdvanced, "Attribute-based access control"},

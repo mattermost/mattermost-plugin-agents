@@ -83,6 +83,9 @@ export async function RunAIMockContainer(overrides?: {
   webSearch?: Record<string, unknown>;
   enableChannelMentionToolCalling?: boolean;
   config?: Record<string, unknown>;
+
+  // Extra Docker network aliases the plugin may reach, such as sidecar mocks.
+  allowedConnections?: string[];
 }): Promise<MattermostContainer> {
   const filename = findPluginTarball();
 
@@ -131,7 +134,7 @@ export async function RunAIMockContainer(overrides?: {
     },
   };
 
-  const allowedConnections = overrides?.webSearch ? 'openai,websearch' : 'openai';
+  const allowedConnections = ['openai', ...(overrides?.webSearch ? ['websearch'] : []), ...(overrides?.allowedConnections ?? [])].join(',');
   const mattermost = await new MattermostContainer()
     .withEnv('MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS', allowedConnections)
     .withPlugin(filename, 'mattermost-ai', pluginConfig)

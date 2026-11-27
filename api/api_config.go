@@ -44,6 +44,10 @@ const configErrorInvalidLinkDomains agentErrorCode = "invalid_allowed_link_domai
 // stored credential stands behind it.
 const configErrorUnresolvedCredentials agentErrorCode = "unresolved_credentials"
 
+// configErrorInvalidDictation: dictation is enabled without a supported
+// transcription service or a model.
+const configErrorInvalidDictation agentErrorCode = "invalid_dictation"
+
 // validateServiceStructuredOutputPolicies rejects a service whose
 // structured-output policy is not a value the runtime understands. Persisting a
 // typo would take every agent on that service offline (EnsureBots skips an
@@ -218,6 +222,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 				normalized.Bots = prev.Bots
 			}
 		}
+		if err := normalized.ValidateDictation(); err != nil {
+			return config.Config{}, err
+		}
 		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
 			return config.Config{}, err
 		}
@@ -237,6 +244,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
 		// Duplicate payload IDs, or an embedded server ID that does not match storage.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload has duplicate service or MCP server IDs, or an embedded server ID that does not match the stored identity: %w", err))
+		return
+	case errors.Is(err, config.ErrInvalidDictationConfig):
+		abortAgentRequestWithCode(c, http.StatusBadRequest, configErrorInvalidDictation, err)
 		return
 	case errors.Is(err, store.ErrLegacyUUIDServiceID):
 		// After the ABAC ID migration, a dashed UUID is an invalid service ID format.

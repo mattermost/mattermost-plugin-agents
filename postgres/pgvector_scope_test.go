@@ -136,6 +136,11 @@ func TestSearchWithScope(t *testing.T) {
 			expected: nil,
 		},
 		{
+			name:     "listed channel on a policy-enforced or deleted team",
+			scope:    model.SessionScopeResources{ChannelIDs: []string{"policy_team_public", "deleted_team_public"}},
+			expected: nil,
+		},
+		{
 			name:     "empty scope reads nothing",
 			scope:    model.SessionScopeResources{},
 			expected: nil,

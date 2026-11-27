@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -82,6 +83,12 @@ func setupAdminRoute(e *TestEnvironment) {
 
 func setupSearchRoute(e *TestEnvironment) {
 	e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
+}
+
+// setupDictationRoute enables dictation on a service that does not resolve,
+// so licensed levels stop before any provider call.
+func setupDictationRoute(e *TestEnvironment) {
+	e.config.dictation = config.DictationConfig{Enabled: true, ServiceID: "missing", Model: "gpt-live-transcribe"}
 }
 
 func capabilityRouteTests() []capabilityRouteTest {
@@ -174,6 +181,14 @@ func capabilityRouteTests() []capabilityRouteTest {
 			cap:      enterprise.CapSemanticSearch,
 			minLevel: enterprise.LevelEnterprise,
 			setup:    setupAdminRoute,
+		},
+		{
+			name:     "dictation session",
+			method:   http.MethodPost,
+			path:     "/dictation/session",
+			cap:      enterprise.CapDictation,
+			minLevel: enterprise.LevelEnterprise,
+			setup:    setupDictationRoute,
 		},
 		{
 			name:     "admin rebuild vector index",

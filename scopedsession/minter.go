@@ -26,7 +26,7 @@ type Minter interface {
 
 // SessionAPI is the plugin API surface PluginAPIMinter needs.
 type SessionAPI interface {
-	CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, *model.AppError)
+	CreateScopedSession(req *model.CreateScopedSessionRequest) (*model.Session, *model.AppError)
 	RevokeSession(sessionID string) *model.AppError
 }
 
@@ -42,7 +42,11 @@ func NewPluginAPIMinter(api SessionAPI) *PluginAPIMinter {
 }
 
 func (m *PluginAPIMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
-	session, appErr := m.api.CreateScopedSession(userID, scope, expiresAt)
+	session, appErr := m.api.CreateScopedSession(&model.CreateScopedSessionRequest{
+		UserID:    userID,
+		Scope:     scope,
+		ExpiresAt: expiresAt,
+	})
 	if appErr != nil {
 		return nil, fmt.Errorf("server refused to create scoped session: %w", appErr)
 	}
@@ -64,14 +68,14 @@ func (m *PluginAPIMinter) RevokeSession(sessionID string) error {
 var ErrServerUnsupported = errors.New("this Mattermost server cannot create scoped sessions")
 
 // Probe reports whether api's server can create scoped sessions, without
-// creating one. It asks for a session with no scope, which a server that has
-// CreateScopedSession refuses as a bad request before reading anything. A
-// server without the method answers with neither a session nor an error,
-// because the plugin RPC client only logs a call to a missing method. Probe
-// returns nil only for that bad request: ErrServerUnsupported for a missing
-// method, and any other error when the answer was neither.
+// creating one. It passes a nil request, which a server that has
+// CreateScopedSession refuses as a bad request before auditing or reading
+// anything. A server without the method answers with neither a session nor an
+// error, because the plugin RPC client only logs a call to a missing method.
+// Probe returns nil only for that bad request: ErrServerUnsupported for a
+// missing method, and any other error when the answer was neither.
 func Probe(api SessionAPI) error {
-	session, appErr := api.CreateScopedSession("", nil, 0)
+	session, appErr := api.CreateScopedSession(nil)
 	switch {
 	case session != nil:
 		err := errors.New("server created a scoped session without a scope")
