@@ -24,6 +24,7 @@ jest.mock('@/client', () => ({
 // The chat pane has its own tests; here only what the view hands it.
 interface ChatPageProps {
     botId: string;
+    dmChannelId?: string;
     rootId?: string;
     toChat: (botId: string, rootId?: string) => void;
     toAll: () => void;
@@ -129,7 +130,7 @@ describe('AgentDMChannelView', () => {
         renderView();
 
         expect(screen.getByTestId('chat-page').textContent).toBe('new chat');
-        expect(lastChatPage()).toMatchObject({botId: 'agent1'});
+        expect(lastChatPage()).toMatchObject({botId: 'agent1', dmChannelId: 'dm1'});
     });
 
     test.each([

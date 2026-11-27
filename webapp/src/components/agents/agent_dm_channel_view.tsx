@@ -185,6 +185,7 @@ const AgentDMChannelViewForChannel = ({channel, focusedPostId}: AgentDMChannelVi
                 ) : (
                     <AgentChatPage
                         botId={botId}
+                        dmChannelId={channelId}
                         rootId={rootId}
                         toChat={toChat}
                         toAll={toAll}
