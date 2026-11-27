@@ -1,11 +1,12 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useId, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
@@ -18,7 +19,7 @@ import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import {LicenseChip} from './enterprise_chip';
 import {BooleanItem, TextItem, ItemLabel} from './item';
-import {HeaderMapEditor} from './mcp_header_map_editor';
+import {HeaderMapEditor, KeyValueRow, KeyValueRowsEditor, newKeyValueRow} from './mcp_header_map_editor';
 import MCPServerDescription from './mcp_server_description';
 import MCPServerToolRow from './mcp_server_tool_row';
 import {reviewToolConfigs} from './mcp_tool_review';
@@ -63,8 +64,7 @@ export const originChanged = (before: string, after: string): boolean => {
     return a !== b;
 };
 
-// A ReauthReason is an edit after which users' existing sign-ins to the server
-// stop working:
+// A ReauthReason is an edit that users have to sign in to the server again for:
 //   - name: OAuth grants are stored under the server's name; saving a rename
 //     removes them.
 //   - url: saving a move to another origin removes the server's grants, which
@@ -73,6 +73,16 @@ export const originChanged = (before: string, after: string): boolean => {
 //     grant from another client cannot be renewed once its token expires.
 // The client secret, headers, and service account headers only reconnect.
 export type ReauthReason = 'name' | 'url' | 'clientID';
+
+const authorizationParamRows = (params?: Record<string, string>) => (
+    Object.entries(params ?? {}).map(([name, value]) => newKeyValueRow(name, value))
+);
+
+// cleanAuthorizationParams trims rows and drops blank ones. A value without a
+// name is kept so that validation asks for the name instead of losing it.
+const cleanAuthorizationParams = (rows: KeyValueRow[]) => rows.
+    map(({name, value}) => ({name: name.trim(), value: value.trim()})).
+    filter(({name, value}) => name || value);
 
 // after is the server exactly as it will be saved. Values are compared as the
 // server compares them, untrimmed: a stored name with stray spaces that the
@@ -115,6 +125,7 @@ const emptyServer: MCPServerConfig = {
     description: '',
     clientID: '',
     clientSecret: '',
+    authorizationParams: {},
 };
 
 const errorMessage = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
@@ -123,10 +134,12 @@ const initialStep = (mode: MCPServerWizardMode): Step => (mode.kind === 'add' ? 
 
 const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
     const intl = useIntl();
+    const authorizationParamsErrorId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
     const [step, setStep] = useState<Step>(initialStep(mode));
     const [details, setDetails] = useState<MCPServerConfig>(mode.kind === 'add' ? emptyServer : mode.server);
+    const [authorizationParams, setAuthorizationParams] = useState<KeyValueRow[]>(() => authorizationParamRows(mode.kind === 'add' ? {} : mode.server.authorizationParams));
     const [savedServer, setSavedServer] = useState<MCPServerConfig | null>(mode.kind === 'add' ? null : mode.server);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [connection, setConnection] = useState<Connection>({status: 'connecting'});
@@ -202,6 +215,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 }
                 setSavedServer(stored);
                 setDetails(stored);
+                setAuthorizationParams(authorizationParamRows(stored.authorizationParams));
                 setStep('details');
             }).catch(() => {
                 if (!cancelled) {
@@ -243,7 +257,27 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
         return '';
     })();
     const urlError = (/^https?:\/\/\S+$/i).test(trimmedURL) ? '' : intl.formatMessage({defaultMessage: 'Enter the server URL, starting with https:// or http://.'});
-    const detailsValid = !nameError && !urlError;
+    const authorizationParamsError = (() => {
+        const params = cleanAuthorizationParams(authorizationParams);
+        const names = params.map(({name}) => name);
+        if (names.includes('')) {
+            return intl.formatMessage({defaultMessage: 'Enter a name for every authorization parameter.'});
+        }
+        const seen = new Set<string>();
+        for (const name of names) {
+            const lower = name.toLowerCase();
+            if (seen.has(lower)) {
+                return intl.formatMessage({defaultMessage: '{name} is set more than once.'}, {name});
+            }
+            seen.add(lower);
+        }
+        const withoutValue = params.find(({value}) => !value);
+        if (withoutValue) {
+            return intl.formatMessage({defaultMessage: 'Enter a value for {name}.'}, {name: withoutValue.name});
+        }
+        return '';
+    })();
+    const detailsValid = !nameError && !urlError && !authorizationParamsError;
 
     // editedServer is the server as the details step has it, without its tool
     // policies, which a settings save keeps as saved. A server moved to
@@ -255,6 +289,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             name: trimmedName,
             baseURL: trimmedURL,
             clientID: (details.clientID ?? '').trim(),
+            authorizationParams: Object.fromEntries(cleanAuthorizationParams(authorizationParams).map(({name, value}) => [name, value])),
         };
         if (savedServer && originChanged(savedServer.baseURL, trimmedURL)) {
             return {...settings, tool_configs: []};
@@ -270,6 +305,7 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
             const saved = await onPersist(server, mode.kind === 'add' ? 'server' : 'settings');
             setSavedServer(saved);
             setDetails(saved);
+            setAuthorizationParams(authorizationParamRows(saved.authorizationParams));
             return saved;
         } catch (err) {
             setSaveError(errorMessage(err, intl.formatMessage({defaultMessage: 'Failed to save the server.'})));
@@ -477,6 +513,32 @@ const MCPServerWizard = ({mode, existingNames, onPersist, onClose}: Props) => {
                 type='password'
                 onChange={(e) => setDetails({...details, clientSecret: e.target.value})}
             />
+            <FieldGroup>
+                <ItemLabel as='div'>
+                    <FormattedMessage defaultMessage='OAuth authorization parameters'/>
+                </ItemLabel>
+                <FieldHelp>
+                    <FormattedMessage defaultMessage='Optional. Extra parameters added to the OAuth authorization URL, such as access_type=offline. They apply the next time a user signs in, so users who are already connected must disconnect and sign in again to get them. Do not put secrets here.'/>
+                </FieldHelp>
+                <KeyValueRowsEditor
+                    rows={authorizationParams}
+                    onChange={setAuthorizationParams}
+                    nameLabel={intl.formatMessage({defaultMessage: 'Parameter name'})}
+                    valueLabel={intl.formatMessage({defaultMessage: 'Parameter value'})}
+                    namePlaceholder={intl.formatMessage({defaultMessage: 'Parameter name (e.g. access_type)'})}
+                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Parameter value (e.g. offline)'})}
+                    addLabel={<FormattedMessage defaultMessage='Add Parameter'/>}
+                    removeLabel={intl.formatMessage({defaultMessage: 'Remove parameter'})}
+                    disabled={saving}
+                    {...(showErrors && authorizationParamsError ? {ariaDescribedBy: authorizationParamsErrorId} : {})}
+                />
+                {showErrors && authorizationParamsError && (
+                    <ErrorMessage
+                        id={authorizationParamsErrorId}
+                        message={authorizationParamsError}
+                    />
+                )}
+            </FieldGroup>
             {mode.kind === 'edit' && savedServer?.id && (
                 <ConsolePolicySection
                     resourceType='mcp'

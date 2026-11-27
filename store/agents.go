@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -179,6 +180,13 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		}
 	}()
 
+	// Share-lock against exclusive config-save transactions (UpdateConfig) so
+	// concurrent agent writes never block each other, while a config save that
+	// remaps MCP server origins never misses a newly created agent.
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock_shared($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return fmt.Errorf("failed to lock agent create transaction: %w", err)
+	}
+
 	_, err = tx.Exec(
 		`INSERT INTO Agents_UserAgents (
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
@@ -336,6 +344,13 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		}
 	}()
 
+	// Share-lock before acquiring the agent row lock (same lock order as
+	// UpdateConfig) so concurrent agent updates run in parallel while a
+	// config save remapping MCP server origins cannot miss an edit.
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock_shared($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return fmt.Errorf("failed to lock agent update transaction: %w", err)
+	}
+
 	current, err := lockActiveAgentTx(tx, cfg.ID)
 	if err != nil {
 		return err
@@ -474,4 +489,103 @@ func (s *Store) DeleteAgent(id string) (err error) {
 		return fmt.Errorf("failed to commit agent delete: %w", err)
 	}
 	return nil
+}
+
+// RemapAgentMCPServerOrigins rewrites EnabledMCPTools entries on active agents
+// whose normalized ServerOrigin appears in remaps (old normalized origin ->
+// new origin) inside one transaction. Returns the IDs of agents that were
+// updated.
+func (s *Store) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, error) {
+	if len(remaps) == 0 {
+		return nil, nil
+	}
+
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin agent MCP origin remap transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return nil, fmt.Errorf("failed to lock agent MCP origin remap transaction: %w", err)
+	}
+
+	updatedIDs, err := s.remapAgentMCPServerOriginsInTx(tx, remaps, s.agentVersionsToKeep.Load())
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit agent MCP origin remap: %w", err)
+	}
+	return updatedIDs, nil
+}
+
+// remapAgentMCPServerOriginsInTx locks and updates every active agent matching
+// remaps inside the caller's transaction (ascending ID order with FOR UPDATE
+// under the exclusive config save advisory lock), pruning history against
+// versionsToKeep. Any error fails the caller's transaction so config and agent
+// state never diverge.
+func (s *Store) remapAgentMCPServerOriginsInTx(tx *sqlx.Tx, remaps map[string]string, versionsToKeep int64) ([]string, error) {
+	if len(remaps) == 0 {
+		return nil, nil
+	}
+
+	var rows []agentRow
+	if err := tx.Select(&rows,
+		`SELECT `+agentSelectColumns+`
+		FROM Agents_UserAgents
+		WHERE DeleteAt = 0
+		ORDER BY ID ASC
+		FOR UPDATE`,
+	); err != nil {
+		return nil, fmt.Errorf("failed to list agents for MCP origin remap: %w", err)
+	}
+
+	var updatedIDs []string
+	for i := range rows {
+		current, parseErr := rows[i].toBotConfig()
+		if parseErr != nil {
+			return nil, parseErr
+		}
+
+		remapped, changed := llm.RemapEnabledMCPTools(current.EnabledMCPTools, remaps)
+		if !changed {
+			continue
+		}
+
+		latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)
+		if err != nil {
+			return nil, err
+		}
+
+		now := model.GetMillis()
+		if now <= current.UpdateAt {
+			now = current.UpdateAt + 1
+		}
+		current.EnabledMCPTools = remapped
+		current.UpdateAt = now
+
+		if _, err = tx.Exec(
+			`UPDATE Agents_UserAgents SET EnabledTools = $1, UpdateAt = $2 WHERE ID = $3 AND DeleteAt = 0`,
+			marshalJSONSlice(current.EnabledMCPTools),
+			current.UpdateAt,
+			current.ID,
+		); err != nil {
+			return nil, fmt.Errorf("failed to remap MCP server origins on agent %q: %w", current.ID, err)
+		}
+
+		snapshot := agentVersionSnapshot(current)
+		if _, err = insertAgentVersionTx(tx, current.ID, latest+1, snapshot, SystemAgentVersionMeta(), changedVersionFields(latestConfig, snapshot), now); err != nil {
+			return nil, err
+		}
+		if err = pruneAgentVersionsWithLimitTx(tx, current.ID, latest+1, versionsToKeep); err != nil {
+			return nil, err
+		}
+		updatedIDs = append(updatedIDs, current.ID)
+	}
+	return updatedIDs, nil
 }

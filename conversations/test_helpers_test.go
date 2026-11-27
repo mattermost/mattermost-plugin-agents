@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -41,13 +42,18 @@ type fakeMMClient struct {
 	users       map[string]*model.User
 	postThreads map[string]*model.PostList
 	// kvMu guards kv: run reservations are released from stream goroutines.
-	kvMu                 sync.Mutex
-	kv                   map[string]any
-	createdPosts         []*model.Post
-	allowCreatePost      bool
-	updatedPosts         []*model.Post
-	kvDeletes            []string
-	posts                map[string]*model.Post
+	kvMu            sync.Mutex
+	kv              map[string]any
+	createdPosts    []*model.Post
+	allowCreatePost bool
+	updatedPosts    []*model.Post
+	kvDeletes       []string
+	posts           map[string]*model.Post
+	// gonePosts are never found by GetPost, even if present in postThreads or
+	// with liveRoots enabled.
+	gonePosts map[string]bool
+	// liveRoots makes GetPost return a live post for IDs not in posts/gonePosts.
+	liveRoots            bool
 	channels             map[string]*model.Channel
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
@@ -66,6 +72,10 @@ type fakeMMClient struct {
 	directChannelRequests int
 	// postErrors are returned by GetPost for their post IDs.
 	postErrors map[string]error
+	// postThreadErrors are returned by GetPostThread for their post IDs.
+	postThreadErrors map[string]error
+	// onKVReserve runs when KVCompareAndSetWithExpiry claims a new key (oldValue == nil).
+	onKVReserve func(key string)
 	// unreadableChannels are channels HasPermissionToChannel denies.
 	unreadableChannels map[string]bool
 
@@ -85,6 +95,9 @@ func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
 }
 
 func (c *fakeMMClient) GetPostThread(postID string) (*model.PostList, error) {
+	if err := c.postThreadErrors[postID]; err != nil {
+		return nil, err
+	}
 	postList, ok := c.postThreads[postID]
 	if !ok {
 		return nil, errors.New("thread not found")
@@ -182,7 +195,11 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool
 }
 
 func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
-	return c.KVCompareAndSet(key, oldValue, newValue)
+	ok, err := c.KVCompareAndSet(key, oldValue, newValue)
+	if ok && err == nil && oldValue == nil && c.onKVReserve != nil {
+		c.onKVReserve(key)
+	}
+	return ok, err
 }
 
 func (c *fakeMMClient) KVList(page, perPage int) ([]string, error) {
@@ -217,10 +234,16 @@ func (c *fakeMMClient) GetPost(postID string) (*model.Post, error) {
 	if err := c.postErrors[postID]; err != nil {
 		return nil, err
 	}
+	if c.gonePosts[postID] {
+		return nil, pluginapi.ErrNotFound
+	}
 	if c.posts != nil {
 		if post, ok := c.posts[postID]; ok {
 			return post, nil
 		}
+	}
+	if c.liveRoots {
+		return &model.Post{Id: postID}, nil
 	}
 	return nil, pluginapi.ErrNotFound
 }
@@ -486,4 +509,12 @@ func overrideMockLicense(mockAPI *plugintest.API, license *model.License) {
 	}
 	mockAPI.ExpectedCalls = filtered
 	mockAPI.On("GetLicense").Return(license).Maybe()
+}
+
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
 }

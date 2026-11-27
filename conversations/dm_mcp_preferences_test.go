@@ -137,6 +137,7 @@ func TestGroupDMMentionPostedDisabledMCPServerNotReachableByDynamicMetaTools(t *
 		ChannelId: env.channelID,
 		Message:   "@ai use a tool",
 	}
+	env.mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.mmClient.postThreads = map[string]*model.PostList{
 		post.Id: {
 			Order: []string{post.Id},
