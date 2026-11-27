@@ -141,6 +141,6 @@ func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, 
 		contextBuilder:   newSingleBuildLLMContextBuilder(t, provider),
 		bots:             botsService,
 		licenseChecker:   licenseChecker,
-		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 	}
 }

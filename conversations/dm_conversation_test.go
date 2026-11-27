@@ -656,7 +656,6 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		},
 		kv:              make(map[string]any),
 		allowCreatePost: true,
-		liveRoots:       true,
 	}
 
 	i18nBundle := i18n.Init()
@@ -823,6 +822,7 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 
 	// Pre-create a conversation
 	rootPostID := "root1"
+	env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 	channelID := env.channelID
 	createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
 		UserID:       env.userID,
@@ -913,8 +913,6 @@ func TestDMReplyInArchivedThread(t *testing.T) {
 			rootPostID := "root1"
 			if root := tt.rootPost(rootPostID); root != nil {
 				env.mmClient.posts = map[string]*model.Post{rootPostID: root}
-			} else {
-				env.mmClient.gonePosts = map[string]bool{rootPostID: true}
 			}
 			channelID := env.channelID
 			createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
@@ -1290,6 +1288,7 @@ func TestDMConversationIDProp_ReturnedForResponsePost(t *testing.T) {
 					UserMessage:  "first",
 				})
 				require.NoError(t, err)
+				env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 				return rootPostID
 			},
 		},
@@ -1370,6 +1369,7 @@ func TestDMTitleGeneration_IsNewFlagForCaller(t *testing.T) {
 					UserMessage:  "first",
 				})
 				require.NoError(t, err)
+				env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 				return &model.Post{
 					Id:        "post2",
 					UserId:    env.userID,
@@ -1477,6 +1477,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 
 	// Pre-create conversation with known content
 	rootPostID := "root1"
+	env.mmClient.posts = map[string]*model.Post{rootPostID: {Id: rootPostID}}
 	channelID := env.channelID
 	createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
 		UserID:       env.userID,

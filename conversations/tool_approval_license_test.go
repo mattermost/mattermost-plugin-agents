@@ -110,7 +110,7 @@ func toolLicenseConversationsAt(t *testing.T, convStore *loadedStateFlowStore, l
 		contextBuilder:   toolLicenseTestBuilderAt(t, level),
 		bots:             botsService,
 		licenseChecker:   licenseChecker,
-		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}, lm, streamingService
 }

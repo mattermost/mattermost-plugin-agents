@@ -120,6 +120,14 @@ func setupTest(t *testing.T) testSetup {
 	return testSetup{convService: svc, store: s, prompts: p}
 }
 
+type livePostClient struct {
+	mmapi.Client
+}
+
+func (livePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
+}
+
 // setupMockThread sets up a mock client that returns thread data for a given post ID.
 func setupMockThread(t *testing.T, postID string, threadPosts []*model.Post, users map[string]*model.User) *mmapimocks.MockClient {
 	t.Helper()
@@ -519,12 +527,4 @@ func getConvOperation(t *testing.T, s *store.Store, convID string) string {
 	conv, err := s.GetConversation(convID)
 	require.NoError(t, err)
 	return conv.Operation
-}
-
-type livePostClient struct {
-	mmapi.Client
-}
-
-func (livePostClient) GetPost(postID string) (*model.Post, error) {
-	return &model.Post{Id: postID}, nil
 }

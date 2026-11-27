@@ -698,7 +698,7 @@ func TestHandleRegenerateRequiresConversation(t *testing.T) {
 
 	c := &Conversations{
 		bots:        botsService,
-		convService: conversation.NewService(newLoadedStateFlowStore(), nil, livePostClient{}, nil),
+		convService: conversation.NewService(newLoadedStateFlowStore(), nil, nil, nil),
 	}
 
 	// Posts created before meeting flows were migrated carry no
@@ -863,4 +863,12 @@ func TestRegenerateChannelSummaryWaitsForRunningTool(t *testing.T) {
 	_, reserved = held[reservationKey]
 	kvMu.Unlock()
 	require.False(t, reserved)
+}
+
+type internalLivePostClient struct {
+	mmapi.Client
+}
+
+func (internalLivePostClient) GetPost(postID string) (*model.Post, error) {
+	return &model.Post{Id: postID}, nil
 }

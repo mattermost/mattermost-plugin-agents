@@ -256,10 +256,6 @@ func (c *Conversations) processDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
-	// A moderator may delete the thread after the turn was accepted.
-	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
-		return nil, err
-	}
 	completionReq, err := c.convService.BuildCompletionRequest(
 		conv,
 		llmCtx,
@@ -267,11 +263,6 @@ func (c *Conversations) processDMRequest(
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
-	}
-	// Assembling the request reads turns and files; recheck so a thread
-	// deleted meanwhile never reaches the provider.
-	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
-		return nil, err
 	}
 
 	if beforeProvider != nil {

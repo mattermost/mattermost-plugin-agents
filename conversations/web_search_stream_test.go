@@ -137,7 +137,7 @@ func TestStreamToolFollowUpDecoratesWebSearchAnnotations(t *testing.T) {
 	c := &Conversations{
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             passthroughBotsService(bot),
-		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 
@@ -177,7 +177,7 @@ func TestStreamToolFollowUpSkipsAnnotationDecorationWithoutApprovalContext(t *te
 		contextBuilder:   loadedStateBuilder(t),
 		bots:             passthroughBotsService(bot),
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
-		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 

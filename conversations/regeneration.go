@@ -434,19 +434,11 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
 	// but documents intent.
-	// Checked before the build, which deletes the saved response turns, so a
-	// failed lookup leaves them intact.
-	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
-		return nil, nil, err
-	}
 	completionReq, err := c.convService.BuildRegenerateRequest(conv, llmContext, post.Id, conversation.BuildOptions{
 		AllowUnsharedToolContent: policy.isDM,
 		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if err != nil {
-		return nil, nil, err
-	}
-	if err = conversation.CheckRootPost(c.mmClient, conv); err != nil {
 		return nil, nil, err
 	}
 

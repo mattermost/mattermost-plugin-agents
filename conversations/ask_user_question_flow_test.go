@@ -150,7 +150,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 				contextBuilder:    loadedStateBuilder(t),
 				bots:              botsService,
 				licenseChecker:    enterprisetest.CheckerAt(enterprise.LevelProfessional),
-				convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,
 			}
 
@@ -277,7 +277,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 		contextBuilder:    loadedStateBuilder(t),
 		bots:              botsService,
 		licenseChecker:    enterprisetest.CheckerAt(enterprise.LevelProfessional),
-		convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService:       conversation.NewService(convStore, nil, nil, nil),
 		streamingService:  &loadedStateStreamingService{},
 	}
 
@@ -384,7 +384,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 				mmClient:          mmClient,
 				contextBuilder:    loadedStateBuilder(t),
 				bots:              passthroughBotsService(bot),
-				convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,
 			}
 
@@ -447,7 +447,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 			contextBuilder:    loadedStateBuilder(t),
 			bots:              passthroughBotsService(bot),
 			licenseChecker:    enterprisetest.CheckerAt(enterprise.LevelProfessional),
-			convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+			convService:       conversation.NewService(convStore, nil, nil, nil),
 			streamingService:  streamingService,
 			configProvider:    &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 			toolPolicyChecker: mapPolicyChecker{},
@@ -651,7 +651,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				mmClient:          mmClient,
 				contextBuilder:    contextBuilder,
 				bots:              botsService,
-				convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,
 				licenseChecker:    licenseChecker,
 				configProvider:    &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},

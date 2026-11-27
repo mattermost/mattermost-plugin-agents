@@ -56,7 +56,7 @@ func newClaimTestConversations(t *testing.T, convStore *loadedStateFlowStore, lm
 		contextBuilder:   newChannelFollowUpTestBuilder(t, []llm.Tool{tool}, &channelFollowUpTestConfig{}),
 		bots:             botsService,
 		licenseChecker:   enterprisetest.CheckerAt(enterprise.LevelProfessional),
-		convService:      conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: streamingService,
 	}
 }
@@ -215,7 +215,7 @@ func TestHandleToolResultRetriesAfterPartialWriteFailure(t *testing.T) {
 	lm := &loadedStateLLM{}
 	streamingService := &loadedStateStreamingService{}
 	c := newClaimTestConversations(t, convStore, lm, streamingService, nil)
-	c.convService = conversation.NewService(&failingCASStore{loadedStateFlowStore: convStore, failAt: 2}, nil, livePostClient{}, nil)
+	c.convService = conversation.NewService(&failingCASStore{loadedStateFlowStore: convStore, failAt: 2}, nil, nil, nil)
 
 	require.Error(t, c.HandleToolResult(context.Background(), testRequesterID, post, channel, []string{"tool-use-1"}))
 	require.NoError(t, c.HandleToolResult(context.Background(), testRequesterID, post, channel, []string{"tool-use-1"}))

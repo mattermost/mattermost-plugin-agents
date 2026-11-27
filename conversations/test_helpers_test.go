@@ -49,18 +49,17 @@ type fakeMMClient struct {
 	updatedPosts    []*model.Post
 	kvDeletes       []string
 	posts           map[string]*model.Post
-	// liveRoots makes GetPost return a live post for ids it does not know, so
-	// conversations rooted at posts the test never registered keep running.
-	liveRoots bool
-	// gonePosts are never found, even with liveRoots.
-	gonePosts            map[string]bool
+	// gonePosts are never found by GetPost, even if present in postThreads or
+	// with liveRoots enabled.
+	gonePosts map[string]bool
+	// liveRoots makes GetPost return a live post for IDs not in posts/gonePosts.
+	liveRoots            bool
 	channels             map[string]*model.Channel
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
 	fileInfos            map[string]*model.FileInfo
 	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
-	onGetPost            func(string)
 	// wsMu guards websocketEvents: title generation publishes from a
 	// background goroutine.
 	wsMu            sync.Mutex
@@ -73,6 +72,10 @@ type fakeMMClient struct {
 	directChannelRequests int
 	// postErrors are returned by GetPost for their post IDs.
 	postErrors map[string]error
+	// postThreadErrors are returned by GetPostThread for their post IDs.
+	postThreadErrors map[string]error
+	// onKVReserve runs when KVCompareAndSetWithExpiry claims a new key (oldValue == nil).
+	onKVReserve func(key string)
 	// unreadableChannels are channels HasPermissionToChannel denies.
 	unreadableChannels map[string]bool
 
@@ -92,6 +95,9 @@ func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
 }
 
 func (c *fakeMMClient) GetPostThread(postID string) (*model.PostList, error) {
+	if err := c.postThreadErrors[postID]; err != nil {
+		return nil, err
+	}
 	postList, ok := c.postThreads[postID]
 	if !ok {
 		return nil, errors.New("thread not found")
@@ -189,7 +195,11 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool
 }
 
 func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
-	return c.KVCompareAndSet(key, oldValue, newValue)
+	ok, err := c.KVCompareAndSet(key, oldValue, newValue)
+	if ok && err == nil && oldValue == nil && c.onKVReserve != nil {
+		c.onKVReserve(key)
+	}
+	return ok, err
 }
 
 func (c *fakeMMClient) KVDelete(key string) error {
@@ -205,18 +215,18 @@ func (c *fakeMMClient) AddReaction(*model.Reaction) error {
 }
 
 func (c *fakeMMClient) GetPost(postID string) (*model.Post, error) {
-	if c.onGetPost != nil {
-		c.onGetPost(postID)
-	}
 	if err := c.postErrors[postID]; err != nil {
 		return nil, err
+	}
+	if c.gonePosts[postID] {
+		return nil, pluginapi.ErrNotFound
 	}
 	if c.posts != nil {
 		if post, ok := c.posts[postID]; ok {
 			return post, nil
 		}
 	}
-	if c.liveRoots && !c.gonePosts[postID] {
+	if c.liveRoots {
 		return &model.Post{Id: postID}, nil
 	}
 	return nil, pluginapi.ErrNotFound
@@ -485,8 +495,6 @@ func overrideMockLicense(mockAPI *plugintest.API, license *model.License) {
 	mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
-// livePostClient backs a conversation service whose conversations' root posts
-// all still exist.
 type livePostClient struct {
 	mmapi.Client
 }

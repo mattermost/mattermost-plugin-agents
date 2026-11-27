@@ -427,7 +427,7 @@ func TestChannelFollowUpStrictRegistry(t *testing.T) {
 				}, config),
 				bots:              passthroughBotsService(bot),
 				licenseChecker:    enterprisetest.CheckerAt(enterprise.LevelEnterprise),
-				convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+				convService:       conversation.NewService(convStore, nil, nil, nil),
 				configProvider:    config,
 				toolPolicyChecker: channelPolicyChecker,
 			}

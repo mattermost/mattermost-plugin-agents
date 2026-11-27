@@ -132,7 +132,7 @@ func TestHandleToolCallAuditRecordsDecision(t *testing.T) {
 				contextBuilder:    loadedStateBuilder(t),
 				bots:              botsService,
 				licenseChecker:    enterprisetest.CheckerAt(enterprise.LevelEnterprise),
-				convService:       conversation.NewService(convStore, nil, livePostClient{}, nil),
+				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,
 				configProvider:    &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
 				toolPolicyChecker: tc.policyChecker,
@@ -204,7 +204,7 @@ func TestHandleToolResultAuditRecordsDecision(t *testing.T) {
 	c := &Conversations{
 		mmClient:    mmClient,
 		bots:        botsService,
-		convService: conversation.NewService(convStore, nil, livePostClient{}, nil),
+		convService: conversation.NewService(convStore, nil, nil, nil),
 	}
 
 	clickedPost := &model.Post{Id: clickedPostID, UserId: "bot-id"}
