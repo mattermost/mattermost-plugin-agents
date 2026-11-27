@@ -6,6 +6,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func newProxyHTTPClient(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) *http.Client {
@@ -30,6 +32,52 @@ func newProxyHTTPClient(ctx context.Context, cfg mcppkg.PluginServerConfig, sour
 func connectProxySession(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) (*gosdkmcp.ClientSession, error) {
 	return mcppkg.ConnectPluginServer(ctx, "mattermost-agents-plugin-aggregator", cfg.Path,
 		newProxyHTTPClient(ctx, cfg, sourcePluginAPI, callerUserID))
+}
+
+// detachFromInboundMCPRequest returns a context for calling the source plugin
+// that keeps ctx's cancellation, deadline and trace span but none of its other
+// values. The external server's go-sdk handler stores the caller's
+// Mcp-Protocol-Version in the request context under an unexported key, and the
+// go-sdk client sends that version instead of the one it negotiates with the
+// source plugin. A source plugin on an older SDK rejects a version it does not
+// know with a 400.
+func detachFromInboundMCPRequest(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := trace.ContextWithSpan(context.Background(), trace.SpanFromContext(ctx))
+	var cancel context.CancelFunc
+	if deadline, ok := ctx.Deadline(); ok {
+		detached, cancel = context.WithDeadline(detached, deadline)
+	} else {
+		detached, cancel = context.WithCancel(detached)
+	}
+	stop := context.AfterFunc(ctx, cancel)
+	return detached, func() {
+		stop()
+		cancel()
+	}
+}
+
+// callerSessionMetaKeys are the per-request _meta keys that describe the
+// caller's session with the external server (SEP-2575). The proxy's own client
+// session fills them for the version it negotiated with the source plugin, and
+// a forwarded protocolVersion would take precedence over it.
+var callerSessionMetaKeys = []string{
+	gosdkmcp.MetaKeyProtocolVersion,
+	gosdkmcp.MetaKeyClientInfo,
+	gosdkmcp.MetaKeyClientCapabilities,
+}
+
+func withoutCallerSessionMeta(meta gosdkmcp.Meta) gosdkmcp.Meta {
+	if len(meta) == 0 {
+		return nil
+	}
+	forwarded := maps.Clone(meta)
+	for _, key := range callerSessionMetaKeys {
+		delete(forwarded, key)
+	}
+	if len(forwarded) == 0 {
+		return nil
+	}
+	return forwarded
 }
 
 // BuildProxyTools proxies a source plugin's MCP tools into the external server.
@@ -72,16 +120,19 @@ func BuildProxyTools(
 				return nil, fmt.Errorf("proxy tool %s: authenticated user ID not found in context", toolName)
 			}
 
-			session, err := connectProxySession(hctx, cfg, sourcePluginAPI, callerUserID)
+			ctx, cancel := detachFromInboundMCPRequest(hctx)
+			defer cancel()
+
+			session, err := connectProxySession(ctx, cfg, sourcePluginAPI, callerUserID)
 			if err != nil {
 				return nil, fmt.Errorf("proxy tool %s: connect failed: %w", toolName, err)
 			}
 			defer func() { _ = session.Close() }()
 
-			callResult, callErr := session.CallTool(hctx, &gosdkmcp.CallToolParams{
+			callResult, callErr := session.CallTool(ctx, &gosdkmcp.CallToolParams{
 				Name:      toolName,
 				Arguments: req.Params.Arguments,
-				Meta:      req.Params.Meta,
+				Meta:      withoutCallerSessionMeta(req.Params.Meta),
 			})
 			if callErr != nil {
 				return nil, fmt.Errorf("proxy tool %s: call failed: %w", toolName, callErr)

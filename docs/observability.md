@@ -6,7 +6,7 @@ Monitor Agents with a token usage log, Prometheus metrics, OpenTelemetry traces,
 
 Use it for cost tracking, chargeback, and capacity planning. It needs a Professional license.
 
-1. Go to **System Console > Plugins > Agents > Debug**.
+1. Go to **Agents > Settings > Debug**.
 2. Set **Enable Token Usage Logging** to **True**.
 
 Mattermost writes one JSON object per LLM request to `logs/agents/token_usage.log`, relative to the Mattermost Server's working directory (for example `/opt/mattermost/logs/agents/`). A custom log file location doesn't move it. The file rotates at 100 MB and rotated files are compressed. Providers that don't report cached tokens, reasoning tokens, or cost leave those fields at `0`.
@@ -56,7 +56,7 @@ Traces show request latency, LLM call performance, tool execution, and failures.
 
 ### Turn it on
 
-In **System Console > Plugins > Agents > Debug**, set **Trace Output**:
+In **Agents > Settings > Debug**, set **Trace Output**:
 
 | Value | Config value | Behavior |
 |---|---|---|
@@ -97,6 +97,8 @@ One user message produces one `agent run` trace.
 
 The agent's own reply posts don't start a trace.
 
+A dictation session start has `dictation.create_call` (creating the OpenAI session, with `agents.llm.provider` and `agents.llm.model`) and `dictation.attach_sideband` (the plugin's control connection) under the `POST /dictation/session` request span. Every hangup, whether the user, a policy, the duration cap or shutdown ended the session, has a `dictation.hangup_call` span. Failed OpenAI requests record only the HTTP status and error type and code, never the error message or session content.
+
 ### Span attributes
 
 Cached token, reasoning token, and cost attributes appear only when the provider reports non-zero values.
@@ -133,6 +135,7 @@ Agents sends a server audit record for every state-changing operation except pin
 - Inter-plugin MCP server registration and unregistration, and admin changes to plugin-registered MCP servers (`updateMCPPluginServer`).
 - In-channel tool call and tool result approvals.
 - MCP session grants, when an external client gets a session as a user (`mcpSessionGrant`).
+- Dictation session starts (`createDictationSession`), with the transcription service ID, and sessions ended by their user (`endDictationSession`), with the session and service IDs. The session's transcript and settings are never recorded.
 
 Each record has the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials as HTTP status codes), the `trace_id` for jumping to traces, and the IDs of the affected objects. Records never contain prompts, conversation or channel content, tool arguments or results, configuration values, or free-form error text. A configuration save records only which top-level sections changed. Failure detail stays in the server log, so correlate by time, actor, or `trace_id`.
 

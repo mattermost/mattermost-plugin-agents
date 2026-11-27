@@ -1,8 +1,3 @@
-<!--
-Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
-See LICENSE.txt for license information.
--->
-
 # Mattermost MCP server
 
 Connect Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client to Mattermost over streamable HTTP at `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`. Replace `your-mattermost-server` with your Site URL. The server is built into the Agents plugin, so there's nothing else to install, and each request runs as the Mattermost user who signed in. The client sees and does only what that user can. Posts it creates are marked as AI-generated, and an external client's first use of a session is recorded in the audit log as `mcpSessionGrant`.

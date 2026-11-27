@@ -52,11 +52,6 @@ jest.mock('../access_control/console_policy_section', () => ({
     default: () => null,
 }));
 
-jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-}), {virtual: true});
-
 /* eslint-disable import/first, import/order */
 import {IntlProvider} from 'react-intl';
 
@@ -462,5 +457,170 @@ describe('MCPToolsViewer — tools list owned by the MCP page', () => {
 
         expect(await screen.findByText('1/1 tools enabled')).not.toBeNull();
         expect(screen.queryByText('Failed to load MCP tools')).toBeNull();
+    });
+});
+
+test('lists servers in a duplicate-endpoint conflict, which share a URL, as separate rows', () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => null);
+    try {
+        renderViewer({
+            servers: ['Tracker', 'Wiki'].map((name) => ({
+                name,
+                url: 'https://mcp.example.com',
+                serverType: 'remote',
+                enabled: true,
+                tools: [],
+                needsOAuth: false,
+                error: null,
+            })),
+        });
+
+        expect(screen.getByText('Tracker')).toBeTruthy();
+        expect(screen.getByText('Wiki')).toBeTruthy();
+        expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    } finally {
+        consoleError.mockRestore();
+    }
+});
+
+test('maps each server on a shared URL to its own configuration by name', () => {
+    const shared = 'https://mcp.example.com';
+    const servers = ['Tracker', 'Wiki'].map((name) => ({
+        name,
+        url: shared,
+        serverType: 'remote',
+        enabled: true,
+        tools: [],
+        needsOAuth: false,
+        error: null,
+    }));
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+            {name: 'Wiki', enabled: false, baseURL: shared, headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('true');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggles[1]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {name: 'Tracker', enabled: true, baseURL: shared, headers: {}},
+        {name: 'Wiki', enabled: true, baseURL: shared, headers: {}},
+    ]);
+});
+
+test('maps servers to their configuration by ID when names were swapped by renames', () => {
+    const servers = [
+        {id: 'id-a', name: 'A', url: 'https://a.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+        {id: 'id-x', name: 'X', url: 'https://x.example.com', serverType: 'remote', enabled: true, tools: [], needsOAuth: false, error: null},
+    ];
+
+    // The tools payload still carries the names from before A->B and X->A.
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {id: 'id-a', name: 'B', enabled: false, baseURL: 'https://a.example.com', headers: {}},
+            {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+        ],
+    });
+    const {onConfigChange} = renderViewer({servers}, mcpConfig);
+
+    const toggles = screen.getAllByRole('switch');
+    expect(toggles[0].getAttribute('aria-checked')).toBe('false');
+    expect(toggles[1].getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(toggles[0]);
+
+    const [updated] = onConfigChange.mock.calls[0];
+    expect(updated.servers).toEqual([
+        {id: 'id-a', name: 'B', enabled: true, baseURL: 'https://a.example.com', headers: {}},
+        {id: 'id-x', name: 'A', enabled: true, baseURL: 'https://x.example.com', headers: {}},
+    ]);
+});
+
+describe('MCPToolsViewer — search', () => {
+    const toolsResponse: MCPToolsResponse = {
+        servers: [
+            {
+                id: 'srv-1',
+                name: 'Tracker',
+                url: 'https://tracker.example.com',
+                serverType: 'remote',
+                enabled: true,
+                needsOAuth: false,
+                error: null,
+                tools: [
+                    {name: 'list_issues', description: 'List open tickets', inputSchema: null, readOnlyHint: true},
+                    {name: 'delete_issue', description: 'Remove an issue permanently', inputSchema: null},
+                ],
+            },
+            {
+                id: 'srv-2',
+                name: 'Wiki',
+                url: 'https://wiki.example.com',
+                serverType: 'remote',
+                enabled: true,
+                needsOAuth: false,
+                error: null,
+                tools: [
+                    {name: 'get_page', description: 'Read a wiki page', inputSchema: null, readOnlyHint: true},
+                ],
+            },
+        ],
+    };
+
+    const mcpConfig = makeMCPConfig({
+        servers: [
+            {
+                id: 'srv-1',
+                name: 'Tracker',
+                enabled: true,
+                baseURL: 'https://tracker.example.com',
+                headers: {},
+                tool_configs: [
+                    {name: 'list_issues', policy: 'auto_run_in_dm', enabled: true, retrieval_description_override: 'Find incident escalations'},
+                ],
+            },
+            {
+                id: 'srv-2',
+                name: 'Wiki',
+                enabled: true,
+                baseURL: 'https://wiki.example.com',
+                headers: {},
+            },
+        ],
+    });
+
+    test('filters servers and auto-expands matching tools, including retrieval description overrides', () => {
+        renderViewer(toolsResponse, mcpConfig);
+
+        const search = screen.getByPlaceholderText('Search servers and tools...');
+        fireEvent.change(search, {target: {value: 'escalations'}});
+
+        expect(screen.getByText('Tracker')).not.toBeNull();
+        expect(screen.queryByText('Wiki')).toBeNull();
+
+        // Auto-expanded and narrowed to only the matching tool.
+        expect(screen.getByText('list_issues')).not.toBeNull();
+        expect(screen.queryByText('delete_issue')).toBeNull();
+        expect(screen.getByText('Showing 1 of 2 tools matching your search')).not.toBeNull();
+    });
+
+    test('shows empty state with clear button when search matches nothing', () => {
+        renderViewer(toolsResponse, mcpConfig);
+
+        const search = screen.getByPlaceholderText('Search servers and tools...');
+        fireEvent.change(search, {target: {value: 'nonexistent'}});
+
+        expect(screen.getByText('No matching MCP servers or tools')).not.toBeNull();
+        fireEvent.click(screen.getByText('Clear search'));
+
+        expect(screen.getByText('Tracker')).not.toBeNull();
+        expect(screen.getByText('Wiki')).not.toBeNull();
     });
 });

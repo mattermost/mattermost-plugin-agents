@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useId} from 'react';
+import React, {useId, useLayoutEffect, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
@@ -15,6 +15,8 @@ import {TextArea} from '@mattermost/compass-ui/components/text-area';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {getPortalTarget} from '../../utils/dom';
+
+import {useSettingsReadOnly} from './settings_read_only';
 
 // Portaled menus must stack above the agent config modal overlay (z-index 2000).
 export const PORTALED_MENU_Z_INDEX = 10000;
@@ -76,6 +78,7 @@ export type TextItemProps = {
 
 export const TextItem = (props: TextItemProps) => {
     const id = useId();
+    const settingsReadOnly = useSettingsReadOnly();
     const label = props.readOnly ? (
         <ItemLabelWithTag
             htmlFor={id}
@@ -97,7 +100,7 @@ export const TextItem = (props: TextItemProps) => {
         value: props.value,
         placeholder: props.placeholder ? props.placeholder : props.label,
         maxLength: props.maxLength,
-        disabled: props.disabled,
+        disabled: props.disabled || settingsReadOnly,
         readOnly: props.readOnly,
         invalid: Boolean(props.error),
     };
@@ -162,19 +165,34 @@ type SelectFieldProps = {
     maxWidth?: string;
     ariaLabel?: string;
     placeholder?: string;
+
+    // The id of the element describing the field, such as its error.
+    describedBy?: string;
 };
 
 export const SelectField = (props: SelectFieldProps) => {
+    const settingsReadOnly = useSettingsReadOnly();
+
+    // Select doesn't pass aria-describedby through to its trigger button.
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    useLayoutEffect(() => {
+        if (props.describedBy) {
+            triggerRef.current?.setAttribute('aria-describedby', props.describedBy);
+        } else {
+            triggerRef.current?.removeAttribute('aria-describedby');
+        }
+    }, [props.describedBy]);
     const hasEmptyOption = props.options.some((option) => option.value === '');
     return (
         <SelectFieldWrapper $maxWidth={props.maxWidth}>
             <Select
+                ref={triggerRef}
                 id={props.id}
                 value={hasEmptyOption ? toSelectValue(props.value) : props.value}
                 options={props.options.map((option) => ({...option, value: toSelectValue(option.value)}))}
                 placeholder={props.placeholder}
                 onChange={(value) => props.onChange(fromSelectValue(value))}
-                disabled={props.disabled}
+                disabled={props.disabled || settingsReadOnly}
                 invalid={props.invalid}
                 aria-label={props.ariaLabel}
                 listboxLabel={props.ariaLabel ?? props.placeholder}
@@ -199,6 +217,7 @@ export type SelectionItemProps = {
 
 export const SelectionItem = (props: SelectionItemProps) => {
     const id = useId();
+    const errorId = `${id}-error`;
     return (
         <FormRow>
             <ItemLabel htmlFor={id}>{props.label}</ItemLabel>
@@ -212,10 +231,16 @@ export const SelectionItem = (props: SelectionItemProps) => {
                         disabled={props.disabled}
                         invalid={Boolean(props.error)}
                         placeholder={props.placeholder ?? props.label}
+                        describedBy={props.error ? errorId : ''}
                     />
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
-                {props.error && <ErrorMessage message={props.error}/>}
+                {props.error && (
+                    <ErrorMessage
+                        id={errorId}
+                        message={props.error}
+                    />
+                )}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }
@@ -236,12 +261,15 @@ export type ComboboxItemProps = {
     placeholder?: string
     helptext?: string
     isClearable?: boolean
+    error?: string
     onChange: (value: string) => void
 };
 
 export const ComboboxItem = (props: ComboboxItemProps) => {
     const intl = useIntl();
     const id = useId();
+    const errorId = `${id}-error`;
+    const settingsReadOnly = useSettingsReadOnly();
 
     return (
         <FormRow>
@@ -250,11 +278,14 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                 <FieldControlRow>
                     <Combobox
                         id={id}
+                        invalid={Boolean(props.error)}
+                        {...(props.error ? {'aria-describedby': errorId} : {})}
                         value={props.value || null}
                         options={props.options.map((opt) => ({value: opt.id, label: opt.displayName}))}
                         onChange={(value) => props.onChange(typeof value === 'string' ? value : '')}
                         creatable={true}
                         onCreateOption={props.onChange}
+                        disabled={settingsReadOnly}
                         formatCreateLabel={(inputValue: string) => intl.formatMessage(
                             {defaultMessage: 'Use custom model: {modelName}'},
                             {modelName: inputValue},
@@ -267,6 +298,12 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                         zIndex={PORTALED_MENU_Z_INDEX}
                     />
                 </FieldControlRow>
+                {props.error && (
+                    <ErrorMessage
+                        id={errorId}
+                        message={props.error}
+                    />
+                )}
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
                 }
@@ -365,11 +402,12 @@ export type InlineCheckboxProps = {
 };
 
 export const InlineCheckbox = (props: InlineCheckboxProps) => {
+    const settingsReadOnly = useSettingsReadOnly();
     return (
         <Checkbox
             data-testid={props.testId}
             checked={props.checked}
-            disabled={props.disabled}
+            disabled={props.disabled || settingsReadOnly}
             aria-label={props.inputAriaLabel}
             onChange={(e) => props.onChange(e.target.checked)}
         >
@@ -394,6 +432,8 @@ type BooleanItemProps = {
 export const BooleanItem = (props: BooleanItemProps) => {
     const name = useId();
     const labelId = useId();
+    const settingsReadOnly = useSettingsReadOnly();
+    const disabled = props.disabled || settingsReadOnly;
     return (
         <FormRow>
             <CompactItemLabel id={labelId}>{props.label}</CompactItemLabel>
@@ -407,7 +447,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                             name={name}
                             value='true'
                             checked={props.value}
-                            disabled={props.disabled || props.disableTrue}
+                            disabled={disabled || props.disableTrue}
                             onChange={() => props.onChange(true)}
                         >
                             <FormattedMessage defaultMessage='True'/>
@@ -416,7 +456,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                             name={name}
                             value='false'
                             checked={!props.value}
-                            disabled={props.disabled}
+                            disabled={disabled}
                             onChange={() => props.onChange(false)}
                         >
                             <FormattedMessage defaultMessage='False'/>

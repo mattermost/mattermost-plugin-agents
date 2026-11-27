@@ -64,12 +64,17 @@ func TestRunEvals(t *testing.T) {
 		name         string
 		extraTest    string
 		unixOnly     bool
+		partial      bool
 		wantBroken   bool
 		wantComplete bool
 	}{
 		{
 			name:         "failing evals that all ran are complete",
 			wantComplete: true,
+		},
+		{
+			name:    "a run of some eval packages is never complete",
+			partial: true,
 		},
 		{
 			// Without -v, go test prints no "=== RUN" line, so a test that
@@ -90,6 +95,9 @@ func TestRunEvals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.unixOnly && runtime.GOOS == "windows" {
 				t.Skip("needs Unix signals")
+			}
+			if tc.partial {
+				t.Setenv(partialRunEnv, "1")
 			}
 			dir := writeFixtureModule(t, map[string]string{"p/p_test.go": fixtureEvals + tc.extraTest})
 			t.Chdir(dir)

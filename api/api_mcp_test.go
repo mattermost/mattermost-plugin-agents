@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -893,6 +894,52 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.True(t, response.Servers[0].Authenticated)
 	})
 
+	// Read/write settings delegates set the service account credentials and may
+	// turn service account auth on, so they preview its catalog like admins.
+	previewBySettingsAccess := []struct {
+		name       string
+		access     config.SettingsAccess
+		unsaved    bool
+		wantStatus int
+	}{
+		{name: "read/write settings delegate previews a saved agent", access: config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}, wantStatus: http.StatusOK},
+		{name: "read/write settings delegate previews an unsaved agent", access: config.SettingsAccess{ReadWriteUserIDs: []string{testUserID}}, unsaved: true, wantStatus: http.StatusOK},
+		{name: "agent manager without settings access cannot preview a saved agent", access: config.SettingsAccess{AgentManagerUserIDs: []string{testUserID}}, wantStatus: http.StatusForbidden},
+	}
+	for _, tt := range previewBySettingsAccess {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents["agent-1"] = &llm.BotConfig{
+				ID:                    "agent-1",
+				CreatorID:             testUserID,
+				BotUserID:             testBotUserID,
+				UseServiceAccountAuth: false,
+			}
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.config.settingsAccess = tt.access
+			mcpMock := &mockMCPClientManager{serviceAccountTools: []llm.Tool{saTool}}
+			e.api.mcpClientManager = mcpMock
+			e.config.mcpConfig = mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{n8nServer}}
+
+			query := "catalog=service_account&agent_id=agent-1"
+			owner := testBotUserID
+			if tt.unsaved {
+				query = "catalog=service_account"
+				owner = testUserID
+			}
+			_, status := requestUserMCPTools(t, e.api, query)
+			require.Equal(t, tt.wantStatus, status)
+			if tt.wantStatus != http.StatusOK {
+				require.Empty(t, mcpMock.getServiceAccountCalls)
+				return
+			}
+			require.Equal(t, []string{owner}, mcpMock.getServiceAccountCalls)
+		})
+	}
+
 	t.Run("empty BotUserID returns 500 and does not fetch SA tools", func(t *testing.T) {
 		e := SetupTestEnvironment(t)
 		defer e.Cleanup(t)
@@ -1669,5 +1716,134 @@ func TestUserMCPToolsRoutesFailWhenAccessUnavailable(t *testing.T) {
 				assert.Equal(t, tt.expectedNames, names)
 			})
 		}
+	}
+}
+
+func TestUserMCPToolsIncludesSchemaReadOnlyHintAndAgentConfigDisabledTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+		},
+	}
+
+	tests := []struct {
+		name                string
+		method              string
+		path                string
+		wantIncludeDisabled bool
+		wantStatus          int
+	}{
+		{
+			name:                "GET /mcp/tools omits disabled tools flag",
+			method:              http.MethodGet,
+			path:                "/mcp/tools",
+			wantIncludeDisabled: false,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:                "GET /mcp/tools?purpose=agent_config requests disabled tools",
+			method:              http.MethodGet,
+			path:                "/mcp/tools?purpose=agent_config",
+			wantIncludeDisabled: true,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:                "POST /mcp/tools/refresh omits disabled tools flag by default",
+			method:              http.MethodPost,
+			path:                "/mcp/tools/refresh",
+			wantIncludeDisabled: false,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:                "POST /mcp/tools/refresh?purpose=agent_config requests disabled tools",
+			method:              http.MethodPost,
+			path:                "/mcp/tools/refresh?purpose=agent_config",
+			wantIncludeDisabled: true,
+			wantStatus:          http.StatusOK,
+		},
+		{
+			name:       "POST /mcp/tools/refresh rejects invalid purpose",
+			method:     http.MethodPost,
+			path:       "/mcp/tools/refresh?purpose=invalid",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+
+			serverOrigin := "https://tracker.example.com/mcp"
+			e.config.mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{
+					{
+						Name:    "Tracker",
+						Enabled: true,
+						BaseURL: serverOrigin,
+						ToolConfigs: []mcp.ToolConfig{
+							{Name: "search_issues", Policy: mcp.ToolPolicyAutoRunInDM, Enabled: true},
+							{Name: "delete_issue", Policy: mcp.ToolPolicyAsk, Enabled: false},
+						},
+					},
+				},
+			}
+			mcpMock := &mockMCPClientManager{
+				tools: []llm.Tool{
+					{
+						Name:         "tracker__search_issues",
+						Description:  "Search issues",
+						Schema:       schema,
+						ReadOnlyHint: true,
+						ServerOrigin: serverOrigin,
+					},
+					{
+						Name:         "tracker__delete_issue",
+						Description:  "Delete issue",
+						Schema:       schema,
+						ReadOnlyHint: false,
+						ServerOrigin: serverOrigin,
+					},
+				},
+			}
+			e.api.mcpClientManager = mcpMock
+
+			request := httptest.NewRequest(tt.method, tt.path, nil)
+			request.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(nil, recorder, request)
+
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode, recorder.Body.String())
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+
+			assert.Equal(t, tt.wantIncludeDisabled, mcpMock.lastCatalogRequest.IncludeDisabledTools)
+
+			var response UserMCPToolsResponse
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+			require.Len(t, response.Servers, 1)
+			require.Len(t, response.Servers[0].Tools, 2)
+
+			// Sorted alphabetically: delete_issue, search_issues.
+			deleteTool := response.Servers[0].Tools[0]
+			searchTool := response.Servers[0].Tools[1]
+			assert.Equal(t, "delete_issue", deleteTool.Name)
+			assert.False(t, deleteTool.Enabled)
+			assert.False(t, deleteTool.ReadOnlyHint)
+			assert.Equal(t, schema, deleteTool.InputSchema)
+
+			assert.Equal(t, "search_issues", searchTool.Name)
+			assert.True(t, searchTool.Enabled)
+			assert.True(t, searchTool.ReadOnlyHint)
+			assert.Equal(t, mcp.ToolPolicyAutoRunInDM, searchTool.Policy)
+			assert.Equal(t, schema, searchTool.InputSchema)
+		})
 	}
 }

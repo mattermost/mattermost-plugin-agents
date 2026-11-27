@@ -520,6 +520,69 @@ export const MESSAGE_PROBE_HTML = `<!doctype html>
 </html>
 `;
 
+export const REPORT_EXPORTER_FILE_NAME = 'report-exporter.html';
+
+/** The CSV the report exporter saves, with a non-ASCII name to check it is saved as UTF-8. */
+export const REPORT_EXPORTER_CSV = 'name,points\nZoë,8\nAda,5\n';
+
+/**
+ * An artifact that exports what it shows: a CSV report and a canvas chart
+ * (as a canvas.toDataURL() data: URL) through window.mattermost.download(),
+ * plus a download link of its own, which its sandbox must block. Each
+ * result shows in the page; the chart's data: URL is kept for comparison.
+ */
+export const REPORT_EXPORTER_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Report exporter</title></head>
+<body>
+<h1>Sprint report exporter</h1>
+<canvas id="chart" width="64" height="32"></canvas>
+<p>
+  <button id="csv" type="button">Download CSV</button>
+  <button id="png" type="button">Download chart</button>
+  <button id="native" type="button">Save with a download link</button>
+</p>
+<p data-testid="download-result"></p>
+<p data-testid="native-result"></p>
+<pre data-testid="chart-data" hidden></pre>
+<script>
+  var CSV = ${JSON.stringify(REPORT_EXPORTER_CSV)};
+  var result = document.querySelector('[data-testid="download-result"]');
+  var chart = document.getElementById('chart');
+  var ctx = chart.getContext('2d');
+  ctx.fillStyle = '#1c58d9';
+  ctx.fillRect(0, 8, 20, 24);
+  ctx.fillRect(24, 0, 20, 32);
+
+  function report(promise) {
+    result.textContent = 'pending';
+    promise.then(function (r) {
+      result.textContent = 'saved ' + r.filename;
+    }, function (e) {
+      result.textContent = 'error: ' + e.code;
+    });
+  }
+  document.getElementById('csv').addEventListener('click', function () {
+    report(window.mattermost.download({filename: 'sprint-report.csv', mimeType: 'text/csv', data: CSV}));
+  });
+  document.getElementById('png').addEventListener('click', function () {
+    var url = chart.toDataURL('image/png');
+    document.querySelector('[data-testid="chart-data"]').textContent = url;
+    report(window.mattermost.download({filename: 'velocity chart', mimeType: 'image/png', data: url}));
+  });
+  document.getElementById('native').addEventListener('click', function () {
+    var link = document.createElement('a');
+    link.download = 'native.csv';
+    link.href = URL.createObjectURL(new Blob([CSV], {type: 'text/csv'}));
+    document.body.appendChild(link);
+    link.click();
+    document.querySelector('[data-testid="native-result"]').textContent = 'clicked';
+  });
+</script>
+</body>
+</html>
+`;
+
 export const STANDUP_NOTES_FILE_NAME = 'standup-notes.html';
 
 /**

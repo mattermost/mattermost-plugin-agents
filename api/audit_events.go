@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 35
+// Audit event names for every state-changing operation in the plugin: 38
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -20,7 +20,8 @@ import (
 // logged, so the names stay unprefixed.
 const (
 	// Config.
-	AuditEventSaveConfig = "saveConfig"
+	AuditEventSaveConfig         = "saveConfig"
+	AuditEventSaveSettingsAccess = "saveSettingsAccess"
 
 	// Admin operations.
 	AuditEventReindexPosts          = "reindexPosts"
@@ -84,6 +85,10 @@ const (
 	AuditEventDeleteServicePolicy = "deleteServiceAccessPolicy"
 	AuditEventPutMCPPolicy        = "putMCPAccessPolicy"
 	AuditEventDeleteMCPPolicy     = "deleteMCPAccessPolicy"
+
+	// Dictation: minting a provider session billed to the organization.
+	AuditEventCreateDictationSession = "createDictationSession"
+	AuditEventEndDictationSession    = "endDictationSession"
 )
 
 // handlerFuncName returns the fully-qualified function name of h, which is
@@ -105,7 +110,8 @@ func handlerFuncName(h gin.HandlerFunc) string {
 func buildAuditEventRegistry(a *API) map[string]string {
 	return map[string]string{
 		// Config.
-		handlerFuncName(a.handleSaveConfig): AuditEventSaveConfig,
+		handlerFuncName(a.handleSaveConfig):        AuditEventSaveConfig,
+		handlerFuncName(a.handlePutSettingsAccess): AuditEventSaveSettingsAccess,
 
 		// Admin operations.
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,
@@ -162,5 +168,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleDeleteServicePolicy): AuditEventDeleteServicePolicy,
 		handlerFuncName(a.handlePutMCPPolicy):        AuditEventPutMCPPolicy,
 		handlerFuncName(a.handleDeleteMCPPolicy):     AuditEventDeleteMCPPolicy,
+
+		// Dictation.
+		handlerFuncName(a.handleCreateDictationSession): AuditEventCreateDictationSession,
+		handlerFuncName(a.handleEndDictationSession):    AuditEventEndDictationSession,
 	}
 }

@@ -9,17 +9,14 @@ import { withDeadline } from './deadline';
 export const WEB_SEARCH_MOCK_IMAGE = 'node:20-alpine';
 export const WEB_SEARCH_MOCK_PORT = 8090;
 export const WEB_SEARCH_MOCK_ALIAS = 'websearch';
-export const WEB_SEARCH_MOCK_API_PATH = '/customsearch/v1';
-export const WEB_SEARCH_MOCK_NETWORK_URL = `http://${WEB_SEARCH_MOCK_ALIAS}:${WEB_SEARCH_MOCK_PORT}${WEB_SEARCH_MOCK_API_PATH}`;
+export const WEB_SEARCH_MOCK_NETWORK_URL = `http://${WEB_SEARCH_MOCK_ALIAS}:${WEB_SEARCH_MOCK_PORT}`;
 
-// Points the plugin's built-in Google WebSearch provider at the deterministic mock.
+// Points the plugin's built-in SearXNG WebSearch provider at the deterministic mock.
 export const WEB_SEARCH_PLUGIN_CONFIG = {
     enabled: true,
-    provider: 'google',
-    google: {
-        apiKey: 'mock-key',
-        searchEngineId: 'mock-cx',
-        apiURL: WEB_SEARCH_MOCK_NETWORK_URL,
+    provider: 'searxng',
+    searxng: {
+        baseURL: WEB_SEARCH_MOCK_NETWORK_URL,
         resultLimit: 5,
     },
 };
@@ -56,39 +53,39 @@ const url = require('url');
 
 const RESULTS = ${resultsJson};
 
-function itemsForQuery(query) {
+function resultsForQuery(query) {
   const normalized = String(query || '').toLowerCase();
-  const items = [];
+  const results = [];
   for (const [key, result] of Object.entries(RESULTS)) {
     if (normalized.includes(key)) {
-      items.push({
+      results.push({
         title: result.title,
-        link: result.url,
-        snippet: result.snippet,
+        url: result.url,
+        content: result.snippet,
       });
     }
   }
-  if (items.length === 0) {
-    items.push({
+  if (results.length === 0) {
+    results.push({
       title: RESULTS.typescript.title,
-      link: RESULTS.typescript.url,
-      snippet: RESULTS.typescript.snippet,
+      url: RESULTS.typescript.url,
+      content: RESULTS.typescript.snippet,
     });
   }
-  return items;
+  return results;
 }
 
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
-  if (req.method !== 'GET') {
-    res.writeHead(405);
+  if (req.method !== 'GET' || parsed.pathname !== '/search') {
+    res.writeHead(404);
     res.end();
     return;
   }
 
-  const items = itemsForQuery(parsed.query.q);
+  const results = resultsForQuery(parsed.query.q);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ items }));
+  res.end(JSON.stringify({ results }));
 });
 
 server.listen(${WEB_SEARCH_MOCK_PORT}, '0.0.0.0');

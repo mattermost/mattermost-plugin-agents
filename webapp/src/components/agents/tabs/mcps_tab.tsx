@@ -1,30 +1,31 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
+import {RefreshIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
-import {SearchInput} from '@mattermost/compass-ui/components/search-input';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 
-import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
+import {getUserMCPTools, refreshUserMCPTools, type UserMCPServerInfo, type UserMCPToolInfo} from '@/client';
 import MCPUnavailableBadge from '@/components/mcp_unavailable_badge';
-import {ToggleSwitch} from '@/components/toggle_switch';
+import MCPServerAccordion, {MCPBulkScope, MCPBulkToggleState} from '@/components/mcp_tools/mcp_server_accordion';
+import MCPToolRow from '@/components/mcp_tools/mcp_tool_row';
+import MCPToolsBrowser from '@/components/mcp_tools/mcp_tools_browser';
+import {filterMCPServers} from '@/components/mcp_tools/mcp_tools_filter';
+import {formatToolPolicyLabel} from '@/components/mcp_tools/policy_utils';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus, type MCPServerStatus} from '@/utils/mcp_availability';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 import {useIsLicensedFor} from '@/license';
 import {LicenseChip} from '@/components/system_console/enterprise_chip';
-
-import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
 
 // Same sentinel as llm.MCPServerToolWildcard ('*' = all tools from that origin).
 const MCPServerToolWildcard = '*';
@@ -38,7 +39,7 @@ type Props = {
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
 
-    /** From parent: whether the current user may enable service account auth (manage_system). */
+    /** From parent: whether the current user may enable service account auth (system admin or read/write settings delegate). */
     canEditServiceAccountAuth: boolean;
     onChange: (updates: {
         enabledTools?: EnabledTool[];
@@ -51,10 +52,6 @@ type Props = {
     // onChange so the parent can update its dirty-tracking baseline alongside
     // the draft and avoid treating reconciliation as a user edit (MM-69185).
     onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
-}
-
-function serverToolsPanelId(serverOrigin: string): string {
-    return `mcp-tools-${serverOrigin.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
 
 function serverStatusBadge(status: MCPServerStatus): React.ReactNode {
@@ -102,7 +99,7 @@ function emptyToolsNotice(
     case 'no-sa-credentials':
         return (
             <EmptyToolsNotice>
-                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in System Console MCP settings.'/>
+                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in Agents Settings, under MCP servers.'/>
             </EmptyToolsNotice>
         );
     case 'sa-connect-failed':
@@ -145,24 +142,56 @@ const McpsTab = (props: Props) => {
 
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [refreshError, setRefreshError] = useState<string | null>(null);
     const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
+    const [collapsedInSearch, setCollapsedInSearch] = useState<Set<string>>(new Set());
     const [searchQuery, setSearchQuery] = useState('');
+    const requestRef = useRef(0);
+    const hasLoadedRef = useRef(false);
 
-    const loadServers = useCallback(async (opts: {showLoading?: boolean} = {}) => {
+    const handleSearchChange = useCallback((value: string) => {
+        setSearchQuery(value);
+        setCollapsedInSearch(new Set());
+    }, []);
+
+    useEffect(() => () => {
+        requestRef.current += 1;
+    }, []);
+
+    const loadServers = useCallback(async (opts: {showLoading?: boolean; forceRefresh?: boolean} = {}) => {
+        const request = ++requestRef.current;
         try {
             if (opts.showLoading) {
                 setLoading(true);
             }
-            const response = await getUserMCPTools({
+            if (opts.forceRefresh) {
+                setRefreshing(true);
+                setRefreshError(null);
+            }
+            const reqOpts = {
                 agentId,
                 serviceAccount: useServiceAccountAuth,
                 agentConfig: true,
-            });
+            };
+            const response = opts.forceRefresh ? await refreshUserMCPTools(reqOpts) : await getUserMCPTools(reqOpts);
+            if (request !== requestRef.current) {
+                return;
+            }
             setServers(response.servers || []);
+            hasLoadedRef.current = true;
             setError(null);
+            setRefreshError(null);
         } catch (err) {
-            if (opts.showLoading) {
+            if (request !== requestRef.current) {
+                return;
+            }
+            if (opts.forceRefresh) {
+                // eslint-disable-next-line no-console
+                console.error('Failed to refresh MCP tools:', err);
+                setRefreshError(intl.formatMessage({defaultMessage: 'Failed to refresh MCP tools.'}));
+            } else if (opts.showLoading || !hasLoadedRef.current) {
                 // eslint-disable-next-line no-console
                 console.error('Failed to load MCP tools:', err);
                 setError(intl.formatMessage({defaultMessage: 'Failed to load MCP tools.'}));
@@ -171,8 +200,9 @@ const McpsTab = (props: Props) => {
                 console.error('Background refresh of MCP tools failed:', err);
             }
         } finally {
-            if (opts.showLoading) {
+            if (request === requestRef.current) {
                 setLoading(false);
+                setRefreshing(false);
             }
         }
     }, [agentId, intl, useServiceAccountAuth]);
@@ -216,7 +246,38 @@ const McpsTab = (props: Props) => {
         }
     }, [enabledTools, onChange]);
 
-    const toggleServer = useCallback((serverOrigin: string) => {
+    const setGroupToolsEnabled = useCallback((serverOrigin: string, groupTools: UserMCPToolInfo[], enable: boolean) => {
+        const toggleableNames = new Set(groupTools.filter((t) => t.enabled).map((t) => t.name));
+        if (toggleableNames.size === 0) {
+            return;
+        }
+        const withoutGroup = enabledTools.filter(
+            (et) => !(et.server_origin === serverOrigin && toggleableNames.has(et.tool_name)),
+        );
+        if (!enable) {
+            onChange({enabledTools: withoutGroup});
+            return;
+        }
+        const added = [...toggleableNames].map((toolName) => ({
+            server_origin: serverOrigin,
+            tool_name: toolName,
+        }));
+        onChange({enabledTools: [...withoutGroup, ...added]});
+    }, [enabledTools, onChange]);
+
+    const toggleServer = useCallback((serverOrigin: string, isFiltered: boolean) => {
+        if (isFiltered) {
+            setCollapsedInSearch((prev) => {
+                const next = new Set(prev);
+                if (next.has(serverOrigin)) {
+                    next.delete(serverOrigin);
+                } else {
+                    next.add(serverOrigin);
+                }
+                return next;
+            });
+            return;
+        }
         setExpandedServers((prev) => {
             const next = new Set(prev);
             if (next.has(serverOrigin)) {
@@ -242,6 +303,12 @@ const McpsTab = (props: Props) => {
 
         if (allEnabled) {
             onChange({enabledTools: enabledTools.filter((t) => t.server_origin !== server.serverOrigin)});
+            return;
+        }
+
+        // If every discovered tool on this server is disabled by an admin, do
+        // not turn the server on with a wildcard grant.
+        if (serverTools.length === 0 && server.tools.length > 0) {
             return;
         }
 
@@ -271,7 +338,7 @@ const McpsTab = (props: Props) => {
             if (mcpServerStatus(s, useServiceAccountAuth) === 'sa-only-unavailable') {
                 return true;
             }
-            return s.tools.some((t) => t.name === et.tool_name);
+            return s.tools.some((t) => t.name === et.tool_name && t.enabled);
         });
     }, [servers, useServiceAccountAuth]);
 
@@ -298,11 +365,26 @@ const McpsTab = (props: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [useServiceAccountAuth, autoEnableNewMCPTools, enabledTools, servers]);
 
-    // Search is implemented in mcp_servers_filter (see unit tests for query length rules).
-    const filteredServers = useMemo(
-        () => filterMcpsServersBySearchQuery(servers, searchQuery),
-        [servers, searchQuery],
-    );
+    const filteredServers = useMemo(() => {
+        const searchable = servers.map((server) => {
+            const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
+            return {
+                server,
+                name: server.name,
+                tools: server.tools.map((tool) => ({
+                    tool,
+                    name: tool.name,
+                    displayName: pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name,
+                    description: tool.description,
+                })),
+            };
+        });
+        return filterMCPServers(searchable, searchQuery).map((match) => ({
+            server: match.server.server,
+            matchedTools: match.matchedTools.map((t) => t.tool),
+            isFiltered: match.isFiltered,
+        }));
+    }, [servers, searchQuery]);
 
     // Rendered above every catalog state so the setting stays reachable while
     // the catalog is loading, failed or empty. Non-admins see the checkbox only
@@ -346,89 +428,66 @@ const McpsTab = (props: Props) => {
         </ServiceAccountSection>
     );
 
-    // Tool-grant UI is also locked while auto-enable is on (existing behavior).
     const toolGrantsDisabled = serviceAccountFieldsLocked || autoEnableNewMCPTools;
+    const totalTools = servers.reduce((sum, server) => sum + server.tools.length, 0);
+    const hasServers = !loading && !error && servers.length > 0;
 
-    if (loading) {
-        return (
-            <Container>
-                {serviceAccountSection}
-                <LoadingContainer>
-                    <Spinner size='20'/>
-                    <FormattedMessage defaultMessage='Loading MCP tools...'/>
-                </LoadingContainer>
-            </Container>
-        );
-    }
+    const beforeSearch = (
+        <>
+            {serviceAccountSection}
+            {hasServers && (
+                <CheckboxRow>
+                    <Checkbox
+                        id='mcp-auto-enable'
+                        checked={autoEnableNewMCPTools}
+                        disabled={serviceAccountFieldsLocked}
+                        onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
+                    >
+                        <CheckboxText>
+                            <CheckboxTitle>
+                                <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
+                            </CheckboxTitle>
+                            <CheckboxHint>
+                                <FormattedMessage defaultMessage='Give this agent access to every currently available MCP tool and any added in the future.'/>
+                            </CheckboxHint>
+                        </CheckboxText>
+                    </Checkbox>
+                </CheckboxRow>
+            )}
+        </>
+    );
 
-    if (error) {
-        return (
-            <Container>
-                {serviceAccountSection}
+    const notices = (
+        <>
+            {error && (
                 <SectionNotice
                     type='danger'
                     title={error}
                 />
-            </Container>
-        );
-    }
+            )}
 
-    if (servers.length === 0) {
-        return (
-            <Container>
-                {serviceAccountSection}
-                <EmptyState
-                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to configure MCP servers in the system console.'/>}
+            {refreshError && (
+                <SectionNotice
+                    type='danger'
+                    title={refreshError}
                 />
-            </Container>
-        );
-    }
+            )}
 
-    return (
-        <Container>
-            {serviceAccountSection}
-            <CheckboxRow>
-                <Checkbox
-                    id='mcp-auto-enable'
-                    checked={autoEnableNewMCPTools}
-                    disabled={serviceAccountFieldsLocked}
-                    onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
-                >
-                    <CheckboxText>
-                        <CheckboxTitle>
-                            <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
-                        </CheckboxTitle>
-                        <CheckboxHint>
-                            <FormattedMessage defaultMessage='Give this agent access to every currently available MCP tool and any added in the future.'/>
-                        </CheckboxHint>
-                    </CheckboxText>
-                </Checkbox>
-            </CheckboxRow>
-
-            <SearchInput
-                placeholder={intl.formatMessage({defaultMessage: 'Search servers and tools...'})}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onClear={() => setSearchQuery('')}
-                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
-                disabled={toolGrantsDisabled}
-            />
-
-            {useServiceAccountAuth && (
+            {hasServers && useServiceAccountAuth && (
                 <SectionNotice
                     type='info'
                     title={<FormattedMessage defaultMessage="This list is the agent's service-account catalog, not your personal MCP connections. Servers that only have service account credentials show as connected here when those credentials work."/>}
                 />
             )}
 
-            {autoEnableNewMCPTools && (
+            {hasServers && autoEnableNewMCPTools && (
                 <SectionNotice
                     type='info'
                     title={<FormattedMessage defaultMessage='Every MCP tool is enabled for this agent. Disable "Automatically enable all MCP tools" above to pick specific tools.'/>}
                 />
             )}
 
-            {orphanedTools.length > 0 && (
+            {hasServers && orphanedTools.length > 0 && (
                 <div role='status'>
                     <SectionNotice
                         type='warning'
@@ -441,158 +500,253 @@ const McpsTab = (props: Props) => {
                     />
                 </div>
             )}
+        </>
+    );
 
-            <ServerList>
-                {filteredServers.map((server) => {
-                    const status = mcpServerStatus(server, useServiceAccountAuth);
-                    const unavailable = status === 'sa-only-unavailable';
-                    const isExpanded = expandedServers.has(server.serverOrigin);
-                    const wildcardOn = hasServerWildcard(server.serverOrigin);
-                    const adminEnabledTools = server.tools.filter((t) => t.enabled);
-                    const enabledCount = adminEnabledTools.filter(
-                        (t) => isToolEnabled(server.serverOrigin, t.name),
-                    ).length;
-                    const totalCount = adminEnabledTools.length;
+    const summary = hasServers ? (
+        <FormattedMessage
+            defaultMessage='{totalTools} tools from {serverCount} servers'
+            values={{totalTools, serverCount: servers.length}}
+        />
+    ) : null;
 
-                    const toolsPanelId = serverToolsPanelId(server.serverOrigin);
+    const actions = hasServers ? (
+        <Button
+            emphasis='tertiary'
+            size='small'
+            onClick={() => loadServers({forceRefresh: true})}
+            loading={refreshing}
+            leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
+        >
+            <FormattedMessage defaultMessage='Refresh Tools'/>
+        </Button>
+    ) : null;
 
-                    const allKnownOn = totalCount > 0 && enabledCount === totalCount;
-                    const allOn = autoEnableNewMCPTools || wildcardOn || allKnownOn;
-                    const serverEnabled = !unavailable && allOn;
-                    const serverToggleLabel = serverEnabled ? intl.formatMessage(
-                        {defaultMessage: 'Disable all tools for {serverName}'},
-                        {serverName: server.name},
-                    ) : intl.formatMessage(
-                        {defaultMessage: 'Enable all tools for {serverName}'},
-                        {serverName: server.name},
-                    );
-                    const canConnect = remoteMcpLicensed && status === 'none' && Boolean(server.authURL);
-                    const metaDetail = (() => {
-                        if (wildcardOn && totalCount === 0) {
-                            return intl.formatMessage({defaultMessage: 'All tools enabled'});
-                        }
-                        if (totalCount === 0) {
-                            return intl.formatMessage({defaultMessage: '0 tools available'});
-                        }
-                        if (enabledCount > 0) {
-                            return intl.formatMessage(
-                                {defaultMessage: '{enabled} of {total} tools enabled'},
-                                {enabled: enabledCount, total: totalCount},
-                            );
-                        }
+    const emptyState = (() => {
+        if (error) {
+            return null;
+        }
+        if (servers.length === 0) {
+            return (
+                <EmptyState
+                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to add MCP servers in the Agents settings.'/>}
+                />
+            );
+        }
+        return null;
+    })();
+
+    const bulkToggleAriaLabel = (serverName: string, scope: MCPBulkScope, allEnabled: boolean): string => {
+        switch (scope) {
+        case 'read':
+            return allEnabled ? intl.formatMessage(
+                {defaultMessage: 'Disable all read-only tools on {serverName}'},
+                {serverName},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Enable all read-only tools on {serverName}'},
+                {serverName},
+            );
+        case 'write':
+            return allEnabled ? intl.formatMessage(
+                {defaultMessage: 'Disable all write tools on {serverName}'},
+                {serverName},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Enable all write tools on {serverName}'},
+                {serverName},
+            );
+        case 'all':
+        default:
+            return allEnabled ? intl.formatMessage(
+                {defaultMessage: 'Disable all tools on {serverName}'},
+                {serverName},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Enable all tools on {serverName}'},
+                {serverName},
+            );
+        }
+    };
+
+    return (
+        <MCPToolsBrowser
+            beforeSearch={beforeSearch}
+            summary={summary}
+            actions={actions}
+            searchQuery={searchQuery}
+            onSearchChange={handleSearchChange}
+            showSearch={hasServers}
+            notices={notices}
+            loading={loading}
+            loadingLabel={<FormattedMessage defaultMessage='Loading MCP tools...'/>}
+            emptyState={emptyState}
+            noSearchResults={hasServers && searchQuery.trim() !== '' && filteredServers.length === 0}
+        >
+            {hasServers && filteredServers.map(({server, matchedTools, isFiltered}) => {
+                const status = mcpServerStatus(server, useServiceAccountAuth);
+                const unavailable = status === 'sa-only-unavailable';
+                const isExpanded = isFiltered ? !collapsedInSearch.has(server.serverOrigin) : expandedServers.has(server.serverOrigin);
+                const wildcardOn = hasServerWildcard(server.serverOrigin);
+                const adminEnabledTools = server.tools.filter((t) => t.enabled);
+                const adminDisabledCount = server.tools.length - adminEnabledTools.length;
+                const allAdminDisabled = server.tools.length > 0 && adminEnabledTools.length === 0;
+                const enabledCount = adminEnabledTools.filter(
+                    (t) => isToolEnabled(server.serverOrigin, t.name),
+                ).length;
+                const totalAvailableCount = adminEnabledTools.length;
+
+                const allKnownOn = totalAvailableCount > 0 && enabledCount === totalAvailableCount;
+                const allOn = !allAdminDisabled && (autoEnableNewMCPTools || wildcardOn || allKnownOn);
+                const serverEnabled = !unavailable && allOn;
+                const serverToggleLabel = serverEnabled ? intl.formatMessage(
+                    {defaultMessage: 'Disable all tools for {serverName}'},
+                    {serverName: server.name},
+                ) : intl.formatMessage(
+                    {defaultMessage: 'Enable all tools for {serverName}'},
+                    {serverName: server.name},
+                );
+                const canConnect = remoteMcpLicensed && status === 'none' && Boolean(server.authURL);
+                const metaDetail = (() => {
+                    if (wildcardOn && totalAvailableCount === 0 && !allAdminDisabled) {
+                        return intl.formatMessage({defaultMessage: 'All tools enabled'});
+                    }
+                    if (totalAvailableCount === 0) {
+                        return intl.formatMessage({defaultMessage: '0 tools available'});
+                    }
+                    if (enabledCount > 0) {
                         return intl.formatMessage(
-                            {defaultMessage: '{total} tools available'},
-                            {total: totalCount},
+                            {defaultMessage: '{enabled} of {total} tools enabled'},
+                            {enabled: enabledCount, total: totalAvailableCount},
                         );
-                    })();
-
-                    return (
-                        <ServerBlock
-                            key={server.serverOrigin}
-                            $unavailable={unavailable}
-                        >
-                            <ServerTopRow>
-                                <ServerHeaderButton
-                                    type='button'
-                                    aria-expanded={isExpanded}
-                                    aria-controls={toolsPanelId}
-                                    aria-label={intl.formatMessage(
-                                        {defaultMessage: '{serverName}, {detail}. Press to expand or collapse tools.'},
-                                        {serverName: server.name, detail: metaDetail},
-                                    )}
-                                    onClick={() => toggleServer(server.serverOrigin)}
-                                >
-                                    <ChevronContainer aria-hidden={true}>
-                                        {isExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                                    </ChevronContainer>
-                                    <ServerInfo>
-                                        <ServerName>{server.name}</ServerName>
-                                        <ServerMeta>
-                                            {metaDetail}
-                                            {serverStatusBadge(status)}
-                                        </ServerMeta>
-                                    </ServerInfo>
-                                </ServerHeaderButton>
-                                {canConnect && (
-                                    <ConnectButton
-                                        emphasis='secondary'
-                                        size='small'
-                                        onClick={() => {
-                                            window.open(server.authURL!, '_blank', 'noopener,noreferrer');
-                                        }}
-                                    >
-                                        <FormattedMessage defaultMessage='Connect'/>
-                                    </ConnectButton>
-                                )}
-                                <ToggleSwitch
-                                    ariaLabel={serverToggleLabel}
-                                    checked={serverEnabled}
-                                    onChange={() => !toolGrantsDisabled && !unavailable && toggleAllServerTools(server)}
-                                    disabled={toolGrantsDisabled || unavailable}
-                                />
-                            </ServerTopRow>
-
-                            {isExpanded && (
-                                <ToolList
-                                    id={toolsPanelId}
-                                    role='region'
-                                    aria-label={server.name}
-                                >
-                                    {adminEnabledTools.length === 0 && emptyToolsNotice(status, {
-                                        wildcardOn,
-                                        useServiceAccountAuth,
-                                        canConnect,
-                                    })}
-                                    {(() => {
-                                        // Strip the pluginmcp "<pluginID>__" prefix for display
-                                        // only; wire tool.name remains the enable/disable identity.
-                                        const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
-                                        const toolsDisabled = toolGrantsDisabled || wildcardOn || unavailable;
-                                        return adminEnabledTools.map((tool) => {
-                                            const toolOn = !unavailable && isToolEnabled(server.serverOrigin, tool.name);
-                                            const displayName = pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name;
-                                            return (
-                                                <ToolRow key={tool.name}>
-                                                    <ToolInfo>
-                                                        <ToolName>{displayName}</ToolName>
-                                                        {tool.description && (
-                                                            <ToolDescription>{tool.description}</ToolDescription>
-                                                        )}
-                                                    </ToolInfo>
-                                                    <ToggleSwitch
-                                                        size='small'
-                                                        ariaLabel={toolOn ? intl.formatMessage(
-                                                            {defaultMessage: 'Disable tool {toolName} on {serverName}'},
-                                                            {toolName: displayName, serverName: server.name},
-                                                        ) : intl.formatMessage(
-                                                            {defaultMessage: 'Enable tool {toolName} on {serverName}'},
-                                                            {toolName: displayName, serverName: server.name},
-                                                        )}
-                                                        checked={toolOn}
-                                                        onChange={() => !toolsDisabled && toggleTool(server.serverOrigin, tool.name)}
-                                                        disabled={toolsDisabled}
-                                                    />
-                                                </ToolRow>
-                                            );
-                                        });
-                                    })()}
-                                </ToolList>
-                            )}
-                        </ServerBlock>
+                    }
+                    return intl.formatMessage(
+                        {defaultMessage: '{total} tools available'},
+                        {total: totalAvailableCount},
                     );
-                })}
-            </ServerList>
-        </Container>
+                })();
+
+                const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
+                const toolsDisabled = toolGrantsDisabled || wildcardOn || unavailable;
+
+                const getBulkToggleState = (groupTools: UserMCPToolInfo[], scope: MCPBulkScope): MCPBulkToggleState => {
+                    const toggleable = groupTools.filter((t) => t.enabled);
+                    const groupAllOn = !unavailable && toggleable.length > 0 && (
+                        autoEnableNewMCPTools ||
+                        wildcardOn ||
+                        toggleable.every((t) => isToolEnabled(server.serverOrigin, t.name))
+                    );
+                    return {
+                        checked: groupAllOn,
+                        disabled: toolsDisabled || toggleable.length === 0,
+                        ariaLabel: bulkToggleAriaLabel(server.name, scope, groupAllOn),
+                        onChange: (checked) => !toolsDisabled && setGroupToolsEnabled(server.serverOrigin, groupTools, checked),
+                    };
+                };
+
+                const renderToolRow = (tool: UserMCPToolInfo) => {
+                    const adminDisabled = !tool.enabled;
+                    const toolOn = !unavailable && !adminDisabled && isToolEnabled(server.serverOrigin, tool.name);
+                    const displayName = pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name;
+                    const rowToggleDisabled = toolsDisabled || adminDisabled;
+                    const ariaLabel = toolOn ? intl.formatMessage(
+                        {defaultMessage: 'Disable tool {toolName} on {serverName}'},
+                        {toolName: displayName, serverName: server.name},
+                    ) : intl.formatMessage(
+                        {defaultMessage: 'Enable tool {toolName} on {serverName}'},
+                        {toolName: displayName, serverName: server.name},
+                    );
+                    return (
+                        <MCPToolRow
+                            key={tool.name}
+                            displayName={displayName}
+                            description={tool.description}
+                            inputSchema={tool.inputSchema}
+                            badges={adminDisabled ? (
+                                <Tag label={<FormattedMessage defaultMessage='Disabled by admin'/>}/>
+                            ) : null}
+                            policyControl={(
+                                <Tag label={formatToolPolicyLabel(intl, tool.policy)}/>
+                            )}
+                            enabled={toolOn}
+                            toggleDisabled={rowToggleDisabled}
+                            toggleAriaLabel={ariaLabel}
+                            onToggleEnabled={() => !rowToggleDisabled && toggleTool(server.serverOrigin, tool.name)}
+                            dimmed={unavailable || adminDisabled}
+                        />
+                    );
+                };
+
+                const serverNotices = (
+                    <>
+                        {server.tools.length === 0 && emptyToolsNotice(status, {
+                            wildcardOn,
+                            useServiceAccountAuth,
+                            canConnect,
+                        })}
+                        {allAdminDisabled && (
+                            <EmptyToolsNotice>
+                                <FormattedMessage defaultMessage='All tools on this server are disabled by an administrator.'/>
+                            </EmptyToolsNotice>
+                        )}
+                    </>
+                );
+
+                return (
+                    <MCPServerAccordion
+                        key={server.serverOrigin}
+                        serverName={server.name}
+                        serverType={server.kind}
+                        meta={(
+                            <>
+                                <span>{metaDetail}</span>
+                                {adminDisabledCount > 0 && (
+                                    <Tag
+                                        label={(
+                                            <FormattedMessage
+                                                defaultMessage='{count, plural, one {# disabled by admin} other {# disabled by admin}}'
+                                                values={{count: adminDisabledCount}}
+                                            />
+                                        )}
+                                    />
+                                )}
+                                {serverStatusBadge(status)}
+                            </>
+                        )}
+                        expandAriaLabel={intl.formatMessage(
+                            {defaultMessage: '{serverName}, {detail}. Press to expand or collapse tools.'},
+                            {serverName: server.name, detail: metaDetail},
+                        )}
+                        expanded={isExpanded}
+                        onToggleExpanded={() => toggleServer(server.serverOrigin, isFiltered)}
+                        dimmed={unavailable}
+                        headerActions={canConnect ? (
+                            <ConnectButton
+                                emphasis='secondary'
+                                size='small'
+                                onClick={() => {
+                                    window.open(server.authURL!, '_blank', 'noopener,noreferrer');
+                                }}
+                            >
+                                <FormattedMessage defaultMessage='Connect'/>
+                            </ConnectButton>
+                        ) : null}
+                        serverToggle={{
+                            checked: serverEnabled,
+                            disabled: toolGrantsDisabled || unavailable || allAdminDisabled,
+                            ariaLabel: serverToggleLabel,
+                            onChange: () => !toolGrantsDisabled && !unavailable && !allAdminDisabled && toggleAllServerTools(server),
+                        }}
+                        notices={serverNotices}
+                        tools={matchedTools}
+                        totalToolCount={server.tools.length}
+                        isSearchFiltered={isFiltered}
+                        allToolsDescription={<FormattedMessage defaultMessage='Enable or disable every available tool on this server.'/>}
+                        getBulkToggleState={getBulkToggleState}
+                        renderToolRow={renderToolRow}
+                    />
+                );
+            })}
+        </MCPToolsBrowser>
     );
 };
-
-// --- Styled Components ---
-
-const Container = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-l);
-`;
 
 const ServiceAccountSection = styled.div`
     display: flex;
@@ -605,7 +759,7 @@ const ServiceAccountSection = styled.div`
 const CheckboxRow = styled.div`
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: var(--spacing-s);
 `;
 
 const CheckboxText = styled.span`
@@ -625,138 +779,14 @@ const CheckboxHint = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
-const ServerList = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xs);
-`;
-
-const ServerBlock = styled.div<{$unavailable?: boolean}>`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: var(--radius-s);
-    overflow: hidden;
-    opacity: ${(p) => (p.$unavailable ? 0.64 : 1)};
-`;
-
-const ServerTopRow = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-m);
-    padding: var(--spacing-m) var(--spacing-l);
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.04);
-    }
-`;
-
-const ServerHeaderButton = styled.button`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-m);
-    flex: 1;
-    min-width: 0;
-    cursor: pointer;
-    border: none;
-    background: transparent;
-    padding: 0;
-    text-align: left;
-    font-family: inherit;
-    font-size: inherit;
-    color: inherit;
-
-    &:focus-visible {
-        outline: 2px solid var(--button-bg);
-        outline-offset: 2px;
-        border-radius: var(--radius-s);
-    }
-`;
-
-const ChevronContainer = styled.div`
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-`;
-
-const ServerInfo = styled.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-`;
-
-const ServerName = styled.div`
-    font-size: var(--font-size-100);
-    font-weight: var(--font-weight-semibold);
-    color: var(--center-channel-color);
-`;
-
-const ServerMeta = styled.div`
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    font-size: var(--font-size-75);
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const ToolList = styled.div`
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-`;
-
 const EmptyToolsNotice = styled.div`
-    padding: var(--spacing-m) var(--spacing-l);
+    padding: 0 var(--spacing-l);
     font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ConnectButton = styled(Button)`
     flex-shrink: 0;
-`;
-
-const ToolRow = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 16px 10px 44px;
-
-    &:not(:last-child) {
-        border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.04);
-    }
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.02);
-    }
-`;
-
-const ToolInfo = styled.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-`;
-
-const ToolName = styled.div`
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--center-channel-color);
-    font-family: monospace;
-`;
-
-const ToolDescription = styled.div`
-    font-size: var(--font-size-75);
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-`;
-
-const LoadingContainer = styled.div`
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: var(--spacing-xs);
-    padding: var(--spacing-xxxxl);
-    color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
 export default McpsTab;

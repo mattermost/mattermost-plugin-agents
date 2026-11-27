@@ -2,7 +2,7 @@
 
 An LLM service connects Agents to a model provider: credentials, default model, token limits, fallback, and structured output. Several agents can share one service.
 
-To add a service, go to **System Console > Plugins > Agents** and select **Add an AI Service**. Free and Professional licenses allow one service. Enterprise and above allow several. Provider-specific fields are in [Provider configuration](providers.md).
+To add a service, go to **Agents > Settings > AI services** and select **Add an AI Service**. Free and Professional licenses allow one service. Enterprise and above allow several. Provider-specific fields are in [Provider configuration](providers.md).
 
 ## Service settings
 
@@ -10,7 +10,7 @@ To add a service, go to **System Console > Plugins > Agents** and select **Add a
 |---|---|
 | **Service name** | A label that appears in the service list and in the agent editor's **AI Service** menu. |
 | **Service type** | OpenAI, Anthropic, Google Gemini, Google Vertex AI, AWS Bedrock, OpenAI Compatible, Azure, Cohere, Cohere North, or Mistral. The list also shows Scale AI and asksage (Experimental), but this version of the plugin can't create a connection for either. Agents on Scale AI show as active but every request fails, and agents on asksage show **Inactive**. Use one of the others. |
-| Credentials and endpoint | Differ by type. See the [required settings](#required-settings-by-type). |
+| Credentials and endpoint | Differ by type. See [Provider configuration](providers.md). |
 | **Default model** | The model agents on this service use unless the agent sets its own. For most types the field offers a live list from the provider, and you can type a custom name. |
 | **Input token limit** | Maximum tokens sent to the model per request. |
 | **Output token limit** | Maximum tokens the model may generate per response. When unset, Mattermost requests 8192. |
@@ -19,22 +19,7 @@ To add a service, go to **System Console > Plugins > Agents** and select **Add a
 | **Fallback Service** | Another service to use when this one fails. Default is **No fallback**. Needs Enterprise Advanced. |
 | **Structured output** | How JSON-schema requests are fulfilled. See [Structured output](#structured-output). |
 
-A service is valid only when its required settings are filled in. An agent that uses an invalid or deleted service is marked **Inactive** on the Agents page.
-
-### Required settings by type
-
-| Type | Required |
-|---|---|
-| OpenAI | API key |
-| OpenAI Compatible | API URL (API key is optional) |
-| Anthropic | API key |
-| Google Gemini | API key |
-| Google Vertex AI | GCP Project ID, GCP Region (credentials optional) |
-| AWS Bedrock | AWS Region (credentials optional) |
-| Azure | API key, API URL |
-| Cohere | API key |
-| Cohere North | North instance URL, Service token |
-| Mistral | API key |
+A service is valid only when its required provider fields are filled in (see [Provider configuration](providers.md)). An agent that uses an invalid or deleted service is marked **Inactive** on the Agents page.
 
 ## Token limits
 

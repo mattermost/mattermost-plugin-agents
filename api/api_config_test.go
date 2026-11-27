@@ -119,6 +119,11 @@ func setupConfigTestRouter(a *API) *gin.Engine {
 	router := gin.New()
 
 	adminRouter := router.Group("/admin")
+	// These tests act as a caller the settings authorization middleware
+	// admitted with full access; api_settings_access_test.go covers the levels.
+	adminRouter.Use(func(c *gin.Context) {
+		c.Set(settingsAccessSystemAdminKey, true)
+	})
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
 
@@ -507,6 +512,88 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "saves dictation on an openai service separate from the agents' service",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-anthropic", Name: "Claude", Type: llm.ServiceTypeAnthropic},
+					{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai"},
+				},
+				Bots:      []llm.BotConfig{{ID: "bot-1", Name: "ai", ServiceID: "svc-anthropic"}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"}, store.cfg.Dictation)
+			},
+		},
+		{
+			name: "rejects dictation on a service of the wrong type",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-anthropic", Name: "Claude", Type: llm.ServiceTypeAnthropic}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-anthropic", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+		},
+		{
+			name: "rejects dictation on a missing service",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-gone", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation on a service without an API key",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation on a service whose API URL carries credentials",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{{
+					ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai",
+					APIURL: "https://user:secret@proxy.example.com",
+				}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai", Model: "gpt-live-transcribe"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
+			name: "rejects dictation without a model",
+			requestBody: config.Config{
+				Services:  []llm.ServiceConfig{{ID: "svc-openai", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-openai"}},
+				Dictation: config.DictationConfig{Enabled: true, ServiceID: "svc-openai"},
+			},
+			expectedStatus:    http.StatusBadRequest,
+			expectedErrorCode: configErrorInvalidDictation,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+		},
+		{
 			name:           "rejects invalid JSON",
 			requestBody:    "not-json",
 			expectedStatus: http.StatusBadRequest,
@@ -802,4 +889,74 @@ func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {
 	require.Equal(t, "Find Mattermost people", loadedCfg.MCP.EmbeddedServer.ToolConfigs[0].RetrievalDescriptionOverride)
 	require.Equal(t, 1, updater.callCount)
 	require.Equal(t, 1, notifier.callCount)
+}
+
+func TestAdminConfigMCPAuthorizationParams(t *testing.T) {
+	testCases := []struct {
+		name       string
+		params     map[string]string
+		wantStatus int
+	}{
+		{
+			name:       "valid parameters are persisted in clear text",
+			params:     map[string]string{"access_type": "offline", "prompt": "consent"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "reserved parameter is rejected without overwriting stored config",
+			params:     map[string]string{"state": "fixed"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "padded value is rejected without overwriting stored config",
+			params:     map[string]string{"access_type": " offline "},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			initial := &config.Config{
+				MCP: config.MCPConfig{
+					Enabled: true,
+					Servers: []config.MCPServerConfig{
+						{
+							ID:                  "srv-1",
+							Name:                "YouTrack",
+							Enabled:             true,
+							BaseURL:             "https://youtrack.example.com/mcp",
+							AuthorizationParams: map[string]string{"access_type": "offline"},
+						},
+					},
+				},
+			}
+			store := &testConfigStore{cfg: initial}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router := setupTestRouter(store, updater, notifier)
+
+			saveCfg := *initial.Clone()
+			saveCfg.MCP.Servers[0].AuthorizationParams = tc.params
+			body, err := json.Marshal(saveCfg)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.wantStatus, w.Code)
+
+			if tc.wantStatus != http.StatusOK {
+				require.Equal(t, map[string]string{"access_type": "offline"}, store.cfg.MCP.Servers[0].AuthorizationParams)
+				require.Equal(t, 0, updater.callCount)
+				return
+			}
+
+			var loadedCfg config.Config
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &loadedCfg))
+			require.Len(t, loadedCfg.MCP.Servers, 1)
+			require.Equal(t, tc.params, loadedCfg.MCP.Servers[0].AuthorizationParams)
+			require.Equal(t, 1, updater.callCount)
+		})
+	}
 }

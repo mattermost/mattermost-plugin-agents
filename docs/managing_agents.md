@@ -2,7 +2,7 @@
 
 Agents are created and edited on the Agents page, not in the System Console. By default any user can create one, up to the license's agent cap.
 
-Agents are stored in the Mattermost database and managed on the **Agents** page, not in the System Console. Services and the default agent are configured in the System Console. See [Configure LLM services](llm_services.md).
+Agents are stored in the Mattermost database and managed on the **Agents** page, not in the System Console. Services and the default agent are configured in **Agents > Settings**. See [Configure LLM services](llm_services.md).
 
 ## Open the Agents page
 
@@ -17,19 +17,19 @@ The page lists the agents you can use, on two tabs: **All agents** and **Your ag
 | **Inactive** | The agent is stored but not running. Hover for the reason. See [Inactive agents](#inactive-agents). |
 | **Read only** | You can use the agent but can't edit it. |
 
-**System Console > Plugins > Agents > AI Bots** shows a notice that points to this page. Only the **Limit agent version history** and **Versions to keep per agent** settings live there.
+The **Limit agent version history** and **Versions to keep per agent** settings are under **Agents > Settings > General**.
 
 ## Who can create and edit agents
 
 | Permission | What it allows |
 |---|---|
 | `manage_own_agent` | Create agents. Creators and agent admins can always edit and delete their agents, so removing the permission doesn't stop that. |
-| `manage_others_agent` | Edit and delete any agent. |
+| `manage_others_agent` | Edit and delete any agent. System admins can also grant this to individual users with the **Agent managers** list in **System Console > Plugins > Agents** (see [Delegate settings access](admin_guide.md#delegate-settings-access)). |
 | `manage_system` (System Admin) | Does everything above. Also manages agents with no creator, which are migrated v1 bots. |
 
 By default the System User role includes `manage_own_agent`, so every user can create agents, up to the license's agent cap. Agents run on services the System Admin configured, so their usage is billed to the organization. To restrict creation, remove the permission from the System User role under **System Console > User Management > Permissions**, and grant it to specific roles. `manage_others_agent` is held only by System Admins by default.
 
-A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, or are a System Admin and the agent has no creator. The server applies the same rules to the API.
+A user can edit or delete an agent when they're its creator, listed in its **Agent admins**, hold `manage_others_agent`, are on the **Agent managers** list, or are a System Admin and the agent has no creator. The server applies the same rules to the API.
 
 A user sees an agent only if they can use it. System Admins also see agents whose service policy denies them, and an agent's creator and agent admins also see it when its agent policy denies them. See [Visibility](access_control.md#visibility). Agent counts are capped by license. See [License requirements](admin_guide.md#license-requirements).
 
@@ -61,7 +61,7 @@ Saving creates the Mattermost bot account, stores the agent, and updates every n
 | **Display name** | Required. Shown in posts, pickers, and the agent list. Updating it updates the bot's display name. |
 | **Agent username** | Required. The `@mention` handle. Starts with a letter, then lowercase letters, numbers, periods, hyphens, and underscores. The editor allows 22 characters. See [Renaming an agent](#rename-an-agent). |
 | Avatar | Optional. Uploaded after the agent is saved. If the upload fails, the rest of the save still succeeds, so select the file and save again. Maximum 10 MB. |
-| **AI Service** | Required. Shows the services from the System Console. A deleted service appears as "Unknown service (deleted)" until you pick another. Below Enterprise only the first service can be chosen. |
+| **AI Service** | Required. Shows the services from the Agents settings. A deleted service appears as "Unknown service (deleted)" until you pick another. Below Enterprise only the first service can be chosen. |
 | **Model** | Optional. Overrides the service's default model. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, Vertex AI, and Cohere North the field offers a live list from the provider. |
 | **Custom instructions** | Added to every request as part of the system prompt. Up to 100,000 characters. Use it for role, tone, vocabulary, and workflow. |
 
@@ -94,8 +94,10 @@ Selected-user lists accept users and teams. Channel access applies to channels o
 
 Available only when **Enable Tools** is on.
 
-- **Automatically enable all MCP tools.** The agent can use any MCP tool the requesting user can use, including tools added later. MCP server access policies, servers the user turned off, and license limits still apply.
-- With it off, pick the specific tools. Tools that no longer exist are removed when you save.
+- **Automatically enable all MCP tools.** The agent can use any MCP tool the requesting user can use, including tools added later. MCP server access policies, servers the user turned off, tools disabled by an administrator, and license limits still apply.
+- With it off, pick the specific tools. Tools are grouped into **Read-only tools** and **Write tools** when the server reports `readOnlyHint` annotations, with bulk toggles for **All tools** and each group. Tools that no longer exist are removed when you save.
+- Search filters servers and tools by name or description, including while **Automatically enable all MCP tools** is on. Name searches match any length; description searches require at least 3 characters.
+- Each tool shows its effective approval policy and expands to show its full description and input schema. Tools disabled globally by an administrator appear as **Disabled by admin** and can't be enabled for the agent. Select **Refresh Tools** to reload the catalog.
 - For an OAuth-backed server, select **Connect** here to sign in. Turning on a server that isn't connected yet grants the agent every tool the server exposes once someone connects.
 - **Use service accounts for authentication.** Switches the agent's external MCP servers from per-user OAuth to shared admin-configured credentials. Only System Admins can turn it on. See [Service account authentication](mcp_integrations.md#service-account-authentication).
 
@@ -152,7 +154,7 @@ Versions keep everything an agent was saved with, including instructions you lat
 
 ### Keep a limited history
 
-By default every version is kept. To keep only the most recent, set **Limit agent version history** to **True** in **System Console > Plugins > Agents** and set **Versions to keep per agent**. The count includes the current version, and turning it on sets 50. Saving the setting deletes older versions of every agent, and each later save prunes more. Turning it off doesn't restore deleted versions.
+By default every version is kept. To keep only the most recent, set **Limit agent version history** to **True** in **Agents > Settings > General** and set **Versions to keep per agent**. The count includes the current version, and turning it on sets 50. Saving the setting deletes older versions of every agent, and each later save prunes more. Turning it off doesn't restore deleted versions.
 
 Restores and version deletions are recorded in the audit log. See [Monitor Agents](observability.md#audit-logging).
 

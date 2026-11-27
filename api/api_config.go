@@ -44,6 +44,10 @@ const configErrorInvalidLinkDomains agentErrorCode = "invalid_allowed_link_domai
 // stored credential stands behind it.
 const configErrorUnresolvedCredentials agentErrorCode = "unresolved_credentials"
 
+// configErrorInvalidDictation: dictation is enabled without a supported
+// transcription service or a model.
+const configErrorInvalidDictation agentErrorCode = "invalid_dictation"
+
 // validateServiceStructuredOutputPolicies rejects a service whose
 // structured-output policy is not a value the runtime understands. Persisting a
 // typo would take every agent on that service offline (EnsureBots skips an
@@ -115,9 +119,17 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	// Credentials are masked in the response; the admin console sends the mask back unchanged
-	// for the ones it does not edit.
-	c.JSON(http.StatusOK, config.RedactSecrets(normalizeAdminConfig(*cfg.Clone())))
+	c.JSON(http.StatusOK, adminConfigResponse(normalizeAdminConfig(*cfg.Clone())))
+}
+
+// adminConfigResponse shapes a configuration for the admin console. Credentials
+// are masked; the console sends the mask back unchanged for the ones it does not
+// edit. Nobody gets the delegation lists, which have their own system admin
+// route.
+func adminConfigResponse(cfg config.Config) config.Config {
+	cfg = config.RedactSecrets(cfg)
+	cfg.SettingsAccess = nil
+	return cfg
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
@@ -166,6 +178,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 	resolvedAgentNames := a.resolveAgentReferenceUsernames(cfg)
+	systemAdmin := settingsCallerIsSystemAdmin(c)
 
 	// Read-previous → identity checks → mint empty IDs → save runs atomically
 	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
@@ -196,6 +209,22 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 		next.MCP = reconciledMCP
 		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
+		// The delegation lists change only through their own route. Legacy
+		// file bots are live agents whose access, ownership and service
+		// account use are system admin decisions, so delegates cannot change them.
+		normalized.SettingsAccess = nil
+		if prev != nil {
+			normalized.SettingsAccess = prev.SettingsAccess
+		}
+		if !systemAdmin {
+			normalized.Bots = nil
+			if prev != nil {
+				normalized.Bots = prev.Bots
+			}
+		}
+		if err := normalized.ValidateDictation(); err != nil {
+			return config.Config{}, err
+		}
 		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
 			return config.Config{}, err
 		}
@@ -215,6 +244,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
 		// Duplicate payload IDs, or an embedded server ID that does not match storage.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload has duplicate service or MCP server IDs, or an embedded server ID that does not match the stored identity: %w", err))
+		return
+	case errors.Is(err, config.ErrInvalidDictationConfig):
+		abortAgentRequestWithCode(c, http.StatusBadRequest, configErrorInvalidDictation, err)
 		return
 	case errors.Is(err, store.ErrLegacyUUIDServiceID):
 		// After the ABAC ID migration, a dashed UUID is an invalid service ID format.
@@ -254,7 +286,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, config.RedactSecrets(saved))
+	c.JSON(http.StatusOK, adminConfigResponse(saved))
 }
 
 // clearMCPServerOAuthState deletes users' stored OAuth state for remote MCP

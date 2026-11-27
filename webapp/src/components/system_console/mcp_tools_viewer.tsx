@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {RefreshIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -10,10 +10,11 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
 import {clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
-import {pluginIDFromServerOrigin} from '../../utils/tool_names';
+import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
+import MCPToolsBrowser from '../mcp_tools/mcp_tools_browser';
+import {filterMCPServers} from '../mcp_tools/mcp_tools_filter';
 
 import MCPServerToolRow from './mcp_server_tool_row';
 import {
@@ -21,9 +22,11 @@ import {
     MCPServerConfig,
     MCPServerInfo,
     MCPToolConfig,
+    MCPToolInfo,
     MCPToolsResponse,
 } from './mcp_types';
 import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
+import {useSettingsReadOnly} from './settings_read_only';
 
 type MCPToolsViewerProps = {
     mcpConfig: MCPConfig;
@@ -43,11 +46,26 @@ type MCPToolsViewerProps = {
     onRefreshTools: () => Promise<void>;
 };
 
+// The stable ID identifies a server when it has one; name and URL only serve
+// servers stored before IDs were minted.
+const indexOfServer = (servers: MCPServerConfig[], {id, name, url}: {id?: string; name: string; url: string}) => {
+    if (id) {
+        const byID = servers.findIndex((sc) => sc.id === id);
+        if (byID >= 0) {
+            return byID;
+        }
+    }
+    const byName = servers.findIndex((sc) => sc.name === name);
+    return byName >= 0 ? byName : servers.findIndex((sc) => sc.baseURL === url);
+};
+
 // Main component for MCP Tools viewer
 const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRefreshTools}: MCPToolsViewerProps) => {
     const intl = useIntl();
+    const readOnly = useSettingsReadOnly();
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
     // A failed action (clearing the cache, saving a plugin server). Load
     // failures come from the parent as toolsError.
@@ -151,7 +169,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
     const embeddedClientKey = EMBEDDED_MATTERMOST_BASE_URL;
 
     // Find the matching ServerConfig for a discovered server
-    const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
+    const findServerConfig = useCallback((server: MCPServerInfo): MCPServerConfig | null => {
         if (server.url === embeddedClientKey) {
             return {
                 name: server.name,
@@ -172,10 +190,9 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
             };
         }
 
-        return (mcpConfig.servers ?? []).find((sc) =>
-            sc.name === server.name || sc.baseURL === server.url,
-        ) || null;
-    };
+        const servers = mcpConfig.servers ?? [];
+        return servers[indexOfServer(servers, server)] ?? null;
+    }, [embeddedClientKey, mcpConfig]);
 
     const handleServerConfigChange = (
         serverInfo: MCPServerInfo,
@@ -225,183 +242,149 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, toolsData, toolsError, onRef
             return;
         }
 
-        const updatedServers = (mcpConfig.servers ?? []).map((sc) => {
-            if (sc.name === updatedServerConfig.name || sc.baseURL === updatedServerConfig.baseURL) {
-                return updatedServerConfig;
-            }
-            return sc;
-        });
+        const servers = mcpConfig.servers ?? [];
+        const target = indexOfServer(servers, {id: updatedServerConfig.id, name: updatedServerConfig.name, url: updatedServerConfig.baseURL});
+        const updatedServers = servers.map((sc, i) => (i === target ? updatedServerConfig : sc));
         onConfigChange({...mcpConfig, servers: updatedServers});
     };
 
+    const filteredEntries = useMemo(() => {
+        if (!toolsData) {
+            return [];
+        }
+        const searchable = toolsData.servers.map((server, index) => {
+            const serverConfig = findServerConfig(server);
+            const pluginID = server.serverType === 'plugin' ? pluginIDFromServerOrigin(server.url) : '';
+            const overridesByName = new Map(
+                (serverConfig?.tool_configs ?? []).map((tc) => [tc.name, tc.retrieval_description_override]),
+            );
+            return {
+                index,
+                server,
+                name: server.name,
+                tools: server.tools.map((tool) => ({
+                    tool,
+                    name: tool.name,
+                    displayName: pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name,
+                    description: tool.description,
+                    retrievalDescriptionOverride: overridesByName.get(tool.name),
+                })),
+            };
+        });
+        return filterMCPServers(searchable, searchQuery).map((match) => ({
+            index: match.server.index,
+            server: match.server.server,
+            matchedTools: match.matchedTools.map((t): MCPToolInfo => t.tool),
+            isFiltered: match.isFiltered,
+        }));
+    }, [toolsData, findServerConfig, searchQuery]);
+
+    const hasServers = Boolean(toolsData && toolsData.servers.length > 0);
+
+    const summary = toolsData ? (
+        <>
+            <FormattedMessage
+                defaultMessage='{totalTools} tools from {serverCount} servers'
+                values={{
+                    totalTools,
+                    serverCount: toolsData.servers.length,
+                }}
+            />
+            {serversWithErrors > 0 && (
+                <ErrorCount>
+                    <FormattedMessage
+                        defaultMessage=' ({errorCount} with errors)'
+                        values={{errorCount: serversWithErrors}}
+                    />
+                </ErrorCount>
+            )}
+        </>
+    ) : null;
+
+    const actions = (
+        <>
+            <Button
+                emphasis='secondary'
+                onClick={handleClearCache}
+                loading={clearing}
+                disabled={loading || readOnly}
+            >
+                <FormattedMessage defaultMessage='Clear Cache'/>
+            </Button>
+            <Button
+                emphasis='tertiary'
+                onClick={refreshTools}
+                loading={loading}
+                disabled={clearing}
+                leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
+            >
+                <FormattedMessage defaultMessage='Refresh Tools'/>
+            </Button>
+        </>
+    );
+
+    const notices = (
+        <>
+            {clearSuccess && (
+                <SectionNotice
+                    type='success'
+                    title={<FormattedMessage defaultMessage='Cache cleared successfully'/>}
+                />
+            )}
+
+            {toolsError !== null && (
+                <SectionNotice
+                    type='danger'
+                    title={<FormattedMessage defaultMessage='Failed to load MCP tools'/>}
+                    description={toolsError || undefined} // eslint-disable-line no-undefined
+                />
+            )}
+
+            {error && (
+                <SectionNotice
+                    type='danger'
+                    title={<FormattedMessage defaultMessage='MCP tools action failed'/>}
+                    description={error}
+                />
+            )}
+        </>
+    );
+
     return (
-        <Container>
-            <Header>
-                <HeaderInfo>
-                    <Title>
-                        <FormattedMessage defaultMessage='MCP Tools Configuration'/>
-                    </Title>
-                    {toolsData && (
-                        <Summary>
-                            <FormattedMessage
-                                defaultMessage='{totalTools} tools from {serverCount} servers'
-                                values={{
-                                    totalTools,
-                                    serverCount: toolsData.servers.length,
-                                }}
-                            />
-                            {serversWithErrors > 0 && (
-                                <ErrorCount>
-                                    <FormattedMessage
-                                        defaultMessage=' ({errorCount} with errors)'
-                                        values={{errorCount: serversWithErrors}}
-                                    />
-                                </ErrorCount>
-                            )}
-                        </Summary>
-                    )}
-                </HeaderInfo>
-                <ButtonGroup>
-                    <Button
-                        emphasis='secondary'
-                        onClick={handleClearCache}
-                        loading={clearing}
-                        disabled={loading}
-                    >
-                        <FormattedMessage defaultMessage='Clear Cache'/>
-                    </Button>
-                    <Button
-                        emphasis='tertiary'
-                        onClick={refreshTools}
-                        loading={loading}
-                        disabled={clearing}
-                        leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
-                    >
-                        <FormattedMessage defaultMessage='Refresh Tools'/>
-                    </Button>
-                </ButtonGroup>
-            </Header>
+        <MCPToolsBrowser
+            title={<FormattedMessage defaultMessage='MCP Tools Configuration'/>}
+            summary={summary}
+            actions={actions}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            showSearch={hasServers}
+            notices={notices}
+            loading={!toolsData && toolsError === null}
+            emptyState={toolsData && toolsData.servers.length === 0 ? (
+                <EmptyState title={<FormattedMessage defaultMessage='No MCP servers configured'/>}/>
+            ) : null}
+            noSearchResults={hasServers && searchQuery.trim() !== '' && filteredEntries.length === 0}
+        >
+            {filteredEntries.map(({server, index, matchedTools, isFiltered}) => (
+                <MCPServerToolRow
 
-            <Content>
-                {clearSuccess && (
-                    <SectionNotice
-                        type='success'
-                        title={<FormattedMessage defaultMessage='Cache cleared successfully'/>}
-                    />
-                )}
-
-                {!toolsData && toolsError === null && (
-                    <LoadingState>
-                        <Spinner
-                            size='24'
-                            aria-label={intl.formatMessage({defaultMessage: 'Loading tools...'})}
-                        />
-                    </LoadingState>
-                )}
-
-                {toolsError !== null && (
-                    <SectionNotice
-                        type='danger'
-                        title={<FormattedMessage defaultMessage='Failed to load MCP tools'/>}
-                        description={toolsError || undefined} // eslint-disable-line no-undefined
-                    />
-                )}
-
-                {error && (
-                    <SectionNotice
-                        type='danger'
-                        title={<FormattedMessage defaultMessage='MCP tools action failed'/>}
-                        description={error}
-                    />
-                )}
-
-                {toolsData && toolsData.servers.length === 0 && (
-                    <EmptyState title={<FormattedMessage defaultMessage='No MCP servers configured'/>}/>
-                )}
-
-                {toolsData && toolsData.servers.length > 0 && (
-                    <ServersList>
-                        {toolsData.servers.map((server) => {
-                            return (
-                                <MCPServerToolRow
-                                    key={server.url}
-                                    server={server}
-                                    serverConfig={findServerConfig(server)}
-                                    onServerConfigChange={(updatedConfig) =>
-                                        handleServerConfigChange(server, updatedConfig)
-                                    }
-                                />
-                            );
-                        })}
-                    </ServersList>
-                )}
-            </Content>
-        </Container>
+                    // Servers in a duplicate-endpoint conflict share a URL.
+                    key={`${index}:${server.name}:${server.url}`}
+                    server={server}
+                    serverConfig={findServerConfig(server)}
+                    onServerConfigChange={(updatedConfig) =>
+                        handleServerConfigChange(server, updatedConfig)
+                    }
+                    visibleTools={matchedTools}
+                    isSearchFiltered={isFiltered}
+                />
+            ))}
+        </MCPToolsBrowser>
     );
 };
 
-// Styled components
-const Container = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-l);
-`;
-
-const Header = styled.div`
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: var(--spacing-l);
-`;
-
-const HeaderInfo = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xxxs);
-`;
-
-const Title = styled.h3`
-    margin: 0;
-    font-size: var(--font-size-300);
-    font-weight: var(--font-weight-semibold);
-    color: var(--center-channel-color);
-`;
-
-const Summary = styled.div`
-    font-size: var(--font-size-100);
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xxxs);
-`;
-
 const ErrorCount = styled.span`
     color: var(--error-text);
-`;
-
-const ButtonGroup = styled.div`
-    display: flex;
-    gap: var(--spacing-xs);
-    align-items: center;
-`;
-
-const Content = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-l);
-`;
-
-const LoadingState = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: var(--spacing-xxxl);
-`;
-
-const ServersList = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-m);
 `;
 
 export default MCPToolsViewer;

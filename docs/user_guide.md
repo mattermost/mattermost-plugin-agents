@@ -39,7 +39,9 @@ Some features depend on your Mattermost license level. If a feature described he
 | Channel or thread | @mention the agent by its username, for example `@assistant`. | Visible to everyone in the channel. See [Use agents in channels](agents_in_channels.md). |
 | Mobile | Open a direct message with the agent. | Mobile can't start MCP OAuth. Use web or desktop to connect tools that need your account. |
 
-To see which agents exist, select the product switcher (grid icon) and choose **Agents**. The page lists every agent you can use. Agents you can't edit are marked **Read only**.
+In the Agents pane, select the chat name (or the agent name in a new chat) and then **All agent chats** to open every agent's chats. **Back to chat history** does the same.
+
+To open the full-page **Agents** workspace, select the product switcher (grid icon) and choose **Agents**. The sidebar lists your active agents and recent chats, where each chat's menu lets you **Rename chat** or **Archive chat**. Starting a new chat shows your pinned [skills](skills.md) above the composer for one-click launch. Open **All agents** to browse every agent you can use; agents you can't edit are marked **Read only**.
 
 If your workspace has several agents, pick one from any agent picker, such as the Agents pane, the **Skills** menu, or the search bar. Your choice is saved to your account and applies on web, desktop, and mobile. Until you choose, Mattermost uses the default agent your admin set. You can also @mention a specific agent.
 
@@ -56,6 +58,22 @@ If your admin allows it, you can create agents of your own, such as a release-no
 5. Select **Save**. Mention the agent or message it to try it.
 
 Every save creates a version. Open the version history and select **Restore this version** to roll back. You can edit or delete the agents you created, and the **Agents** page marks agents you can't edit as **Read only**.
+
+## Dictate a message
+
+If your System Admin turned on dictation, a microphone button appears in the formatting bar of every message box: channels, threads, the Agents pane, and when you edit a message. You don't need to be talking to an agent. Dictation needs an Enterprise license, and guest accounts can't use it. If you don't see the button, ask your System Admin.
+
+1. Place the cursor where the text should go and select the microphone button. In the WYSIWYG editor, dictated text is added at the end of the message instead. The first time, your browser asks for microphone access.
+2. Wait while a spinner shows in the button: dictation is getting ready. This usually takes a second or two, and what you say before it's ready may be missed.
+3. Speak once the tooltip says **Listening. Speak now.** A ring around the button grows and shrinks with your voice, so you can see the microphone hears you. Your words appear at the cursor as you talk and are corrected as each phrase is finalized.
+4. Select the button again or press Esc to stop. The text stays in the message box for you to edit and send.
+
+Dictation also stops when you type in the message box, send the message, switch to another channel or thread, after 30 seconds without speech, and after 10 minutes. If you type while dictating, what you typed is kept.
+
+- Your audio goes from your device to the speech service your organization uses, not through Mattermost, and Mattermost doesn't keep it. Dictated text is like typed text: until you send or delete it, it can be saved as a draft, on the server too if your drafts sync across devices.
+- If you hid the formatting bar, show it again to see the microphone.
+- Mobile apps don't have dictation.
+- If the button shows an error, point to it to read why. A blocked microphone is fixed in your browser's site settings. For other errors, ask your System Admin.
 
 ## Attach files and images
 
@@ -74,6 +92,7 @@ Ask the agent to put long output in a file, for example "the meeting notes as a 
 - In direct messages this is always available. In channels it needs the same admin setting as tools.
 - When an agent posts for you with `create_post`, `dm`, or `group_message`, it can attach text files to that post too.
 - If your admin enabled HTML artifacts, an `.html` file the agent creates renders as an interactive page in the reply after you select **Run**.
+- An artifact can offer to save a file it generated, such as an image, a CSV, or a report. Mattermost asks you to confirm each download and shows the file's name, type, and size first. Artifacts can save images, text, CSV, Markdown, JSON, and PDF files up to 25 MiB. Treat a downloaded file like any file from an untrusted source.
 
 ## What an agent sees and keeps
 

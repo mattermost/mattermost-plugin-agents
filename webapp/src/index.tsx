@@ -29,7 +29,7 @@ import RHS from './components/rhs/rhs';
 import RHSTitle from './components/rhs/rhs_title';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement, {PopoutCustomPromptsManagement} from './components/custom_prompts/custom_prompts_management';
-import Config from './components/system_console/config';
+import SettingsAccessConfig from './components/system_console/settings_access_config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
 import {setOpenRHSAction} from './redux_actions';
@@ -61,6 +61,9 @@ import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
+import DictationButton from './components/dictation/dictation_button';
+import {refreshDictationAvailability, scheduleDictationAvailabilityRefresh} from './dictation/availability';
+import {notifyDictationSessionEnded} from './dictation/session_events';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -194,6 +197,7 @@ export default class Plugin {
             registry.registerReconnectHandler(() => {
                 clearGeneratingPosts();
                 agentThreadsSync.handleReconnect();
+                refreshDictationAvailability(store.dispatch);
             });
         }
 
@@ -224,7 +228,29 @@ export default class Plugin {
             fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         };
 
-        registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
+        // The plugin server announces dictation availability changes from plugin
+        // config and license changes itself, but not from server config changes,
+        // which can change the license level of a development server.
+        registry.registerWebSocketEventHandler('config_changed', () => {
+            refreshRuntimeBotsCache();
+            scheduleDictationAvailabilityRefresh(store.dispatch);
+        });
+
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_dictation_availability_changed', () => {
+            scheduleDictationAvailabilityRefresh(store.dispatch);
+        });
+
+        // The server ended one of this user's dictation sessions.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_dictation_session_ended',
+            (msg: PluginWebSocketMessage<{session_id?: unknown; reason?: unknown}>) => {
+                notifyDictationSessionEnded(msg.data?.session_id, msg.data?.reason);
+            },
+        );
+
+        if (registry.registerPostEditorActionComponent) {
+            registry.registerPostEditorActionComponent(DictationButton);
+        }
 
         // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
         registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);
@@ -247,7 +273,7 @@ export default class Plugin {
             registry.registerPostDropdownMenuAction(<><span className='icon'><IconReactForMe/></span><FormattedMessage defaultMessage='React for me'/></>, doReaction);
         }
 
-        registry.registerAdminConsoleCustomSetting('Config', Config);
+        registry.registerAdminConsoleCustomSetting('Config', SettingsAccessConfig);
         const agentsProductLabel = getAgentsProductLabel(store);
 
         // Channel settings tab (Mattermost >= 11.10 only). The schema is built

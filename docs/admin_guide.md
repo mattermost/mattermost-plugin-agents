@@ -6,7 +6,7 @@ An agent is a Mattermost bot backed by an LLM that you choose, including a model
 
 ## How the pieces fit
 
-1. An **LLM service** holds the connection to a provider: type, credentials, default model, and optional fallback. You configure services in the System Console.
+1. An **LLM service** holds the connection to a provider: type, credentials, default model, and optional fallback. You configure services in the Agents settings.
 2. An **agent** is a bot with a name, instructions, a model, access rules, and tool grants. Agents use a service. You create them on the **Agents** page.
 3. **Tools** give an agent abilities. Admins decide which tools exist, which need approval, and which users can reach each MCP server.
 4. **Users** talk to agents in direct messages, the Agents pane, and channels. Every tool call runs with the permissions of the person who asked, unless an agent uses a shared service account for external MCP servers. Tools from plugin-registered servers receive the requester's identity, and the source plugin enforces its own permissions. Credentials in a remote server's regular **Headers** are also shared by every user. See [Tool approval and credentials](tool_approval.md).
@@ -28,9 +28,9 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 
 ## Quick start
 
-1. Go to **System Console > Plugins > Agents** and select **Add an AI Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md). For a self-hosted model, see [Sovereign AI deployments](sovereign_ai.md).
+1. Open **Agents** from the product switcher, select **Settings**, and on **AI services** select **Add an AI Service**. Choose a **Service type**, enter the credentials and a **Default model**, and save. See [Configure LLM services](llm_services.md) and [Provider configuration](providers.md). For a self-hosted model, see [Sovereign AI deployments](sovereign_ai.md).
 2. Open the **Agents** page from the product switcher (grid icon). Select **Create agent**, choose a username, the service, and optional instructions. See [Create and manage agents](managing_agents.md).
-3. Back in **System Console > Plugins > Agents**, pick the **Default bot**. Users who haven't chosen an agent get this one, and so do features that don't let users choose, such as meeting summaries. If the default agent becomes unavailable, those features fail until you pick another. Mattermost never substitutes a different agent.
+3. Back in **Agents > Settings > General**, pick the **Default bot**. Users who haven't chosen an agent get this one, and so do features that don't let users choose, such as meeting summaries. If the default agent becomes unavailable, those features fail until you pick another. Mattermost never substitutes a different agent.
 4. Send the agent a direct message to test it.
 5. Optionally add [MCP servers](mcp_integrations.md), [web search](web_search.md), or [semantic search](embedding_search.md), and set [access controls](access_control.md).
 
@@ -46,6 +46,7 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 | Control tools, auto-reply, and web search in channels | [Control agents in channels](channel_settings.md) |
 | Let external AI clients use Mattermost | [External client endpoint](mcp_integrations.md#external-client-endpoint) |
 | Give agents web search | [Web search](web_search.md) |
+| Let users dictate messages | [Set up dictation](dictation.md) |
 | Turn on semantic search | [Set up semantic search](embedding_search.md) |
 | Control links and HTML in AI output | [Secure AI-generated links and HTML](ai_output_security.md) |
 | Know what is sent to the LLM and what is stored | [Data handling](data_handling.md) |
@@ -57,26 +58,36 @@ Mattermost Server can ship with Agents pre-installed. Check **System Console > P
 
 For developers and integrators, see the [Mattermost MCP server](mcp_server.md) for connecting Claude Code or Cursor, the [tool reference](mcp_tools.md), and the [LLM Bridge](llm_bridge.md) for plugins.
 
+## Delegate settings access
+
+System admins can always view and change the Agents settings. To let other people in, go to **System Console > Plugins > Agents**, add them under **Settings access**, and select **Save**:
+
+- **Read and write access**: can view and change every Agents setting, including API keys, run reindexing, and author service and MCP server access policies. They can also turn on [service account authentication](tool_approval.md) for agents they manage. Because they choose which AI services and MCP servers agents use, they can send what users say to agents, including private messages, to a service they control. Grant this only to people you would trust as an Agents system admin. They can't change who has access or the legacy agents defined in the plugin configuration.
+- **Agent managers**: can edit and delete every agent, as the `manage_others_agent` permission allows, without any access to the settings.
+
+People with read and write access see **Settings** in the Agents sidebar. Access is per user; Mattermost's delegated admin roles don't grant it. Only a system admin can change the lists.
+
 ## Plugin settings
 
-Everything is under **System Console > Plugins > Agents**. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
+Everything is under **Agents > Settings**, in the **General**, **AI services**, **MCP servers**, **Embedding search**, **Web search**, **Dictation**, and **Debug** sections. **System Console > Plugins > Agents** has an **Open Agents settings** button and the **Settings access** lists below. The plugin stores its configuration, and agents, in its own database tables. See [Back up and automate](backup_and_automation.md).
 
-| Panel | Setting | Config key | Default | Details |
+| Section | Setting | Config key | Default | Details |
 |---|---|---|---|---|
-| AI Services | Services | `services` | none | [Configure LLM services](llm_services.md) |
-| AI Bots | Limit agent version history, Versions to keep per agent | `agentVersionsToKeep` | Off (`0`, keep all). Turning it on sets 50. | [Create and manage agents](managing_agents.md#keep-a-limited-history) |
-| AI Functions | Default bot | `defaultBotUserID` | The first agent, until you pick one | [Create and manage agents](managing_agents.md) |
-| AI Functions | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
-| AI Functions | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
-| AI Functions | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
-| AI Functions | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
-| AI Functions | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
-| AI Functions | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
+| AI services | Services | `services` | none | [Configure LLM services](llm_services.md) |
+| General | Limit agent version history, Versions to keep per agent | `agentVersionsToKeep` | Off (`0`, keep all). Turning it on sets 50. | [Create and manage agents](managing_agents.md#keep-a-limited-history) |
+| General | Default bot | `defaultBotUserID` | The first agent, until you pick one | [Create and manage agents](managing_agents.md) |
+| General | Render AI-generated links | `allowUnsafeLinks` | Off | [Secure AI-generated links and HTML](ai_output_security.md) |
+| General | Allowed Link Domains (csv) | `allowedLinkDomains` | Empty (any domain, when links are on) | [Secure AI-generated links and HTML](ai_output_security.md) |
+| General | Enable HTML artifacts (experimental) | `enableHTMLArtifacts` | Off | [Secure AI-generated links and HTML](ai_output_security.md#html-artifacts) |
+| General | Enable Channel Mention Tool Calling (experimental) | `enableChannelMentionToolCalling` | Off | [Control agents in channels](channel_settings.md) |
+| General | Enable ambient auto-replies (experimental) | `enableAmbientAutoReply` | Off | [Control agents in channels](channel_settings.md#ambient-limits-and-cost) |
+| General | Allow native web search in channels | `allowNativeWebSearchInChannels` | Off | [Control agents in channels](channel_settings.md) |
 | Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
 | Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |
-| Embedding Search (experimental) | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
-| Web Search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
-| Model Context Protocol (MCP) | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
+| Embedding search | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
+| Dictation | Enable dictation (experimental), Transcription service, Transcription model, Language | `dictation` | Off, model `gpt-live-transcribe` | [Set up dictation](dictation.md) |
+| Web search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
+| MCP servers | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
 
 ## License requirements
 
@@ -95,13 +106,14 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Provider-native web search | No | Yes | Yes | Yes |
 | Agent access controls (users, teams, channels) | No | Yes | Yes | Yes |
 | Token usage logging | No | Yes | Yes | Yes |
-| Built-in web search (Brave, Google, SearXNG) | No | No | Yes | Yes |
+| Built-in web search (Brave, SearXNG) | No | No | Yes | Yes |
 | Tool approval policies | No | No | Yes | Yes |
 | Remote and external MCP servers, HTTP MCP endpoint | No | No | Yes | Yes |
 | MCP service account authentication | No | No | Yes | Yes |
 | Semantic search and AI search | No | No | Yes | Yes |
 | Meeting summaries | No | No | Yes | Yes |
 | Shared skills | No | No | Yes | Yes |
+| Dictation | No | No | Yes | Yes |
 | Channel auto-reply | No | No | No | Yes |
 | Attribute-based access control | No | No | No | Yes |
 
@@ -119,4 +131,4 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 - Reading configuration is never blocked.
 - Turning something off is never blocked. You can disable, clear, or delete a gated setting after a license downgrade.
 - License changes apply without restarting the plugin.
-- A System Console or REST API request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`. LLM Bridge completions, MCP tools, and channel mentions report licensing differently. See [LLM Bridge](llm_bridge.md#permissions-and-licensing).
+- An Agents settings or REST API request denied for licensing returns HTTP 403 with an `error` message and a `license_required` field set to `professional`, `enterprise`, or `enterprise_advanced`. LLM Bridge completions, MCP tools, and channel mentions report licensing differently. See [LLM Bridge](llm_bridge.md#permissions-and-licensing).

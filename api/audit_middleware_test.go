@@ -236,6 +236,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		bridge bool // authenticate as a plugin instead of a user
 	}{
 		{event: AuditEventSaveConfig, method: http.MethodPut, path: "/admin/config"},
+		{event: AuditEventSaveSettingsAccess, method: http.MethodPut, path: "/admin/settings-access"},
 		{event: AuditEventReindexPosts, method: http.MethodPost, path: "/admin/reindex"},
 		{event: AuditEventCancelReindexJob, method: http.MethodPost, path: "/admin/reindex/cancel"},
 		{event: AuditEventCatchUpReindex, method: http.MethodPost, path: "/admin/reindex/catchup"},
@@ -270,6 +271,8 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventDeleteServicePolicy, method: http.MethodDelete, path: "/admin/services/serviceid/access_policy"},
 		{event: AuditEventPutMCPPolicy, method: http.MethodPut, path: "/admin/mcp/serverid/access_policy"},
 		{event: AuditEventDeleteMCPPolicy, method: http.MethodDelete, path: "/admin/mcp/serverid/access_policy"},
+		{event: AuditEventCreateDictationSession, method: http.MethodPost, path: "/dictation/session"},
+		{event: AuditEventEndDictationSession, method: http.MethodDelete, path: "/dictation/session/sessionid"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is

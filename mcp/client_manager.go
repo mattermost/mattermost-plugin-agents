@@ -544,7 +544,7 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 		localSnapshot = localClients.snapshotClients()
 	}
 	rawTools := collectToolsFromSnapshots(req.InvokingUserID, m.log, remoteClients.snapshotClients(), localSnapshot)
-	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, plugins)
+	filtered := filterToolsByConfigWithOptions(rawTools, cfg, embeddedClient, plugins, req.IncludeDisabledTools)
 	return CatalogAccess{
 		Tools:         retainToolsFromOrigins(filtered, servers.origins),
 		Errors:        joinMCPErrors(remoteErrors, localErrors),
@@ -1287,6 +1287,10 @@ func (m *ClientManager) DiscoverPluginServerTools(ctx context.Context, userID st
 // Plugin-registered servers flow through via synthetic ServerConfig entries
 // keyed by "plugin://<pluginID>".
 func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *EmbeddedServerClient, pluginServers []PluginServerConfig) []llm.Tool {
+	return filterToolsByConfigWithOptions(rawTools, cfg, embeddedClient, pluginServers, false)
+}
+
+func filterToolsByConfigWithOptions(rawTools []llm.Tool, cfg Config, embeddedClient *EmbeddedServerClient, pluginServers []PluginServerConfig, includeDisabled bool) []llm.Tool {
 	serverByOrigin := make(map[string]*ServerConfig, len(cfg.Servers)+len(pluginServers)+1)
 	serverOrder := make([]string, 0, len(cfg.Servers)+len(pluginServers)+1)
 
@@ -1348,10 +1352,13 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 
 		var filtered []llm.Tool
 		for _, t := range tools {
-			_, enabled := sc.GetToolPolicy(ToolPolicyLookupName(sc, t.Name))
-			if enabled {
-				filtered = append(filtered, t)
+			if !includeDisabled {
+				_, enabled := sc.GetToolPolicy(ToolPolicyLookupName(sc, t.Name))
+				if !enabled {
+					continue
+				}
 			}
+			filtered = append(filtered, t)
 		}
 
 		// Sort for deterministic output.
