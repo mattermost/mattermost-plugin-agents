@@ -55,32 +55,39 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 }
 
 func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	outcome, err := s.UpdateConfigWithOutcome(transform)
+	return outcome.Config, err
+}
+
+func (s *testConfigStore) UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error) {
 	if s.getErr != nil {
-		return config.Config{}, s.getErr
+		return store.ConfigUpdateOutcome{}, s.getErr
 	}
 	prev := s.cfg
 	next, err := transform(prev)
 	if err != nil {
-		return config.Config{}, err
+		return store.ConfigUpdateOutcome{}, err
 	}
 	if s.serviceIDMigrationDone {
 		for i := range next.Services {
 			if len(next.Services[i].ID) == 36 {
-				return next, store.ErrLegacyUUIDServiceID
+				return store.ConfigUpdateOutcome{Config: next}, store.ErrLegacyUUIDServiceID
 			}
 		}
 	}
+	var remappedAgentIDs []string
 	if s.agentStore != nil && prev != nil {
 		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
-			if _, err := s.agentStore.RemapAgentMCPServerOrigins(remaps); err != nil {
-				return config.Config{}, err
+			remappedAgentIDs, err = s.agentStore.RemapAgentMCPServerOrigins(remaps)
+			if err != nil {
+				return store.ConfigUpdateOutcome{}, err
 			}
 		}
 	}
 	if err := s.SaveConfig(next); err != nil {
-		return next, err
+		return store.ConfigUpdateOutcome{Config: next}, err
 	}
-	return next, nil
+	return store.ConfigUpdateOutcome{Config: next, RemappedAgentIDs: remappedAgentIDs}, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.

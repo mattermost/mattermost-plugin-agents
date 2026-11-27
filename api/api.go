@@ -111,6 +111,9 @@ type ConfigStore interface {
 	// persists the result under the config advisory lock. A transform error
 	// aborts the update and is returned as-is.
 	UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error)
+	// UpdateConfigWithOutcome is UpdateConfig returning the persisted config
+	// and any DB-backed agent IDs atomically remapped inside the transaction.
+	UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.

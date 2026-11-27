@@ -198,6 +198,119 @@ func TestHandleSaveConfigReportsSignInRemovalFailure(t *testing.T) {
 	assert.NotContains(t, string(raw), failing, "stored keys never enter audit records")
 }
 
+// A same-origin MCP server URL edit records the affected server IDs, the
+// remapped DB agent IDs, and any preference-remap failure in the saveConfig
+// audit record without leaking URLs, query parameters, or KV keys.
+func TestHandleSaveConfigAuditsMCPURLRemap(t *testing.T) {
+	const (
+		serverID    = "atlassian00000000000000000"
+		oldURL      = "https://mcp.atlassian.com/v2/mcp"
+		newURL      = "https://mcp.atlassian.com/v2/mcp?tools=sentinel-query-value"
+		prefKey     = "user_tool_providers_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+		sentinelKey = "sentinel-query-value"
+	)
+
+	tests := []struct {
+		name               string
+		withMatchingAgent  bool
+		failPrefRemap      bool
+		wantAgentIDs       bool
+		wantPrefRemapError bool
+	}{
+		{
+			name:              "records remapped server and agent IDs on success",
+			withMatchingAgent: true,
+			wantAgentIDs:      true,
+		},
+		{
+			name:               "records preference remap failure alongside server and agent IDs",
+			withMatchingAgent:  true,
+			failPrefRemap:      true,
+			wantAgentIDs:       true,
+			wantPrefRemapError: true,
+		},
+		{
+			name:              "records server ID and omits agent IDs when no agent matches",
+			withMatchingAgent: false,
+			wantAgentIDs:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+
+			agentStore := newMockAgentStore()
+			var matchingAgentID string
+			if tt.withMatchingAgent {
+				ag := &llm.BotConfig{
+					BotUserID:       "bot-user-1",
+					CreatorID:       "userid",
+					DisplayName:     "Jira",
+					Name:            "jira",
+					ServiceID:       "svc-1",
+					EnabledMCPTools: []llm.EnabledMCPTool{{ServerOrigin: oldURL, ToolName: "getJiraIssue"}},
+				}
+				require.NoError(t, agentStore.CreateAgent(ag, store.SystemAgentVersionMeta()))
+				matchingAgentID = ag.ID
+			}
+
+			initial := config.Config{
+				MCP: config.MCPConfig{
+					Enabled: true,
+					Servers: []config.MCPServerConfig{{ID: serverID, Name: "Atlassian", Enabled: true, BaseURL: oldURL}},
+				},
+			}
+			cfgStore := &testConfigStore{cfg: &initial, agentStore: agentStore}
+			e.api.configStore = cfgStore
+			e.api.configUpdater = &testConfigUpdater{}
+			e.api.clusterNotifier = &testClusterNotifier{}
+			e.api.agentStore = agentStore
+			e.api.licenseChecker = enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced)
+
+			if tt.failPrefRemap {
+				e.mockAPI.On("KVList", 0, 1000).Return([]string{prefKey}, nil)
+				e.mockAPI.On("KVGet", prefKey).Return(nil, model.NewAppError("KVGet", "kv.unavailable", nil, "", http.StatusInternalServerError))
+				e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+			} else {
+				e.mockAPI.On("KVList", 0, 1000).Return([]string{}, nil)
+			}
+
+			edited := initial
+			edited.MCP.Servers = []config.MCPServerConfig{{ID: serverID, Name: "Atlassian", Enabled: true, BaseURL: newURL}}
+			body, err := json.Marshal(edited)
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Mattermost-User-Id", "userid")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			e.api.ServeHTTP(nil, w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Len(t, *records, 1)
+			params := (*records)[0].EventData.Parameters
+			assert.Equal(t, []string{serverID}, params[audit.KeyMCPURLRemappedServerIDs])
+			if tt.wantAgentIDs {
+				assert.Equal(t, []string{matchingAgentID}, params[audit.KeyMCPURLRemappedAgentIDs])
+			} else {
+				assert.NotContains(t, params, audit.KeyMCPURLRemappedAgentIDs)
+			}
+			if tt.wantPrefRemapError {
+				assert.Equal(t, true, params[audit.KeyMCPPrefsRemapFailed])
+			} else {
+				assert.NotContains(t, params, audit.KeyMCPPrefsRemapFailed)
+			}
+
+			raw, err := json.Marshal((*records)[0])
+			require.NoError(t, err)
+			assert.NotContains(t, string(raw), sentinelKey, "URLs and query parameters must never enter audit records")
+			assert.NotContains(t, string(raw), prefKey, "KV keys must never enter audit records")
+		})
+	}
+}
+
 // The sweep is not tied to the request: an admin closing the page right after
 // saving does not stop users' sign-ins from being removed.
 func TestHandleSaveConfigClearsSignInsAfterRequestCancelled(t *testing.T) {

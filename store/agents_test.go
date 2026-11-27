@@ -653,12 +653,13 @@ func TestUpdateConfigRemapsAgentsAtomicallyAndRollsBackOnError(t *testing.T) {
 	_, err = s.db.Exec(`DROP TRIGGER trg_fail_remap_agent ON Agents_UserAgents; DROP FUNCTION fail_remap_agent();`)
 	require.NoError(t, err)
 
-	_, err = s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+	outcome, err := s.UpdateConfigWithOutcome(func(prev *config.Config) (config.Config, error) {
 		next := *prev.Clone()
 		next.MCP.Servers[0].BaseURL = newURL
 		return next, nil
 	})
 	require.NoError(t, err)
+	assert.Equal(t, orderedIDs, outcome.RemappedAgentIDs)
 
 	gotCfg, err = s.GetConfig()
 	require.NoError(t, err)

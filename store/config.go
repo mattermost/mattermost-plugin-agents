@@ -79,6 +79,13 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
+// ConfigUpdateOutcome reports the persisted configuration together with any
+// side effects performed atomically inside UpdateConfigWithOutcome.
+type ConfigUpdateOutcome struct {
+	Config           config.Config
+	RemappedAgentIDs []string
+}
+
 // UpdateConfig atomically reads the active config, applies transform, and
 // persists the result as the new active row — one transaction under the same
 // advisory lock as SaveConfig, so no concurrent save or migration can
@@ -86,11 +93,18 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 // transform error aborts with nothing written and is returned unwrapped so
 // callers can map their own sentinel errors.
 func (s *Store) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
-	var next config.Config
+	outcome, err := s.UpdateConfigWithOutcome(transform)
+	return outcome.Config, err
+}
+
+// UpdateConfigWithOutcome is UpdateConfig returning any DB-backed agents whose
+// EnabledMCPTools were atomically remapped inside the same transaction.
+func (s *Store) UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (ConfigUpdateOutcome, error) {
+	var outcome ConfigUpdateOutcome
 
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return next, fmt.Errorf("failed to begin transaction: %w", err)
+		return outcome, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -99,35 +113,39 @@ func (s *Store) UpdateConfig(transform func(prev *config.Config) (config.Config,
 	}()
 
 	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
-		return next, fmt.Errorf("failed to lock config update transaction: %w", err)
+		return outcome, fmt.Errorf("failed to lock config update transaction: %w", err)
 	}
 
 	prev, _, err := getActiveConfigTx(tx)
 	if err != nil {
-		return next, err
+		return outcome, err
 	}
-	next, err = transform(prev)
+	next, err := transform(prev)
 	if err != nil {
-		return next, err
+		return outcome, err
 	}
 
 	if err = insertActiveConfigTx(tx, next); err != nil {
-		return next, err
+		return outcome, err
 	}
 
+	var remappedAgentIDs []string
 	if prev != nil {
 		if remaps := config.MCPServerURLRemapMap(config.MCPServerURLRemaps(prev.MCP.Servers, next.MCP.Servers)); len(remaps) > 0 {
-			if _, err = s.remapAgentMCPServerOriginsInTx(tx, remaps, int64(max(next.AgentVersionsToKeep, 0))); err != nil {
-				return next, err
+			remappedAgentIDs, err = s.remapAgentMCPServerOriginsInTx(tx, remaps, int64(max(next.AgentVersionsToKeep, 0)))
+			if err != nil {
+				return outcome, err
 			}
 		}
 	}
 
 	if err = tx.Commit(); err != nil {
-		return next, fmt.Errorf("failed to commit config update: %w", err)
+		return outcome, fmt.Errorf("failed to commit config update: %w", err)
 	}
 
-	return next, nil
+	outcome.Config = next
+	outcome.RemappedAgentIDs = remappedAgentIDs
+	return outcome, nil
 }
 
 func configHasLegacyUUIDServiceIDs(cfg *config.Config) bool {

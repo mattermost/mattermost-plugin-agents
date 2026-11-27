@@ -186,7 +186,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// IDs; they never reclaim an existing identity by name or origin.
 	var changedKeys []string
 	var prevServers []config.MCPServerConfig
-	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+	outcome, err := a.configStore.UpdateConfigWithOutcome(func(prev *config.Config) (config.Config, error) {
 		// A masked credential means "keep the stored one"; any other value is what
 		// the admin typed, including an empty one that clears it.
 		restored := config.RestoreSecrets(cfg, prev)
@@ -264,6 +264,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
+	saved := outcome.Config
+	remappedAgentIDs := outcome.RemappedAgentIDs
+
 	// From here on the config HAS changed in the database. If a later step
 	// fails (cluster notify), the audit record's fail status would otherwise
 	// hide a real mutation — mark it explicitly.
@@ -277,18 +280,18 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	// DB-backed agents whose EnabledMCPTools referenced an edited server's old
-	// URL were remapped atomically inside UpdateConfig under the config save
-	// advisory lock. Updating local runtime config and publishing config +
-	// agent updates reloads bots and invalidates clients on every HA node.
+	// URL were remapped atomically inside UpdateConfigWithOutcome under the
+	// config save advisory lock. Record the affected server and agent IDs in
+	// the audit trail, update local runtime config, notify peers, and refresh
+	// each remapped agent individually.
 	urlRemaps := config.MCPServerURLRemaps(prevServers, saved.MCP.Servers)
+	recordMCPURLRemapAudit(c, urlRemaps, remappedAgentIDs)
 
 	a.configUpdater.Update(&saved)
 
 	notifyErr := a.clusterNotifier.PublishConfigUpdate()
 
-	if len(urlRemaps) > 0 {
-		a.refreshRemappedMCPAgents(urlRemaps, notifyErr == nil)
-	}
+	a.refreshRemappedMCPAgents(remappedAgentIDs, notifyErr == nil)
 
 	// Remove saved sign-ins the change orphaned or that were issued for a
 	// server's old origin. Grants are only used by the server they were
@@ -307,71 +310,47 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, adminConfigResponse(saved))
 }
 
-// refreshRemappedMCPAgents refreshes each active DB agent whose EnabledMCPTools
-// now references a remapped MCP server URL, locally via RefreshAgent and (when
-// publishPeers is true) across HA peers via PublishAgentUpdate(agentID), so a
-// failing unrelated agent in EnsureBots cannot leave remapped allowlists stale.
-// Peer notification is skipped when PublishConfigUpdate failed so peers do not
-// reload remapped allowlists against a stale in-memory MCP config.
-func (a *API) refreshRemappedMCPAgents(remaps []config.MCPServerURLRemap, publishPeers bool) {
-	newOrigins := make(map[string]struct{}, len(remaps))
-	for _, r := range remaps {
-		if norm := llm.NormalizeMCPServerOrigin(r.NewURL); norm != "" {
-			newOrigins[norm] = struct{}{}
-		}
-	}
-	if len(newOrigins) == 0 {
-		return
-	}
-
-	var affectedIDs []string
-	var listErr error
-	if a.agentStore != nil {
-		agents, err := a.agentStore.ListAgents()
-		if err != nil {
-			listErr = err
-			if a.pluginAPI != nil {
-				a.pluginAPI.Log.Warn("Failed to list agents to refresh after MCP server URL remap", "error", err)
-			}
-		} else {
-			for _, ag := range agents {
-				for _, t := range ag.EnabledMCPTools {
-					if _, ok := newOrigins[llm.NormalizeMCPServerOrigin(t.ServerOrigin)]; ok {
-						affectedIDs = append(affectedIDs, ag.ID)
-						break
-					}
-				}
+func recordMCPURLRemapAudit(c *gin.Context, remaps []config.MCPServerURLRemap, remappedAgentIDs []string) {
+	if len(remaps) > 0 {
+		serverIDs := make([]string, 0, len(remaps))
+		for _, r := range remaps {
+			if r.ServerID != "" && !slices.Contains(serverIDs, r.ServerID) {
+				serverIDs = append(serverIDs, r.ServerID)
 			}
 		}
+		if len(serverIDs) > 0 {
+			audit.AddParam(auditRec(c), audit.KeyMCPURLRemappedServerIDs, audit.TruncateIDs(serverIDs))
+		}
 	}
+	if len(remappedAgentIDs) > 0 {
+		audit.AddParam(auditRec(c), audit.KeyMCPURLRemappedAgentIDs, audit.TruncateIDs(remappedAgentIDs))
+	}
+}
 
-	if len(affectedIDs) == 0 && listErr == nil {
+// refreshRemappedMCPAgents refreshes each DB-backed agent whose EnabledMCPTools
+// was atomically remapped inside UpdateConfigWithOutcome, locally via
+// RefreshAgent and (when publishPeers is true) across HA peers via
+// PublishAgentUpdate(agentID), so a failing unrelated agent in EnsureBots
+// cannot leave remapped allowlists stale. Peer notification is skipped when
+// PublishConfigUpdate failed so peers do not reload remapped allowlists
+// against a stale in-memory MCP config.
+func (a *API) refreshRemappedMCPAgents(agentIDs []string, publishPeers bool) {
+	if len(agentIDs) == 0 {
 		return
 	}
 
 	if a.bots != nil {
-		for _, id := range affectedIDs {
+		for _, id := range agentIDs {
 			if err := a.bots.RefreshAgent(id); err != nil && a.pluginAPI != nil {
 				a.pluginAPI.Log.Warn("Failed to refresh agent after MCP server URL remap", "agent_id", id, "error", err)
-			}
-		}
-		if listErr != nil {
-			a.bots.ForceRefreshOnNextEnsure()
-			if err := a.bots.EnsureBots(); err != nil && a.pluginAPI != nil {
-				a.pluginAPI.Log.Warn("Failed to ensure bots after MCP server URL remap", "error", err)
 			}
 		}
 	}
 
 	if publishPeers && a.clusterAgentNotifier != nil {
-		for _, id := range affectedIDs {
+		for _, id := range agentIDs {
 			if err := a.clusterAgentNotifier.PublishAgentUpdate(id); err != nil && a.pluginAPI != nil {
 				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "agent_id", id, "error", err)
-			}
-		}
-		if listErr != nil {
-			if err := a.clusterAgentNotifier.PublishAgentUpdate(""); err != nil && a.pluginAPI != nil {
-				a.pluginAPI.Log.Warn("Failed to publish agent update after MCP server URL remap", "error", err)
 			}
 		}
 	}
@@ -408,6 +387,7 @@ func (a *API) remapMCPUserPreferences(c *gin.Context, remaps []config.MCPServerU
 	updated, err := mcp.RemapUserPreferencesConverging(ctx, &a.pluginAPI.KV, remaps, loadServers)
 	if err != nil {
 		a.pluginAPI.Log.Warn("Failed to remap per-user MCP provider preferences after server URL change", "updated", updated, "error", err)
+		audit.AddParam(auditRec(c), audit.KeyMCPPrefsRemapFailed, true)
 		return
 	}
 	if updated > 0 {
