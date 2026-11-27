@@ -174,6 +174,22 @@ func TextContent(blocks []ContentBlock) string {
 // block type is withheld by default.
 // The original slice is never mutated; nil in, nil out for empty text.
 func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
+	return replacePostContent(blocks, text, true)
+}
+
+// WithoutPostContent returns a new slice of content blocks for a turn whose
+// anchored Mattermost post is no longer live (deleted, missing, or outside the
+// conversation's channel). Like WithTextContent, it replaces text and drops
+// text-coupled blocks (thinking, server tool activity, annotations, unknown
+// types), and additionally drops file and image attachments so removed post
+// files are withheld. Tool call and result blocks survive so tool_use/tool_result
+// pairing stays valid.
+// The original slice is never mutated; nil in, nil out for empty text.
+func WithoutPostContent(blocks []ContentBlock, text string) []ContentBlock {
+	return replacePostContent(blocks, text, false)
+}
+
+func replacePostContent(blocks []ContentBlock, text string, keepAttachments bool) []ContentBlock {
 	if blocks == nil && text == "" {
 		return nil
 	}
@@ -188,7 +204,11 @@ func WithTextContent(blocks []ContentBlock, text string) []ContentBlock {
 				block.Text = text
 				placed = true
 			}
-		case BlockTypeFile, BlockTypeImage, BlockTypeToolUse, BlockTypeToolResult:
+		case BlockTypeToolUse, BlockTypeToolResult:
+		case BlockTypeFile, BlockTypeImage:
+			if !keepAttachments {
+				continue
+			}
 		default:
 			continue
 		}

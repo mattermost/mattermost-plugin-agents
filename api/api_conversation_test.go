@@ -112,6 +112,7 @@ func TestHandleGetConversation(t *testing.T) {
 					{ID: "turn-2", ConversationID: "conv-dm-owner", PostID: &postID, Role: "assistant", Content: unsharedToolBlocks, TokensIn: 100, TokensOut: 50, Sequence: 2},
 					{ID: "turn-3", ConversationID: "conv-dm-owner", Role: "tool_result", Content: unsharedToolResultBlocks, Sequence: 3},
 				}
+				e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: testBotUserID, ChannelId: dmChannelID, Message: "Let me check the weather."}, nil).Maybe()
 				e.mockAPI.On("HasPermissionToChannel", testUserID, dmChannelID, model.PermissionReadChannel).Return(true)
 			},
 			expectedStatus: http.StatusOK,
@@ -576,6 +577,7 @@ func TestHandleGetConversation(t *testing.T) {
 					{ID: "turn-1", ConversationID: "conv-json-shape", Role: "user", Content: textOnlyBlocks, Sequence: 1},
 					{ID: "turn-2", ConversationID: "conv-json-shape", PostID: &postID, Role: "assistant", Content: textOnlyBlocks, TokensIn: 1500, TokensOut: 200, Sequence: 2},
 				}
+				e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, Message: "What is the weather in NYC?"}, nil).Maybe()
 				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
 				e.mockRootPost(rootPostID, rootPostLive)
 			},
@@ -641,6 +643,7 @@ func TestHandleGetConversation(t *testing.T) {
 					{ID: "turn-2", ConversationID: "conv-run-post", PostID: &postID, Role: "assistant", Content: textOnlyBlocks, Status: store.TurnStatusStreaming, Sequence: 2},
 					{ID: "turn-3", ConversationID: "conv-run-post", RunPostID: &postID, Role: "assistant", Content: textOnlyBlocks, Sequence: 3},
 				}
+				e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, Message: ""}, nil).Maybe()
 				e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
 			},
 			expectedStatus: http.StatusOK,
@@ -1064,6 +1067,8 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 				require.NoError(t, json.Unmarshal(body, &response))
 				assert.Equal(t, "conv-anchor-owner", response.ID)
 				assert.Len(t, response.Turns, 2)
+				assert.Equal(t, currentUserPostMessage, turnTextByRole(t, body, "user"))
+				assert.NotContains(t, string(body), storedUserTurnText)
 			},
 		},
 		{
@@ -1251,8 +1256,12 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 				})
 			},
 			validate: func(t *testing.T, body []byte) {
-				assert.NotContains(t, conversation.TextContent(turnBlocks(t, body)), "confidential note",
+				text := conversation.TextContent(turnBlocks(t, body))
+				assert.Empty(t, text, "a post outside the conversation channel clears turn text instead of serving stored or cross-channel text")
+				assert.NotContains(t, string(body), "confidential note",
 					"a post outside the conversation channel never supplies text to the response")
+				assert.NotContains(t, string(body), "shared question",
+					"a post outside the conversation channel must not fall back to stored text")
 			},
 		},
 		{
@@ -1764,7 +1773,7 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			absent: []string{secretEditedAway, editedReplacement},
 		},
 		{
-			name:           "owner still gets the stored text of an edited and a deleted post",
+			name:           "owner also gets the live edited text and empty text for a deleted post",
 			conversationID: "conv-owner",
 			userID:         testUserID,
 			member:         true,
@@ -1778,8 +1787,75 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 				})
 			},
 			status:    http.StatusOK,
-			texts:     []string{secretEditedAway, secretDeletedReply},
-			wantTitle: "Question about " + secretEditedAway,
+			absent:    []string{secretEditedAway, secretDeletedReply},
+			texts:     []string{editedReplacement, ""},
+			wantTitle: "",
+		},
+		{
+			name:           "deleted post drops file and image attachments from the response",
+			conversationID: "conv-deleted-files",
+			userID:         testUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredUserPostID).Return(deletedPost(anchoredUserPostID, "", secretEditedAway), nil).Maybe()
+				anchoredThread(t, e, "conv-deleted-files", "Files", nil, nil)
+				postID := anchoredUserPostID
+				e.conversationStore.turns["conv-deleted-files"] = []store.Turn{{
+					ID: "turn-files", ConversationID: "conv-deleted-files", PostID: &postID, Role: "user", Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+						{Type: conversation.BlockTypeFile, FileID: edgeAnchorFileID, Filename: "secret-" + secretToken + ".txt", MimeType: "text/plain"},
+						{Type: conversation.BlockTypeImage, FileID: edgeAnchorImageID, Filename: "shot-" + secretToken + ".png", MimeType: "image/png"},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway, secretToken, edgeAnchorFileID, edgeAnchorImageID},
+			texts:     []string{""},
+			wantTitle: "",
+		},
+		{
+			name:           "streaming turn keeps checkpointed partial text while its post is live",
+			conversationID: "conv-streaming-live",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
+					Id: anchoredAssistantPostID, UserId: testBotUserID, ChannelId: testChannelID, Message: "",
+				}, nil).Maybe()
+				anchoredThread(t, e, "conv-streaming-live", "Streaming", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-streaming-live"] = []store.Turn{{
+					ID: "turn-streaming", ConversationID: "conv-streaming-live", PostID: &postID, Role: "assistant", Status: store.TurnStatusStreaming, Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: "partial streamed reply"},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			texts:     []string{"partial streamed reply"},
+			wantTitle: "Streaming",
+		},
+		{
+			name:           "streaming turn whose post was deleted is cleared",
+			conversationID: "conv-streaming-deleted",
+			userID:         testOtherUserID,
+			member:         true,
+			setup: func(t *testing.T, e *TestEnvironment) {
+				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(deletedPost(anchoredAssistantPostID, "", ""), nil).Maybe()
+				anchoredThread(t, e, "conv-streaming-deleted", "Streaming", nil, nil)
+				postID := anchoredAssistantPostID
+				e.conversationStore.turns["conv-streaming-deleted"] = []store.Turn{{
+					ID: "turn-streaming", ConversationID: "conv-streaming-deleted", PostID: &postID, Role: "assistant", Status: store.TurnStatusStreaming, Sequence: 1,
+					Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+						{Type: conversation.BlockTypeText, Text: secretEditedAway},
+					}),
+				}}
+			},
+			status:    http.StatusOK,
+			absent:    []string{secretEditedAway},
+			texts:     []string{""},
+			wantTitle: "",
 		},
 	}
 
@@ -1812,4 +1888,59 @@ func TestGetConversationDoesNotServeTextRemovedFromPosts(t *testing.T) {
 			assert.Equal(t, tt.wantTitle, response.Title)
 		})
 	}
+}
+
+func TestGetConversationOwnerKeepsUnsharedToolsWhenAnchoredPostChanges(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	channelID := testChannelID
+	postID := anchoredAssistantPostID
+	e.conversationStore.conversations["conv-owner-tools"] = &store.Conversation{
+		ID:        "conv-owner-tools",
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+		Title:     "Tools",
+		Operation: "conversation",
+	}
+	e.conversationStore.turns["conv-owner-tools"] = []store.Turn{
+		{
+			ID:             "turn-1",
+			ConversationID: "conv-owner-tools",
+			PostID:         &postID,
+			Role:           "assistant",
+			Sequence:       1,
+			Content: mustMarshalBlocks(t, []conversation.ContentBlock{
+				{Type: conversation.BlockTypeThinking, Text: secretDeletedReply},
+				{Type: conversation.BlockTypeText, Text: secretEditedAway},
+				{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "lookup", Input: json.RawMessage(`{"secret":"private-arg"}`), Shared: new(false)},
+				{Type: conversation.BlockTypeToolResult, ToolUseID: "tc1", Content: "private-result", Shared: new(false)},
+			}),
+		},
+	}
+	e.mockAPI.On("GetPost", postID).Return(&model.Post{
+		Id:        postID,
+		UserId:    testBotUserID,
+		ChannelId: channelID,
+		Message:   editedReplacement,
+	}, nil).Maybe()
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+
+	status, body := getConversationResponse(t, e, "conv-owner-tools", testUserID)
+	require.Equal(t, http.StatusOK, status)
+	assert.NotContains(t, string(body), secretEditedAway)
+	assert.NotContains(t, string(body), secretDeletedReply)
+
+	blocks := turnBlocks(t, body)
+	assert.Equal(t, editedReplacement, conversation.TextContent(blocks))
+	toolUses := blocksOfType(blocks, conversation.BlockTypeToolUse)
+	require.Len(t, toolUses, 1)
+	assert.JSONEq(t, `{"secret":"private-arg"}`, string(toolUses[0].Input))
+	toolResults := blocksOfType(blocks, conversation.BlockTypeToolResult)
+	require.Len(t, toolResults, 1)
+	assert.Equal(t, "private-result", toolResults[0].Content)
 }

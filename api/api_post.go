@@ -353,7 +353,8 @@ func regenerateHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrNotRegenerable):
 		return http.StatusBadRequest
-	case errors.Is(err, conversation.ErrRootPostDeleted):
+	case errors.Is(err, conversation.ErrRootPostDeleted),
+		errors.Is(err, conversation.ErrInitiatingPostDeleted):
 		return http.StatusNotFound
 	case errors.Is(err, streaming.ErrAlreadyStreamingToPost),
 		errors.Is(err, conversation.ErrConversationArchived):

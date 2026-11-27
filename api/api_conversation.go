@@ -8,13 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // ConversationResponse is the JSON shape returned by GET /conversations/{id}.
@@ -105,9 +103,9 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		return
 	}
 
-	// 4. Privacy filtering and display sanitization
-	anchoredPostText := a.anchoredPostTextLookup(conv.ChannelID)
-	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, a.agentUsername(conv.BotID), anchoredPostText)
+	// 4. Privacy filtering, live-post reconciliation, and display sanitization
+	resolver := conversation.NewAnchoredPostResolver(&a.pluginAPI.Post, conv)
+	turnResponses, openingTextChanged, err := turnsToResponse(turns, userID != conv.UserID, a.agentUsername(conv.BotID), resolver)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
@@ -188,50 +186,16 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 	return conversation.ComputePostApprovalState(allTurns, *turn.PostID)
 }
 
-// anchoredPostTextLookup returns a lookup for the current message of a post a
-// turn is anchored to, resolving each post ID at most once per request. ok is
-// true only for a live post in channelID, the channel the conversation the
-// turn belongs to is bound to. A lookup failing for any reason other than the
-// post not existing is returned as an error.
-func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (message string, ok bool, err error) {
-	type anchoredPost struct {
-		message string
-		ok      bool
-	}
-	resolved := make(map[string]anchoredPost)
-
-	return func(postID string) (string, bool, error) {
-		if cached, seen := resolved[postID]; seen {
-			return cached.message, cached.ok, nil
-		}
-
-		var anchor anchoredPost
-		post, err := a.pluginAPI.Post.GetPost(postID)
-		switch {
-		case err != nil:
-			if !errors.Is(err, pluginapi.ErrNotFound) {
-				return "", false, fmt.Errorf("failed to read the post a conversation turn is anchored to: %w", err)
-			}
-		case post != nil && post.DeleteAt == 0 && channelID != nil && post.ChannelId == *channelID:
-			anchor = anchoredPost{message: post.Message, ok: true}
-		}
-
-		resolved[postID] = anchor
-		return anchor.message, anchor.ok, nil
-	}
-}
-
 // turnsToResponse converts store turns to response objects with display
-// sanitization, first applying privacy filtering when the requesting user is
-// not the conversation owner. For such a request, the text of a turn anchored
-// to a post is the message that post currently carries, which anchoredPostText
-// resolves; a turn holding no text of its own keeps none, and a turn already
-// holding that message is carried over as stored.
+// sanitization, applying privacy filtering when the requesting user is not the
+// conversation owner and reconciling post-anchored turns against their live
+// Mattermost posts for every viewer so owners, non-owners, and the model see
+// the same post text.
 func turnsToResponse(
 	turns []store.Turn,
 	filterForNonRequester bool,
 	agentUsername string,
-	anchoredPostText func(postID string) (string, bool, error),
+	resolver *conversation.AnchoredPostResolver,
 ) ([]TurnResponse, bool, error) {
 	result := make([]TurnResponse, len(turns))
 	openingTextChanged := false
@@ -242,21 +206,14 @@ func turnsToResponse(
 		}
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
-			if stored := conversation.TextContent(blocks); turn.PostID != nil && stored != "" {
-				message, ok, err := anchoredPostText(*turn.PostID)
-				if err != nil {
-					return nil, false, err
-				}
-				if !ok {
-					message = ""
-				}
-				if message != stored {
-					blocks = conversation.WithTextContent(blocks, message)
-					if i == 0 && (!ok || strings.TrimSpace(message) != strings.TrimSpace(withoutLeadingMention(stored, agentUsername))) {
-						openingTextChanged = true
-					}
-				}
-			}
+		}
+		reconciled, changed, err := conversation.ReconcileTurnForDisplay(turn, blocks, agentUsername, resolver)
+		if err != nil {
+			return nil, false, err
+		}
+		blocks = reconciled
+		if i == 0 && changed {
+			openingTextChanged = true
 		}
 		sanitized := conversation.SanitizeForDisplay(blocks)
 		sanitizedJSON, err := json.Marshal(sanitized)
@@ -277,24 +234,6 @@ func turnsToResponse(
 		}
 	}
 	return result, openingTextChanged, nil
-}
-
-// withoutLeadingMention drops the "@agent " the plugin puts in front of the
-// text of a turn it answers on its own (auto-reply, loop-in), where agent is
-// agentUsername. A bare mention, stored for a post with no text of its own,
-// leaves nothing. Any other text is returned as it is.
-func withoutLeadingMention(text, agentUsername string) string {
-	if agentUsername == "" {
-		return text
-	}
-	mention := "@" + agentUsername
-	if text == mention {
-		return ""
-	}
-	if rest, found := strings.CutPrefix(text, mention+" "); found {
-		return rest
-	}
-	return text
 }
 
 // agentUsername returns the username of the agent botID names, or "" when

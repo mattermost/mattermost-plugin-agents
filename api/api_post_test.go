@@ -985,3 +985,67 @@ func TestResumeRoutesAnswerNotFoundForDeletedRoot(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleRegenerateRejectsDeletedInitiatingPost(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		rootID    = "root12345678901234567890ab"
+		u2ID      = "usr212345678901234567890ab"
+		botPostID = "botp12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+		convID    = "conv12345678901234567890ab"
+	)
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.api.streamingService = &recordingStreamingService{}
+	convStore := e.useConversations()
+	e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+
+	root := rootID
+	ch := channelID
+	require.NoError(t, convStore.CreateConversation(&store.Conversation{
+		ID:         convID,
+		UserID:     testUserID,
+		BotID:      testBotUserID,
+		ChannelID:  &ch,
+		RootPostID: &root,
+		Operation:  "conversation",
+	}))
+	u2 := u2ID
+	bp := botPostID
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID: "turn-1", ConversationID: convID, PostID: &root, Role: "user", Sequence: 1,
+		Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "root question"}}),
+	}))
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID: "turn-2", ConversationID: convID, PostID: &u2, Role: "user", Sequence: 2,
+		Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "deleted reply"}}),
+	}))
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID: "turn-3", ConversationID: convID, PostID: &bp, Role: "assistant", Sequence: 3,
+		Content: mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "bot reply"}}),
+	}))
+
+	botPost := &model.Post{Id: botPostID, UserId: testBotUserID, ChannelId: channelID, RootId: rootID}
+	botPost.AddProp(streaming.ConversationIDProp, convID)
+	botPost.AddProp(streaming.RespondingToProp, u2ID)
+	e.mockAPI.On("GetPost", botPostID).Return(botPost, nil)
+	e.mockAPI.On("GetPost", rootID).Return(&model.Post{Id: rootID, UserId: testUserID, ChannelId: channelID, Message: "root question"}, nil)
+	e.mockAPI.On("GetPost", u2ID).Return(&model.Post{Id: u2ID, UserId: testUserID, ChannelId: channelID, RootId: rootID, Message: "deleted reply", DeleteAt: model.GetMillis()}, nil)
+	e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Name: testBotUserID + "__" + testUserID, Type: model.ChannelTypeDirect}, nil)
+	e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Locale: "en"}, nil).Maybe()
+	e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	e.mockAPI.On("KVDelete", mock.Anything).Return((*model.AppError)(nil)).Maybe()
+	e.mockAPI.On("KVGet", mock.Anything).Return([]byte(nil), (*model.AppError)(nil)).Maybe()
+
+	req := httptest.NewRequest(http.MethodPost, "/post/"+botPostID+"/regenerate", nil)
+	req.Header.Add("Mattermost-User-Id", testUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode, recorder.Body.String())
+}

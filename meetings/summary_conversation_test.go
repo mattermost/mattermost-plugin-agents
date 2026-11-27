@@ -469,10 +469,27 @@ func TestMeetingSummaryFollowUpReferencesTranscriptFile(t *testing.T) {
 			file.register(mm)
 			lm := &summaryLLM{}
 			s := newSummaryService(t, convStore, mm)
-			conv, _ := startSummary(t, s, convStore, lm, file)
+			conv, summaryPostID := startSummary(t, s, convStore, lm, file)
 			file.channelRevoked = tt.channelRevoked
 
 			followUpPostID := model.NewId()
+			mm.EXPECT().GetPost(*conv.RootPostID).Return(&model.Post{
+				Id:        *conv.RootPostID,
+				ChannelId: "dm-channel",
+				Message:   "",
+			}, nil).Maybe()
+			mm.EXPECT().GetPost(summaryPostID).Return(&model.Post{
+				Id:        summaryPostID,
+				ChannelId: "dm-channel",
+				RootId:    *conv.RootPostID,
+				Message:   "old summary",
+			}, nil).Maybe()
+			mm.EXPECT().GetPost(followUpPostID).Return(&model.Post{
+				Id:        followUpPostID,
+				ChannelId: "dm-channel",
+				RootId:    *conv.RootPostID,
+				Message:   "Who writes the release notes?",
+			}, nil).Maybe()
 			_, err := s.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
 				UserID:      summaryUserID,
 				SessionID:   regenSession,

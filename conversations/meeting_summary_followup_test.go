@@ -55,13 +55,15 @@ func TestMeetingSummaryFollowUpRechecksCaptionsChannelAccess(t *testing.T) {
 
 			seedMeetingSummaryConversation(t, env, summaryRootID, captionsFileID, storedSummary)
 
-			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, &model.Post{
+			followUpPost := &model.Post{
 				Id:        model.NewId(),
 				UserId:    env.userID,
 				ChannelId: env.channelID,
 				RootId:    summaryRootID,
 				Message:   followUpQuestion,
-			})
+			}
+			env.mmClient.posts[followUpPost.Id] = followUpPost
+			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, followUpPost)
 
 			env.fakeLLM.mu.Lock()
 			defer env.fakeLLM.mu.Unlock()

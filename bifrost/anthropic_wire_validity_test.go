@@ -13,8 +13,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // anthropicWireRequests converts posts through both bifrost request paths and
@@ -159,6 +164,126 @@ func TestAnthropicRequestsNeverCarryEmptyContent(t *testing.T) {
 					assert.Equal(t, tt.wantToolUseIDs, wireToolUseIDs(t, body),
 						"%s path must replay every named tool_use", path)
 				}
+			}
+		})
+	}
+}
+
+type wireTestPostClient struct {
+	mmapi.Client
+	posts map[string]*model.Post
+}
+
+func (c *wireTestPostClient) GetPost(postID string) (*model.Post, error) {
+	if p, ok := c.posts[postID]; ok {
+		return p.Clone(), nil
+	}
+	return nil, pluginapi.ErrNotFound
+}
+
+func TestReconciledAnchoredTurnsProduceValidProviderRequests(t *testing.T) {
+	const (
+		chanID = "chan-wire"
+		u1ID   = "u1"
+		b1ID   = "b1"
+		u2ID   = "u2"
+		b2ID   = "b2"
+		u3ID   = "u3"
+	)
+
+	marshal := func(blocks []conversation.ContentBlock) json.RawMessage {
+		raw, err := json.Marshal(blocks)
+		require.NoError(t, err)
+		return raw
+	}
+
+	ch := chanID
+	root := u1ID
+	conv := &store.Conversation{
+		ID:           "conv-wire",
+		UserID:       "user-1",
+		BotID:        "bot-1",
+		ChannelID:    &ch,
+		RootPostID:   &root,
+		SystemPrompt: "You are helpful.",
+		Operation:    "conversation",
+	}
+
+	baseTurns := []store.Turn{
+		{ID: "t1", ConversationID: conv.ID, PostID: new(u1ID), Role: "user", Sequence: 1, Content: marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "initial question"},
+		})},
+		{ID: "t2", ConversationID: conv.ID, PostID: new(b1ID), Role: "assistant", Sequence: 2, Content: marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "checking tools"},
+			{Type: conversation.BlockTypeToolUse, ID: "call_1", Name: "search", Input: json.RawMessage(`{"q":"x"}`), Status: conversation.StatusSuccess, Shared: new(true)},
+		})},
+		{ID: "t3", ConversationID: conv.ID, Role: "tool_result", Sequence: 3, Content: marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeToolResult, ToolUseID: "call_1", Content: "found", Status: conversation.StatusSuccess, Shared: new(true)},
+		})},
+		{ID: "t4", ConversationID: conv.ID, PostID: new(u2ID), Role: "user", Sequence: 4, Content: marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "second question"},
+		})},
+		{ID: "t5", ConversationID: conv.ID, PostID: new(b2ID), Role: "assistant", Sequence: 5, Content: marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "second answer"},
+		})},
+		{ID: "t6", ConversationID: conv.ID, PostID: new(u3ID), Role: "user", Sequence: 6, Content: marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "third question"},
+		})},
+	}
+
+	tests := []struct {
+		name  string
+		posts map[string]*model.Post
+	}{
+		{
+			name: "leading user post deleted and tool-bearing assistant post deleted",
+			posts: map[string]*model.Post{
+				u1ID: {Id: u1ID, ChannelId: chanID, DeleteAt: 100, Message: "initial question"},
+				b1ID: {Id: b1ID, ChannelId: chanID, DeleteAt: 200, Message: "checking tools"},
+				u2ID: {Id: u2ID, ChannelId: chanID, Message: "second question"},
+				b2ID: {Id: b2ID, ChannelId: chanID, Message: "second answer"},
+				u3ID: {Id: u3ID, ChannelId: chanID, Message: "third question"},
+			},
+		},
+		{
+			name: "mid-thread user and assistant posts edited to empty",
+			posts: map[string]*model.Post{
+				u1ID: {Id: u1ID, ChannelId: chanID, Message: "initial question"},
+				b1ID: {Id: b1ID, ChannelId: chanID, Message: ""},
+				u2ID: {Id: u2ID, ChannelId: chanID, Message: "   "},
+				b2ID: {Id: b2ID, ChannelId: chanID, Message: ""},
+				u3ID: {Id: u3ID, ChannelId: chanID, Message: "third question"},
+			},
+		},
+		{
+			name: "trailing user post edited to empty and mid-thread assistant post deleted",
+			posts: map[string]*model.Post{
+				u1ID: {Id: u1ID, ChannelId: chanID, Message: "initial question"},
+				b1ID: {Id: b1ID, ChannelId: chanID, Message: "checking tools"},
+				u2ID: {Id: u2ID, ChannelId: chanID, Message: "second question"},
+				b2ID: {Id: b2ID, ChannelId: chanID, DeleteAt: 500, Message: "second answer"},
+				u3ID: {Id: u3ID, ChannelId: chanID, Message: ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := conversation.AssembleRequest(conv, baseTurns, &llm.Context{}, &wireTestPostClient{posts: tt.posts}, false, 0)
+			require.NoError(t, err)
+
+			for path, body := range anthropicWireRequests(t, req.Posts) {
+				assert.Empty(t, llmtest.AnthropicRequestViolations(body),
+					"anthropic %s rejected reconciled request: %s", path, body)
+				assert.Equal(t, []string{"call_1"}, wireToolUseIDs(t, body),
+					"anthropic %s must keep tool_use paired", path)
+			}
+
+			for chain, body := range bedrockWireRequests(t, req.Posts) {
+				var parsed map[string]any
+				require.NoError(t, json.Unmarshal(body, &parsed))
+				assert.Empty(t, adjacentSameRoleMessages(parsed),
+					"bedrock %s must not repeat roles: %s", chain, body)
 			}
 		})
 	}
