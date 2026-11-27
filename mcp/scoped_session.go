@@ -1,0 +1,303 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package mcp
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"go.opentelemetry.io/otel/codes"
+)
+
+// ErrScopedSessionsUnavailable is returned when this plugin instance has no
+// way to mint scoped sessions.
+var ErrScopedSessionsUnavailable = errors.New("scoped sessions are not available")
+
+// ScopedSessionRequest describes one channel-triggered run of an agent whose
+// tools read through a scoped session for its bot.
+type ScopedSessionRequest struct {
+	BotUserID string
+	// RequesterID is the human the run acts for; it is recorded on the
+	// session for attribution and never grants access.
+	RequesterID string
+	// ChannelID is the channel the run was triggered in.
+	ChannelID string
+	// ExtraChannelIDs are admin-picked channels the agent may also read.
+	ExtraChannelIDs []string
+	// EnabledTools is the agent's tool allowlist when the run was started.
+	EnabledTools []llm.EnabledMCPTool
+}
+
+// ScopedRun is one run's scoped session and the embedded MCP connection that
+// uses it. It is never pooled, cached, or written to KV: Close revokes the
+// session and closes the connection. The connection carries the run's scope
+// binding, which is how plugin services reading under the session learn its
+// scope.
+type ScopedRun struct {
+	session  *model.Session
+	scope    *model.SessionScope
+	binding  *scopedsession.Binding
+	enabled  []llm.EnabledMCPTool
+	clients  *UserClients
+	manager  *ClientManager
+	minter   scopedsession.Minter
+	closeErr error
+	once     sync.Once
+	closed   atomic.Bool
+}
+
+// Session returns the run's scoped session.
+func (r *ScopedRun) Session() *model.Session {
+	if r == nil {
+		return nil
+	}
+	return r.session
+}
+
+// Scope returns the scope the run's session was minted with.
+func (r *ScopedRun) Scope() *model.SessionScope {
+	if r == nil {
+		return nil
+	}
+	return r.scope
+}
+
+// ExtraChannelIDs returns the admin-picked channels in the run's scope,
+// besides the channel the run was triggered in.
+func (r *ScopedRun) ExtraChannelIDs() []string {
+	if r == nil || r.scope == nil || len(r.scope.Resources.ChannelIDs) < 2 {
+		return nil
+	}
+	return slices.Clone(r.scope.Resources.ChannelIDs[1:])
+}
+
+// EnabledTools returns the allowlist entries the run was started with.
+func (r *ScopedRun) EnabledTools() []llm.EnabledMCPTool {
+	if r == nil {
+		return nil
+	}
+	return slices.Clone(r.enabled)
+}
+
+// Closed reports whether the run has ended, by its owner or by revocation.
+func (r *ScopedRun) Closed() bool {
+	return r == nil || r.closed.Load()
+}
+
+// BotUserID returns the bot the run's session belongs to.
+func (r *ScopedRun) BotUserID() string {
+	if r == nil || r.session == nil {
+		return ""
+	}
+	return r.session.UserId
+}
+
+// Close revokes the session and closes the run's MCP connection. It is safe
+// to call more than once and from any goroutine.
+func (r *ScopedRun) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.once.Do(func() {
+		r.binding.End()
+		r.closed.Store(true)
+		r.manager.forgetScopedRun(r)
+		r.clients.Close()
+		if err := r.minter.RevokeSession(r.session.Id); err != nil {
+			r.manager.log.Warn("Failed to revoke scoped session; it expires on its own",
+				"botUserID", r.session.UserId, "error", err)
+			r.closeErr = err
+		}
+	})
+	return r.closeErr
+}
+
+// SetScopedSessions configures how scoped sessions are minted; without a
+// minter, minting fails.
+func (m *ClientManager) SetScopedSessions(minter scopedsession.Minter) {
+	m.scopedMu.Lock()
+	defer m.scopedMu.Unlock()
+	m.scopedMinter = minter
+}
+
+// ScopedSessionsAvailable reports whether this node can mint scoped sessions.
+func (m *ClientManager) ScopedSessionsAvailable() bool {
+	m.scopedMu.Lock()
+	defer m.scopedMu.Unlock()
+	return m.scopedMinter != nil
+}
+
+// MintScopedSession creates a scoped session for req's bot. The session can
+// read req's channel, its extra channels, and every public channel on an open
+// team, and nothing else. The caller owns the run and must Close it when the
+// run ends.
+func (m *ClientManager) MintScopedSession(ctx context.Context, req ScopedSessionRequest) (*ScopedRun, error) {
+	_, span := telemetry.Tracer().Start(ctx, "mcp mint scoped session")
+	defer span.End()
+	run, err := m.mintScopedSession(req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "scoped session mint failed")
+	}
+	return run, err
+}
+
+func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun, error) {
+	for name, id := range map[string]string{"bot user": req.BotUserID, "requester": req.RequesterID, "channel": req.ChannelID} {
+		if !model.IsValidId(id) {
+			return nil, fmt.Errorf("scoped session %s ID is invalid", name)
+		}
+	}
+
+	m.scopedMu.Lock()
+	minter := m.scopedMinter
+	m.scopedMu.Unlock()
+	if minter == nil {
+		return nil, ErrScopedSessionsUnavailable
+	}
+
+	channelIDs := []string{req.ChannelID}
+	for _, id := range req.ExtraChannelIDs {
+		if model.IsValidId(id) && !slices.Contains(channelIDs, id) {
+			channelIDs = append(channelIDs, id)
+		}
+	}
+	scope := &model.SessionScope{
+		Permissions: slices.Clone(model.ScopeReadPermissions),
+		Resources: model.SessionScopeResources{
+			ChannelIDs:             channelIDs,
+			OpenTeamPublicChannels: true,
+		},
+		OnBehalfOfUserID: req.RequesterID,
+	}
+
+	expiresAt := time.Now().Add(scopedsession.RunTTL).UnixMilli()
+	session, err := minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
+	if err != nil && len(channelIDs) > 1 {
+		// The server refuses the whole scope when a listed channel no longer
+		// exists, so a deleted extra channel would end every run of the agent.
+		existing, lookupErr := m.dropMissingExtraChannels(channelIDs)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("failed to create scoped session: %w", errors.Join(err, lookupErr))
+		}
+		if len(existing) < len(channelIDs) {
+			m.log.Warn("Scoped channel mode lists channels that no longer exist; leaving them out of the run's scope",
+				"botUserID", req.BotUserID, "missingChannelCount", len(channelIDs)-len(existing))
+			scope.Resources.ChannelIDs = existing
+			session, err = minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scoped session: %w", err)
+	}
+	if session == nil || session.Id == "" || session.UserId != req.BotUserID {
+		if session != nil && session.Id != "" {
+			if revokeErr := minter.RevokeSession(session.Id); revokeErr != nil {
+				m.log.Warn("Failed to revoke malformed scoped session", "error", revokeErr)
+			}
+		}
+		return nil, errors.New("scoped session creation returned an unusable session")
+	}
+
+	binding := scopedsession.NewBinding(scope)
+	clients := newLocalClients(req.BotUserID, m.log, m.httpClient, m.toolsCache)
+	clients.admission = m.admission
+	clients.connCtx = scopedsession.WithBinding(context.Background(), binding)
+	run := &ScopedRun{session: session, scope: scope, binding: binding, enabled: slices.Clone(req.EnabledTools), clients: clients, manager: m, minter: minter}
+
+	m.scopedMu.Lock()
+	closed := m.scopedClosed
+	if !closed {
+		if m.scopedRuns == nil {
+			m.scopedRuns = make(map[*ScopedRun]struct{})
+		}
+		m.scopedRuns[run] = struct{}{}
+	}
+	m.scopedMu.Unlock()
+	if closed {
+		_ = run.Close()
+		return nil, ErrScopedSessionsUnavailable
+	}
+	return run, nil
+}
+
+// dropMissingExtraChannels returns channelIDs without the extra channels that
+// no longer exist. The triggering channel, first, is always kept. A lookup
+// that fails for any other reason is an error.
+func (m *ClientManager) dropMissingExtraChannels(channelIDs []string) ([]string, error) {
+	existing := []string{channelIDs[0]}
+	for _, id := range channelIDs[1:] {
+		_, err := m.pluginAPI.Channel.Get(id)
+		switch {
+		case errors.Is(err, pluginapi.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("failed to look up scoped extra channel: %w", err)
+		}
+		existing = append(existing, id)
+	}
+	return existing, nil
+}
+
+func (m *ClientManager) forgetScopedRun(run *ScopedRun) {
+	m.scopedMu.Lock()
+	defer m.scopedMu.Unlock()
+	delete(m.scopedRuns, run)
+}
+
+// RevokeScopedSessionsWhere ends every live scoped run on this node that
+// lapsed reports true for, for when an agent's scoped mode is turned off or
+// narrowed, or its bot goes away.
+func (m *ClientManager) RevokeScopedSessionsWhere(lapsed func(run *ScopedRun) bool) {
+	for _, run := range m.liveScopedRuns() {
+		if lapsed(run) {
+			_ = run.Close()
+		}
+	}
+}
+
+func (m *ClientManager) closeAllScopedRuns() {
+	for _, run := range m.liveScopedRuns() {
+		_ = run.Close()
+	}
+}
+
+func (m *ClientManager) liveScopedRuns() []*ScopedRun {
+	m.scopedMu.Lock()
+	defer m.scopedMu.Unlock()
+	runs := make([]*ScopedRun, 0, len(m.scopedRuns))
+	for run := range m.scopedRuns {
+		runs = append(runs, run)
+	}
+	return runs
+}
+
+// ScopedCatalogAllows reports whether an MCP tool may be in a scoped run's
+// catalog: read-only embedded Mattermost tools and remote tools reached with
+// service-account credentials. Other plugins' MCP servers are excluded, since
+// they cannot enforce the scope. Built-in tools are not MCP tools and are
+// never allowed here.
+func ScopedCatalogAllows(tool llm.Tool) bool {
+	if tool.ServerOrigin == "" {
+		return false
+	}
+	switch ServerKind(tool.ServerOrigin) {
+	case ServerKindEmbedded:
+		return tool.ReadOnly
+	case ServerKindPlugin:
+		return false
+	default:
+		return true
+	}
+}

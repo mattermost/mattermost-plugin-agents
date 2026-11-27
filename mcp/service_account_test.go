@@ -453,20 +453,28 @@ type recordingEmbeddedMCPServer struct {
 	mu         sync.Mutex
 	userIDs    []string
 	sessionIDs []string
+	connCtxs   []context.Context
 }
 
-func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (f *recordingEmbeddedMCPServer) CreateClientTransport(connCtx context.Context, userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	f.mu.Lock()
 	f.userIDs = append(f.userIDs, userID)
 	f.sessionIDs = append(f.sessionIDs, sessionID)
+	f.connCtxs = append(f.connCtxs, connCtx)
 	f.mu.Unlock()
-	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, sessionToken, pluginAPI)
+	return f.fakeEmbeddedMCPServer.CreateClientTransport(connCtx, userID, sessionID, sessionToken, pluginAPI)
 }
 
 func (f *recordingEmbeddedMCPServer) recordedUserIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.userIDs...)
+}
+
+func (f *recordingEmbeddedMCPServer) lastConnCtx() context.Context {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.connCtxs[len(f.connCtxs)-1]
 }
 
 func (f *recordingEmbeddedMCPServer) recordedSessionIDs() []string {

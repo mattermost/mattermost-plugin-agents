@@ -205,6 +205,18 @@ type BotConfig struct {
 	// Embedded Mattermost and plugin MCP servers still run as the requesting user.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 
+	// ScopedChannelMode runs this agent's tools in channels on a short-lived
+	// scoped session for its bot instead of the requester's credentials. The
+	// session can read the triggering channel, every public channel on an
+	// open team, and ScopedExtraChannelIDs, and nothing else, so tool calls
+	// run without approval. It requires UseServiceAccountAuth and an explicit
+	// MCP allowlist (AutoEnableNewMCPTools off). DMs are unaffected.
+	ScopedChannelMode bool `json:"scopedChannelMode"`
+
+	// ScopedExtraChannelIDs are admin-picked channels a scoped channel turn
+	// may also read, wherever the agent is used.
+	ScopedExtraChannelIDs []string `json:"scopedExtraChannelIDs"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`

@@ -84,8 +84,10 @@ require (
 	github.com/containerd/log v0.2.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
+	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
@@ -131,15 +133,13 @@ require (
 	github.com/mattermost/go-i18n v1.11.1-0.20211013152124-5c415071e404 // indirect
 	github.com/mattermost/gosaml2 v0.10.0 // indirect
 	github.com/mattermost/ldap v3.0.4+incompatible // indirect
-	github.com/mattermost/logr/v2 v2.0.25 // indirect
+	github.com/mattermost/logr/v2 v2.0.26 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
-	github.com/moby/moby/api v1.56.1 // indirect
-	github.com/moby/moby/client v0.6.2 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
 	github.com/moby/sys/user v0.5.0 // indirect
@@ -148,6 +148,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/molecule-man/go-brrr v1.3.1 // indirect
+	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oklog/run v1.2.0 // indirect
@@ -212,7 +213,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	modernc.org/libc v1.80.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
@@ -221,3 +221,19 @@ require (
 )
 
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
+
+// TEMPORARY: pins server/public to the head of the unmerged server PR
+// https://github.com/mattermost/mattermost/pull/39368, stacked on
+// https://github.com/mattermost/mattermost/pull/39367, for CreateScopedSession,
+// model.CreateScopedSessionRequest, model.SessionScope and its limits. Remove
+// it and require a released server/public once those PRs merge.
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261127161941-112642ac9960
+
+// TEMPORARY, with the server/public replace above: that server/public needs
+// testcontainers-go v0.44, which github.com/mattermost/testcontainers-mattermost-go
+// v0.1.0 (used by mcpserver tests) does not build against. Keep the version the
+// plugin used before until testcontainers-mattermost-go supports v0.44.
+replace (
+	github.com/testcontainers/testcontainers-go => github.com/testcontainers/testcontainers-go v0.41.0
+	github.com/testcontainers/testcontainers-go/modules/postgres => github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
+)

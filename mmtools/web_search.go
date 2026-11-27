@@ -112,6 +112,7 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 		Description: WebSearchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchToolArgs](),
 		Resolver:    service.resolve,
+		ScopedOptIn: true,
 	}
 
 	service.sourceTool = &llm.Tool{
@@ -119,6 +120,7 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 		Description: WebSearchSourceFetchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchSourceArgs](),
 		Resolver:    nil,
+		ScopedOptIn: true,
 	}
 
 	return service

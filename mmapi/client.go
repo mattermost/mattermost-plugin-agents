@@ -44,6 +44,7 @@ type Client interface {
 	GetDirectChannel(userID1, userID2 string) (*model.Channel, error)
 	PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)
 	GetConfig() *model.Config
+	RolesGrantPermission(roleNames []string, permissionID string) bool
 	LogError(msg string, keyValuePairs ...any)
 	LogWarn(msg string, keyValuePairs ...any)
 	KVGet(key string, value any) error
@@ -174,6 +175,10 @@ func (m *client) GetUserByUsername(username string) (*model.User, error) {
 
 func (m *client) GetUserStatus(userID string) (*model.Status, error) {
 	return m.pluginAPI.User.GetStatus(userID)
+}
+
+func (m *client) RolesGrantPermission(roleNames []string, permissionID string) bool {
+	return m.pluginAPI.User.RolesGrantPermission(roleNames, permissionID)
 }
 
 func (m *client) GetPluginStatus(pluginID string) (*model.PluginStatus, error) {

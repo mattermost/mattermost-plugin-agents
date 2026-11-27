@@ -125,6 +125,7 @@ func testDB(t *testing.T) *sqlx.DB {
 		)`,
 		`CREATE TABLE IF NOT EXISTS Channels (
 			Id TEXT PRIMARY KEY,
+			TeamId TEXT NOT NULL DEFAULT '',
 			Name TEXT NOT NULL,
 			DisplayName TEXT NOT NULL,
 			Type TEXT NOT NULL,
@@ -134,6 +135,17 @@ func testDB(t *testing.T) *sqlx.DB {
 			ChannelId TEXT NOT NULL,
 			UserId TEXT NOT NULL,
 			PRIMARY KEY(ChannelId, UserId)
+		)`,
+		`CREATE TABLE IF NOT EXISTS Teams (
+			Id TEXT PRIMARY KEY,
+			AllowOpenInvite BOOLEAN NOT NULL DEFAULT false,
+			DeleteAt BIGINT NOT NULL DEFAULT 0,
+			GroupConstrained BOOLEAN,
+			AllowedDomains TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS AccessControlPolicies (
+			ID TEXT PRIMARY KEY,
+			Type TEXT NOT NULL
 		)`,
 	}
 
