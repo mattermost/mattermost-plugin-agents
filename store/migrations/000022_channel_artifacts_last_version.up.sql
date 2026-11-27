@@ -1,0 +1,1 @@
+ALTER TABLE Agents_ChannelArtifacts ADD COLUMN IF NOT EXISTS LastVersion INT NOT NULL DEFAULT 0;
