@@ -147,6 +147,54 @@ func TestGetTools_CacheMiss(t *testing.T) {
 	require.Nil(t, retrievedTools)
 }
 
+func TestGetToolsForURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		cachedURL string
+		lookupURL string
+		wantHit   bool
+	}{
+		{
+			name:      "matching URL hits cache",
+			cachedURL: "https://mcp.atlassian.com/v2/mcp",
+			lookupURL: "https://mcp.atlassian.com/v2/mcp",
+			wantHit:   true,
+		},
+		{
+			name:      "adding query string misses cache",
+			cachedURL: "https://mcp.atlassian.com/v2/mcp",
+			lookupURL: "https://mcp.atlassian.com/v2/mcp?tools=all",
+			wantHit:   false,
+		},
+		{
+			name:      "removing query string misses cache",
+			cachedURL: "https://mcp.atlassian.com/v2/mcp?tools=all",
+			lookupURL: "https://mcp.atlassian.com/v2/mcp",
+			wantHit:   false,
+		},
+		{
+			name:      "empty lookup URL matches any cached URL",
+			cachedURL: "https://mcp.atlassian.com/v2/mcp?tools=all",
+			lookupURL: "",
+			wantHit:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewToolsCache(newMockKVService(), &mockLogService{})
+			require.NoError(t, cache.SetTools("Atlassian", "Atlassian", tt.cachedURL, createTestTools(), time.Now()))
+
+			got := cache.GetToolsForURL("Atlassian", tt.lookupURL)
+			if tt.wantHit {
+				require.Len(t, got, 2)
+			} else {
+				require.Nil(t, got)
+			}
+		})
+	}
+}
+
 func TestSetTools(t *testing.T) {
 	kvAPI := newMockKVService()
 	log := &mockLogService{}

@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -84,6 +85,11 @@ func (m *mockConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 	clone := next
 	m.cfg = &clone
 	return next, nil
+}
+
+func (m *mockConfigStore) UpdateConfigWithOutcome(transform func(prev *config.Config) (config.Config, error)) (store.ConfigUpdateOutcome, error) {
+	cfg, err := m.UpdateConfig(transform)
+	return store.ConfigUpdateOutcome{Config: cfg}, err
 }
 
 // overrideLicenseMocks replaces any GetConfig/GetLicense expectations already

@@ -220,6 +220,9 @@ func CheckRootPost(posts PostGetter, conv *store.Conversation) error {
 	if conv.RootPostID == nil || *conv.RootPostID == "" {
 		return nil
 	}
+	if posts == nil {
+		return errors.New("failed to get conversation root post: post client is not configured")
+	}
 	post, err := posts.GetPost(*conv.RootPostID)
 	if mmapi.IsNotFound(err) {
 		return ErrRootPostDeleted
@@ -317,7 +320,13 @@ func (s *Service) findThreadConversation(rootPostID, botID, userID string) (*sto
 			if errors.Is(err, store.ErrConversationNotFound) {
 				continue
 			}
-			return active, err
+			if err != nil {
+				return nil, err
+			}
+			if err = CheckRootPost(s.mmClient, active); err != nil {
+				return nil, err
+			}
+			return active, nil
 		}
 		if err != nil {
 			return nil, err
@@ -478,6 +487,11 @@ func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 // response from the turns before it, then scrubs that prior response so the
 // new stream runs like a first one.
 func (s *Service) BuildRegenerateRequest(conv *store.Conversation, context *llm.Context, postID string, opts BuildOptions) (*llm.CompletionRequest, error) {
+	// Check root liveness before DeleteResponseTurns so a deleted root or
+	// failed lookup leaves the saved response turns intact.
+	if err := CheckRootPost(s.mmClient, conv); err != nil {
+		return nil, err
+	}
 	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
 	opts.ExcludeAfterPostID = postID
 	req, err := s.BuildCompletionRequest(conv, context, opts)
@@ -538,6 +552,13 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
+	if params.RootPostID != "" {
+		rootPostID := params.RootPostID
+		if err := CheckRootPost(s.mmClient, &store.Conversation{RootPostID: &rootPostID}); err != nil {
+			return nil, err
+		}
+	}
+
 	existing, err := s.findThreadConversation(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
@@ -579,6 +600,9 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		}
 		if raceConv == nil {
 			return nil, fmt.Errorf("conversation vanished after conflict")
+		}
+		if err = CheckRootPost(s.mmClient, raceConv); err != nil {
+			return nil, err
 		}
 		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {

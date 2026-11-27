@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
@@ -238,9 +239,9 @@ func (c *Conversations) turnAnalysisPost(req turnRequest) (*model.Post, error) {
 		if post != nil && post.Id == *conv.RootPostID {
 			return post, nil
 		}
-		analysisPost, err := c.getSourcePost(*conv.RootPostID)
+		analysisPost, err := c.getThreadRootPost(*conv.RootPostID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get analysis post: %w", err)
+			return nil, err
 		}
 		return analysisPost, nil
 	}
@@ -252,9 +253,9 @@ func (c *Conversations) turnAnalysisPost(req turnRequest) (*model.Post, error) {
 	if rootID == "" || req.channel.Type != model.ChannelTypeDirect {
 		return nil, nil
 	}
-	root, err := c.getSourcePost(rootID)
+	root, err := c.getThreadRootPost(rootID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get thread root: %w", err)
+		return nil, err
 	}
 	if !isAnalysisPost(root) {
 		return nil, nil
@@ -276,8 +277,25 @@ func turnThreadRootID(req turnRequest) string {
 	return ""
 }
 
+// getThreadRootPost loads a conversation's thread root post. A missing or
+// soft-deleted root returns conversation.ErrRootPostDeleted so callers treat
+// the deleted thread as gone rather than an analysis-source denial.
+func (c *Conversations) getThreadRootPost(rootID string) (*model.Post, error) {
+	root, err := c.mmClient.GetPost(rootID)
+	if mmapi.IsNotFound(err) {
+		return nil, fmt.Errorf("%w: %w", conversation.ErrRootPostDeleted, err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get thread root: %w", err)
+	}
+	if root.DeleteAt != 0 {
+		return nil, conversation.ErrRootPostDeleted
+	}
+	return root, nil
+}
+
 // getSourcePost gets a post an analysis depends on. A post that no longer
-// exists is reported as ErrAnalysisSourceUnavailable.
+// exists or was deleted is reported as ErrAnalysisSourceUnavailable.
 func (c *Conversations) getSourcePost(postID string) (*model.Post, error) {
 	post, err := c.mmClient.GetPost(postID)
 	if mmapi.IsNotFound(err) {
@@ -285,6 +303,9 @@ func (c *Conversations) getSourcePost(postID string) (*model.Post, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if post.DeleteAt != 0 {
+		return nil, ErrAnalysisSourceUnavailable
 	}
 	return post, nil
 }

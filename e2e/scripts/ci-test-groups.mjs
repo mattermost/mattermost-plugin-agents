@@ -30,6 +30,7 @@ const groups = {
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
         'tests/tool-activity/activity-approval.spec.ts',
         'tests/agents/agent-dm-channel-view.spec.ts',
+        'tests/dictation/dictation.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/channel-analysis/quick-actions/quick-actions.spec.ts',

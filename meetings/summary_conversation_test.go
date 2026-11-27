@@ -470,6 +470,7 @@ func TestMeetingSummaryFollowUpReferencesTranscriptFile(t *testing.T) {
 			lm := &summaryLLM{}
 			s := newSummaryService(t, convStore, mm)
 			conv, _ := startSummary(t, s, convStore, lm, file)
+			mm.On("GetPost", *conv.RootPostID).Return(&model.Post{Id: *conv.RootPostID}, nil).Maybe()
 			file.channelRevoked = tt.channelRevoked
 
 			followUpPostID := model.NewId()

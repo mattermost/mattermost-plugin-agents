@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/dictation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -78,6 +79,11 @@ type testConfigImpl struct {
 	defaultBotUserID                string
 	defaultBotName                  string
 	settingsAccess                  config.SettingsAccess
+	dictation                       config.DictationConfig
+}
+
+func (tc *testConfigImpl) Config() *config.Config {
+	return &config.Config{Services: slices.Clone(tc.services), Dictation: tc.dictation}
 }
 
 func (tc *testConfigImpl) GetDefaultBotUserID() string {
@@ -887,6 +893,32 @@ func (m *mockAgentStore) DeleteAgent(id string) error {
 	return nil
 }
 
+func (m *mockAgentStore) RemapAgentMCPServerOrigins(remaps map[string]string) ([]string, error) {
+	if len(remaps) == 0 {
+		return nil, nil
+	}
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
+	var updatedIDs []string
+	for id, agent := range m.agents {
+		if agent.DeleteAt != 0 {
+			continue
+		}
+		remapped, changed := llm.RemapEnabledMCPTools(agent.EnabledMCPTools, remaps)
+		if !changed {
+			continue
+		}
+		prev := cloneBotConfig(agent)
+		agent.EnabledMCPTools = remapped
+		agent.UpdateAt = time.Now().UnixMilli()
+		m.recordVersion(agent, prev, store.SystemAgentVersionMeta())
+		updatedIDs = append(updatedIDs, id)
+	}
+	slices.Sort(updatedIDs)
+	return updatedIDs, nil
+}
+
 func (e *TestEnvironment) Cleanup(t *testing.T) {
 	if e.mockAPI != nil {
 		e.mockAPI.AssertExpectations(t)
@@ -1100,6 +1132,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		autoReplyStore,
 		newPassthroughAccessChecker(),
 	)
+	api.SetDictationService(dictation.New(cfg, enterprise.NewLicenseChecker(client), api.accessChecker, pluginUserGetter{client}, newMemoryLeaseStore(), &client.Log))
 
 	return &TestEnvironment{
 		api:               api,

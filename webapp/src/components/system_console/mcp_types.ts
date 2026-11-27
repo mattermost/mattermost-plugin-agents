@@ -24,6 +24,10 @@ export type MCPServerConfig = {
     clientID?: string;
     clientSecret?: string;
 
+    // Extra query parameters for the OAuth authorization URL. The backend tag
+    // has omitempty, so it may be absent.
+    authorizationParams?: Record<string, string>;
+
     // Sent in place of per-user OAuth by agents using service account
     // authentication. The backend tag has omitempty, so it may be absent.
     serviceAccountHeaders?: {[key: string]: string};

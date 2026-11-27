@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {BotsHandler} from './redux';
+import {AVAILABILITY_REFRESH_DEBOUNCE_MS, SetDictationAvailability} from './dictation/availability';
 import {LLMBot} from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 
@@ -34,8 +35,10 @@ jest.mock('react-intl', () => ({
 const mockGetAIBots = jest.fn();
 const mockSetSiteURL = jest.fn();
 const mockGetAIThreads = jest.fn();
+const mockGetDictationAvailability = jest.fn();
 jest.mock('@/client', () => ({
     getAIBots: (...args: unknown[]) => mockGetAIBots(...args),
+    getDictationAvailability: (...args: unknown[]) => mockGetDictationAvailability(...args),
     setSiteURL: (...args: unknown[]) => mockSetSiteURL(...args),
     getAIThreads: (...args: unknown[]) => mockGetAIThreads(...args),
     doReaction: jest.fn(),
@@ -75,6 +78,7 @@ function makeRegistry(websocketHandlers: WebSocketHandlers, extra: Record<string
         registerAdminConsoleCustomSetting: jest.fn(),
         registerChannelSettingsTab: jest.fn(),
         registerGlobalComponent: jest.fn(),
+        registerPostEditorActionComponent: jest.fn(),
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
@@ -102,9 +106,10 @@ async function initializePlugin(siteURL?: string, extraRegistry: Record<string, 
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers, extraRegistry), makeStore(dispatch, siteURL, state));
+    const registry = makeRegistry(websocketHandlers, extraRegistry);
+    await new Plugin().initialize(registry, makeStore(dispatch, siteURL, state));
 
-    return {websocketHandlers, dispatch};
+    return {websocketHandlers, dispatch, registry};
 }
 
 // Lets the floating fetch promises inside initialize()/the handlers settle.
@@ -177,6 +182,83 @@ describe('bots cache websocket handlers', () => {
         await flush();
 
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: BotsHandler}));
+    });
+});
+
+describe('dictation', () => {
+    const available = {enabled: true, available: true, provider: 'openai', model: 'gpt-live-transcribe', transport: 'webrtc'};
+    const unlicensed = {enabled: true, available: false, provider: '', model: '', transport: 'webrtc', reason: 'license'};
+    const afterDebounce = async () => {
+        await new Promise((resolve) => setTimeout(resolve, AVAILABILITY_REFRESH_DEBOUNCE_MS + 50));
+        await flush();
+    };
+
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIBots.mockReset();
+        mockGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
+        mockGetDictationAvailability.mockReset();
+    });
+
+    test('registers the dictation button in every message box', async () => {
+        const {registry} = await initializePlugin();
+
+        // eslint-disable-next-line global-require
+        const DictationButton = require('./components/dictation/dictation_button').default;
+        expect(registry.registerPostEditorActionComponent).toHaveBeenCalledWith(DictationButton);
+    });
+
+    test.each([
+        ['config_changed'],
+        ['custom_mattermost-ai_dictation_availability_changed'],
+    ])('%s refreshes availability', async (event) => {
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        mockGetDictationAvailability.mockResolvedValue(unlicensed);
+
+        fireWebSocketEvent(websocketHandlers, event);
+        await afterDebounce();
+
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
+    });
+
+    test('the session-ended event reaches the session it names', async () => {
+        const {websocketHandlers} = await initializePlugin();
+
+        // eslint-disable-next-line global-require
+        const {onDictationSessionEnded} = require('./dictation/session_events');
+        const listener = jest.fn();
+        onDictationSessionEnded('session-1', listener);
+
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_session_ended', {data: {session_id: 'session-1', reason: 'duration_limit'}});
+        expect(listener).toHaveBeenCalledWith('duration_limit');
+    });
+
+    test('repeated availability-changed events from HA nodes refetch once', async () => {
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        mockGetDictationAvailability.mockResolvedValue(unlicensed);
+
+        for (let i = 0; i < 3; i++) {
+            fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
+        }
+        await afterDebounce();
+
+        expect(mockGetDictationAvailability).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: unlicensed});
+    });
+
+    test('a failed refresh hides the button instead of keeping a stale availability', async () => {
+        const {websocketHandlers, dispatch} = await initializePlugin();
+        mockGetDictationAvailability.mockResolvedValue(available);
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
+        await afterDebounce();
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: available});
+        dispatch.mockClear();
+
+        mockGetDictationAvailability.mockRejectedValue(new Error('network'));
+        fireWebSocketEvent(websocketHandlers, 'custom_mattermost-ai_dictation_availability_changed');
+        await afterDebounce();
+
+        expect(dispatch).toHaveBeenCalledWith({type: SetDictationAvailability, availability: null});
     });
 });
 

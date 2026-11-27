@@ -7,6 +7,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {agentDMOpenChat} from './agent_dm_open_chat';
 import {agentDMRawView} from './agent_dm_view';
 import {makeCallsPostButtonClickedHandler} from './calls_button';
+import {dictationAvailability} from './dictation/availability';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
@@ -37,6 +38,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         showCustomPromptsModal,
         agentDMRawView,
         agentDMOpenChat,
+        dictationAvailability,
     });
     registry.registerReducer(reducer);
 
