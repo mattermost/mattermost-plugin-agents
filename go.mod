@@ -133,7 +133,7 @@ require (
 	github.com/mattermost/go-i18n v1.11.1-0.20211013152124-5c415071e404 // indirect
 	github.com/mattermost/gosaml2 v0.10.0 // indirect
 	github.com/mattermost/ldap v3.0.4+incompatible // indirect
-	github.com/mattermost/logr/v2 v2.0.25 // indirect
+	github.com/mattermost/logr/v2 v2.0.26 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -213,7 +213,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	modernc.org/libc v1.80.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
@@ -224,11 +223,11 @@ require (
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
 
 // TEMPORARY: pins server/public to the head of the unmerged server PR
-// https://github.com/mattermost/mattermost/pull/39367 (branch
-// cursor/scoped-sessions-enforcement-88d9) for CreateScopedSession and
-// model.SessionScope. Remove it and require a released server/public once that
-// PR merges.
-replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155611-04b3cd62e445
+// https://github.com/mattermost/mattermost/pull/39368, stacked on
+// https://github.com/mattermost/mattermost/pull/39367, for CreateScopedSession,
+// model.CreateScopedSessionRequest, model.SessionScope and its limits. Remove
+// it and require a released server/public once those PRs merge.
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.6.2-0.20261127161941-112642ac9960
 
 // TEMPORARY, with the server/public replace above: that server/public needs
 // testcontainers-go v0.44, which github.com/mattermost/testcontainers-mattermost-go

@@ -384,7 +384,11 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 	fileID := model.NewId()
 	openTeam := &model.Team{Id: model.NewId(), AllowOpenInvite: true}
 	closedTeam := &model.Team{Id: model.NewId()}
+	policyTeam := &model.Team{Id: model.NewId(), PolicyEnforced: true}
+	deletedTeam := &model.Team{Id: model.NewId(), DeleteAt: 1}
 	trigger := &model.Channel{Id: model.NewId(), TeamId: closedTeam.Id, Type: model.ChannelTypePrivate}
+	listedOnPolicyTeam := &model.Channel{Id: model.NewId(), TeamId: policyTeam.Id, Type: model.ChannelTypePrivate}
+	listedOnDeletedTeam := &model.Channel{Id: model.NewId(), TeamId: deletedTeam.Id, Type: model.ChannelTypePrivate}
 	openPublic := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen}
 	closedPublic := &model.Channel{Id: model.NewId(), TeamId: closedTeam.Id, Type: model.ChannelTypeOpen}
 	memberPrivate := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypePrivate}
@@ -392,7 +396,7 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 
 	scope := &model.SessionScope{
 		Permissions: model.ScopeReadPermissions,
-		Resources:   model.SessionScopeResources{ChannelIDs: []string{trigger.Id}, OpenTeamPublicChannels: true},
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{trigger.Id, listedOnPolicyTeam.Id, listedOnDeletedTeam.Id}, OpenTeamPublicChannels: true},
 	}
 
 	tests := []struct {
@@ -404,6 +408,8 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 		allowed    bool
 	}{
 		{name: "triggering private channel the bot is not in", channel: trigger, team: closedTeam, allowed: true},
+		{name: "listed channel on a policy-enforced team", channel: listedOnPolicyTeam, team: policyTeam},
+		{name: "listed channel on a deleted team", channel: listedOnDeletedTeam, team: deletedTeam},
 		{name: "public channel on an open team", channel: openPublic, team: openTeam, allowed: true},
 		{name: "public channel on an invite-only team", channel: closedPublic, team: closedTeam},
 		{name: "private channel the bot was added to", channel: memberPrivate, team: openTeam},

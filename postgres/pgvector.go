@@ -398,10 +398,17 @@ const openTeamSQL = `SELECT t.Id FROM Teams t
 	AND COALESCE(t.AllowedDomains, '') = ''
 	AND NOT EXISTS (SELECT 1 FROM AccessControlPolicies tp WHERE tp.ID = t.Id AND tp.Type = 'team')`
 
+// activeUnrestrictedTeamSQL selects teams that are neither deleted nor under a
+// team access policy. Every channel in a scoped session must belong to one.
+const activeUnrestrictedTeamSQL = `SELECT t.Id FROM Teams t
+	WHERE t.DeleteAt = 0
+	AND NOT EXISTS (SELECT 1 FROM AccessControlPolicies tp WHERE tp.ID = t.Id AND tp.Type = 'team')`
+
 // scopedChannelsCondition limits a search to the channels a scoped session
 // can read: the listed channels plus, when enabled, public channels on open
-// teams. Membership is not consulted. DMs, group messages, and channels under
-// an access policy are never in scope.
+// teams. Membership is not consulted. DMs, group messages, channels under an
+// access policy, and channels on deleted or policy-enforced teams are never in
+// scope.
 func scopedChannelsCondition(scope model.SessionScopeResources) sq.Sqlizer {
 	inScope := sq.Or{
 		sq.Expr("(c.Id = ANY(?::text[]) AND c.Type IN ('O', 'P'))", pq.Array(scope.ChannelIDs)),
@@ -411,6 +418,7 @@ func scopedChannelsCondition(scope model.SessionScopeResources) sq.Sqlizer {
 	}
 	return sq.And{
 		sq.Expr("NOT EXISTS (SELECT 1 FROM AccessControlPolicies cp WHERE cp.ID = c.Id AND cp.Type = 'channel')"),
+		sq.Expr("c.TeamId IN (" + activeUnrestrictedTeamSQL + ")"),
 		inScope,
 	}
 }

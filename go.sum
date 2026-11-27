@@ -316,10 +316,10 @@ github.com/mattermost/gosaml2 v0.10.0 h1:yG7K6rHF0c46IoeA6LmKvVACte3bwoM0BcclCGU
 github.com/mattermost/gosaml2 v0.10.0/go.mod h1:1nMAdE2Psxaz+pj79Oytayi+hC3aZUi3SmJQlIe+sLM=
 github.com/mattermost/ldap v3.0.4+incompatible h1:SOeNnz+JNR+foQ3yHkYqijb9MLPhXN2BZP/PdX23VDU=
 github.com/mattermost/ldap v3.0.4+incompatible/go.mod h1:b4reDCcGpBxJ4WX0f224KFY+OR0npin7or7EFpeIko4=
-github.com/mattermost/logr/v2 v2.0.25 h1:p/FXdVyZnC8ttUBB7/RD11aghQEzU1zMRxFPPB114Fk=
-github.com/mattermost/logr/v2 v2.0.25/go.mod h1:0sUKpO+XNMZApeumaid7PYaUZPBIydfuWZ0dqixXo+s=
-github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155611-04b3cd62e445 h1:/59p7juMaV4cHtUnRD0w5DtXy4iTGYi5wjVcvS6RYlM=
-github.com/mattermost/mattermost/server/public v0.6.2-0.20261120155611-04b3cd62e445/go.mod h1:uSssXp9OP2ffdxBIa3pg48lV5h720tE7eBnGNvw6syo=
+github.com/mattermost/logr/v2 v2.0.26 h1:2ic2yFJT5GcHuA4pkh99InTirwcSZWbzyiCHl5w/3TQ=
+github.com/mattermost/logr/v2 v2.0.26/go.mod h1:Qb9f3ZWUa1cwKPYnAunXk5FBDBNCb6vogQDnsEjOyuM=
+github.com/mattermost/mattermost/server/public v0.6.2-0.20261127161941-112642ac9960 h1:5h1dG2sUH1hD5ouhEjk5FTUuqcnHChdhCI80FxsO1CU=
+github.com/mattermost/mattermost/server/public v0.6.2-0.20261127161941-112642ac9960/go.mod h1:+k+ZYk9tu8J3WofIf14f1+WY7DCR0162AS6OwvHPxMk=
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b h1:6u1c1jRNWu9M8WWU805gFSYnunlbAswxqx9O62nZRHs=
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261103132713-77a94b45a35b/go.mod h1:RGV7xzsCHZZYz+9ohTNzmZyRJlhCSt0gcqDiJUOjgT4=
 github.com/mattermost/morph v1.1.0 h1:Q9vrJbeM3s2jfweGheq12EFIzdNp9a/6IovcbvOQ6Cw=
@@ -707,8 +707,6 @@ gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c h1:Hei/4ADfdWqJk1ZMxUNpqntN
 gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c/go.mod h1:JHkPIbrfpd72SG/EVd6muEfDQjcINNoR0C8j2r3qZ4Q=
 gopkg.in/errgo.v2 v2.1.0/go.mod h1:hNsd1EY+bozCKY1Ytp96fpM3vjJbqLJn88ws8XvfDNI=
 gopkg.in/inf.v0 v0.9.1/go.mod h1:cWUDdTG/fYaXco+Dcufb5Vnc6Gp2YChqWtbxRZE0mXw=
-gopkg.in/natefinch/lumberjack.v2 v2.2.1 h1:bBRl1b0OH9s/DuPhuXpNl+VtCaJXFZ5/uEFST95x9zc=
-gopkg.in/natefinch/lumberjack.v2 v2.2.1/go.mod h1:YD8tP3GAjkrDg1eZH7EGmyESg/lsYskCTPBJVb9jqSc=
 gopkg.in/yaml.v2 v2.2.1/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v2 v2.2.2/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v2 v2.4.0 h1:D8xgwECY7CYvx+Y2n4sBz93Jn9JRvxdiyyo8CTfuKaY=

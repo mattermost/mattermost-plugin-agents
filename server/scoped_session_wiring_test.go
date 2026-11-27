@@ -222,8 +222,10 @@ func TestScopedSessionSupportProbedAtActivation(t *testing.T) {
 			api.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 			// A server without the method answers like this: the plugin RPC
 			// client logs the failed call and returns zero values.
-			api.On("CreateScopedSession", "", (*model.SessionScope)(nil), int64(0)).Return(nil, tt.probeResult).Once()
-			api.On("CreateScopedSession", botID, mock.Anything, mock.Anything).Return(&model.Session{Id: model.NewId(), UserId: botID}, nil).Maybe()
+			api.On("CreateScopedSession", (*model.CreateScopedSessionRequest)(nil)).Return(nil, tt.probeResult).Once()
+			api.On("CreateScopedSession", mock.MatchedBy(func(req *model.CreateScopedSessionRequest) bool {
+				return req != nil && req.UserID == botID
+			})).Return(&model.Session{Id: model.NewId(), UserId: botID}, nil).Maybe()
 			api.On("RevokeSession", mock.Anything).Return(nil).Maybe()
 			pluginAPI := pluginapi.NewClient(api, nil)
 
@@ -239,7 +241,9 @@ func TestScopedSessionSupportProbedAtActivation(t *testing.T) {
 				require.NoError(t, run.Close())
 			} else {
 				require.ErrorIs(t, err, mcp.ErrScopedSessionsUnavailable)
-				api.AssertNotCalled(t, "CreateScopedSession", botID, mock.Anything, mock.Anything)
+				api.AssertNotCalled(t, "CreateScopedSession", mock.MatchedBy(func(req *model.CreateScopedSessionRequest) bool {
+					return req != nil && req.UserID == botID
+				}))
 			}
 			api.AssertExpectations(t)
 		})
