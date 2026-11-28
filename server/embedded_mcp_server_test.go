@@ -110,6 +110,36 @@ func TestDeriveInternalServerURL(t *testing.T) {
 			siteURL: "",
 			want:    "https://internal.example.com:8443",
 		},
+		{
+			name:    "subpath SiteURL keeps the path on wildcard IPv4 listen",
+			cfg:     cfgWith(model.NewPointer(":8065"), none),
+			siteURL: "https://example.com/chat",
+			want:    "http://localhost:8065/chat",
+		},
+		{
+			name:    "subpath SiteURL with trailing slash keeps the path without the slash",
+			cfg:     cfgWith(model.NewPointer("127.0.0.1:8065"), none),
+			siteURL: "https://example.com/chat/",
+			want:    "http://127.0.0.1:8065/chat",
+		},
+		{
+			name:    "subpath SiteURL keeps the path on default localhost",
+			cfg:     cfgWith(nil, none),
+			siteURL: "https://example.com/team/chat",
+			want:    "http://localhost:8065/team/chat",
+		},
+		{
+			name:    "subpath SiteURL keeps encoded characters in the path",
+			cfg:     cfgWith(model.NewPointer(":8065"), none),
+			siteURL: "https://example.com/chat%3Fteam",
+			want:    "http://localhost:8065/chat%3Fteam",
+		},
+		{
+			name:    "TLS with subpath SiteURL falls back to SiteURL",
+			cfg:     cfgWith(model.NewPointer(":443"), tls),
+			siteURL: "https://example.com/chat",
+			want:    "https://example.com/chat",
+		},
 	}
 
 	for _, tt := range tests {
