@@ -32,7 +32,7 @@ Each request also carries the definitions (name, description, and parameters) of
 | AI search and `/ask-channel` | Your query, plus the posts the agent reads while it searches. |
 | React for me | The text of the message you picked. |
 | Skills | The rendered instructions, as an ordinary message. A skill an agent loads on its own is read into that conversation. |
-| Dictation | Nothing goes to the LLM. Audio goes from the user's browser directly to OpenAI, and the transcript comes back to the browser. The plugin creates the session and watches its events, transcript included, to enforce the configured settings, but doesn't store or log them. See [Set up dictation](dictation.md#privacy). |
+| Dictation | Nothing goes to the LLM. Audio goes from the user's browser directly to OpenAI, and the transcript comes back to the browser. With channel context on (the default), the plugin sends OpenAI the channel's display name and the names of its recent posters and members as transcription hints. The plugin creates the session and watches its events, transcript included, to enforce the configured settings, but doesn't store or log them. OpenAI's error messages for a refused session are logged and can quote the session's settings, including those names. See [Set up dictation](dictation.md#privacy). |
 
 Attachments in a conversation are included when the model and agent allow them. Images need **Enable Vision** and a vision-capable model. Other files contribute text only when Mattermost can extract it.
 

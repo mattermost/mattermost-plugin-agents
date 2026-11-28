@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost/server/public/model"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
@@ -52,7 +53,11 @@ var errDictationOfferTooLarge = errors.New("the SDP offer is too large")
 
 type createDictationSessionRequest struct {
 	SDP string `json:"sdp"`
+	// ChannelID is the channel the user dictates into, for channel context.
+	ChannelID string `json:"channelId"`
 }
+
+var errDictationInvalidChannel = errors.New("channelId is not a valid ID")
 
 // POST /dictation/session exchanges the browser's SDP offer for an answer on
 // a call the server creates and watches.
@@ -83,12 +88,20 @@ func (a *API) handleCreateDictationSession(c *gin.Context) {
 		return
 	}
 
+	if req.ChannelID != "" {
+		if !model.IsValidId(req.ChannelID) {
+			abortDictation(c, http.StatusBadRequest, errDictationInvalidChannel)
+			return
+		}
+		audit.AddParam(auditRec(c), audit.KeyChannelID, req.ChannelID)
+	}
+
 	if clientGone(c) {
 		abortDictation(c, http.StatusServiceUnavailable, errDictationUnavailable)
 		return
 	}
 	userID := c.GetHeader("Mattermost-User-Id")
-	session, err := a.dictationService.CreateSession(c.Request.Context(), userID, req.SDP)
+	session, err := a.dictationService.CreateSession(c.Request.Context(), userID, req.SDP, req.ChannelID)
 	switch {
 	case err == nil && clientGone(c):
 		// Nobody will connect to the call or end it: end it now rather

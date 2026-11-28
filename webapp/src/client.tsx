@@ -626,10 +626,11 @@ export async function getDictationAvailability(): Promise<DictationAvailability>
 const DICTATION_SESSION_TIMEOUT_MS = 20000;
 
 // createDictationSession sends the browser's SDP offer to the plugin, which
-// exchanges it with the provider and returns the answer. A failure, timeout
-// or abort included, throws a ClientError whose status_code is 0 when there
-// was no response.
-export async function createDictationSession(offerSDP: string, signal?: AbortSignal): Promise<DictationSession> {
+// exchanges it with the provider and returns the answer. channelId is the
+// channel being dictated into; the server may use it for transcription hints.
+// A failure, timeout or abort included, throws a ClientError whose
+// status_code is 0 when there was no response.
+export async function createDictationSession(offerSDP: string, channelId: string, signal?: AbortSignal): Promise<DictationSession> {
     const url = `${baseRoute()}/dictation/session`;
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -644,7 +645,7 @@ export async function createDictationSession(offerSDP: string, signal?: AbortSig
             response = await fetch(url, {
                 ...Client4.getOptions({
                     method: 'POST',
-                    body: JSON.stringify({sdp: offerSDP}),
+                    body: JSON.stringify(channelId ? {sdp: offerSDP, channelId} : {sdp: offerSDP}),
                     headers: {'Content-Type': 'application/json'},
                 }),
                 redirect: 'error',

@@ -119,7 +119,7 @@ func TestNilDependenciesFailClosed(t *testing.T) {
 				assert.False(t, avail.Available)
 				assert.Equal(t, tt.wantReason, avail.Reason)
 			}
-			session, err := svc.CreateSession(context.Background(), testUserID, "v=0\r\n")
+			session, err := svc.CreateSession(context.Background(), testUserID, "v=0\r\n", "")
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.Nil(t, session)
 			assert.Zero(t, built, "no call is attempted for a denied request")

@@ -157,6 +157,7 @@ type Service struct {
 	limiter     *rateLimiter
 	endLimiter  *rateLimiter
 	leases      *sessionLeases
+	channels    ChannelDirectory
 	newClient   func(llm.ServiceConfig) (callClient, error)
 	maxDuration time.Duration
 	notifyEnd   SessionEndNotifier
@@ -188,6 +189,13 @@ type Option func(*Service)
 // WithMaxSessionDuration overrides DefaultMaxSessionDuration.
 func WithMaxSessionDuration(d time.Duration) Option {
 	return func(s *Service) { s.maxDuration = d }
+}
+
+// WithChannelDirectory sets where channel context is read from. Without
+// one, a session for a channel is denied while channel context is on, since
+// read access can't be checked.
+func WithChannelDirectory(d ChannelDirectory) Option {
+	return func(s *Service) { s.channels = d }
 }
 
 // WithSessionEndNotifier sets the notifier for calls the server ends.
@@ -331,7 +339,11 @@ func (s *Service) Availability(ctx context.Context, userID string) Availability 
 // Every check runs on every call, so a license downgrade or config change
 // applies immediately. The sideband is attached before the answer is
 // returned, so the browser cannot change the session unobserved.
-func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*Session, error) {
+//
+// channelID, when set, is the channel the user dictates into. With channel
+// context on, a user who can't read it is denied; if its context can't be
+// read, the session gets none.
+func (s *Service) CreateSession(ctx context.Context, userID, offerSDP, channelID string) (*Session, error) {
 	if offerSDP == "" || len(offerSDP) > bifrost.MaxSDPBytes {
 		return nil, ErrInvalidOffer
 	}
@@ -351,8 +363,25 @@ func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*
 	}
 	audit.AddParam(audit.RecordFromContext(ctx), audit.KeyServiceID, r.service.ID)
 
+	req := r.request()
+	useContext := channelID != "" && r.dictation.ChannelContextEnabled() && bifrost.SupportsTranscriptionContext(req.Model)
+	// Authorization comes before the rate limit, like the other checks; the
+	// heavier context lookups come after it.
+	if useContext {
+		if err = s.checkChannel(userID, channelID); err != nil {
+			return nil, err
+		}
+	}
 	if !s.limiter.allow(userID) {
 		return nil, ErrRateLimited
+	}
+	if useContext {
+		hints, hintsErr := s.channelContext(channelID)
+		if hintsErr != nil {
+			s.log.Warn("Failed to read dictation channel context; sending none", "user_id", userID, "channel_id", channelID, "error", hintsErr.Error())
+		} else {
+			req.Prompt, req.Keywords = hints.Prompt, hints.Keywords
+		}
 	}
 	if s.leases == nil {
 		return nil, fmt.Errorf("%w: no session store", ErrMisconfigured)
@@ -379,7 +408,7 @@ func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*
 	s.mu.Unlock()
 	defer s.watchers.Done()
 
-	session, err := s.startCall(ctx, userID, sessionID, r, offerSDP)
+	session, err := s.startCall(ctx, userID, sessionID, r, req, offerSDP)
 	if err == nil {
 		audit.AddParam(audit.RecordFromContext(ctx), audit.KeyDictationSessionID, sessionID)
 	}
@@ -388,7 +417,7 @@ func (s *Service) CreateSession(ctx context.Context, userID, offerSDP string) (*
 
 // startCall creates and attaches the call. On failure it frees the
 // session's slot, unless a created call could not be hung up.
-func (s *Service) startCall(ctx context.Context, userID, sessionID string, r resolved, offerSDP string) (*Session, error) {
+func (s *Service) startCall(ctx context.Context, userID, sessionID string, r resolved, req bifrost.TranscriptionSessionRequest, offerSDP string) (*Session, error) {
 	client, err := s.newClient(r.service)
 	if err != nil {
 		s.releaseLease(userID, sessionID)
@@ -398,7 +427,6 @@ func (s *Service) startCall(ctx context.Context, userID, sessionID string, r res
 
 	setupCtx, cancel := context.WithTimeout(ctx, callSetupLimit)
 	defer cancel()
-	req := r.request()
 	call, err := client.CreateTranscriptionCall(setupCtx, offerSDP, req)
 	if err != nil {
 		s.log.Warn("Failed to create a dictation call", "user_id", userID, "service_id", r.service.ID, "error", err.Error())

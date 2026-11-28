@@ -85,7 +85,7 @@ Everything is under **Agents > Settings**, in the **General**, **AI services**, 
 | Debug | Trace Output, OpenTelemetry Endpoint, Use TLS for OTLP Export, OTLP Export Headers | `telemetryOutput`, `openTelemetryEndpoint`, `openTelemetryTLS`, `openTelemetryHeaders` | Off | [Monitor Agents](observability.md#opentelemetry-tracing) |
 | Debug | Enable Token Usage Logging | `enableTokenUsageLogging` | Off | [Monitor Agents](observability.md#token-usage-log) |
 | Embedding search | Embedding settings and reindex controls | `embeddingSearchConfig` | Off | [Set up semantic search](embedding_search.md) |
-| Dictation | Enable dictation (experimental), Transcription service, Transcription model, Language | `dictation` | Off, model `gpt-live-transcribe` | [Set up dictation](dictation.md) |
+| Dictation | Enable dictation (experimental), Transcription service, Transcription model, Language, Use channel context to improve accuracy | `dictation` | Off, model `gpt-live-transcribe`, channel context on (sends channel and people's names to OpenAI) | [Set up dictation](dictation.md) |
 | Web search | Built-in web search | `webSearch` | Off | [Web search](web_search.md) |
 | MCP servers | Servers, tools, HTTP endpoint, idle timeout | `mcp` | HTTP endpoint off, idle timeout 30 minutes | [Connect agents to MCP servers](mcp_integrations.md) |
 

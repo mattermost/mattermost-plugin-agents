@@ -75,6 +75,14 @@ type DictationConfig struct {
 	Model string `json:"model"`
 	// Language is an optional ISO-639-1 hint, e.g. "en".
 	Language string `json:"language,omitempty"`
+	// UseChannelContext sends the channel name and people's names as hints.
+	// Unset means on.
+	UseChannelContext *bool `json:"useChannelContext,omitempty"`
+}
+
+// ChannelContextEnabled reports whether dictation sends channel context.
+func (d DictationConfig) ChannelContextEnabled() bool {
+	return d.UseChannelContext == nil || *d.UseChannelContext
 }
 
 type WebSearchConfig struct {

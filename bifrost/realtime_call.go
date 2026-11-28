@@ -87,11 +87,21 @@ func usesLanguageList(model string) bool {
 	return false
 }
 
+// SupportsTranscriptionContext reports whether model takes a prompt and
+// keywords. The same models take a languages list.
+func SupportsTranscriptionContext(model string) bool {
+	return usesLanguageList(model)
+}
+
 // TranscriptionSessionRequest configures a transcription-only realtime session.
 type TranscriptionSessionRequest struct {
 	Model string
 	// Language is an optional ISO-639-1 hint.
 	Language string
+	// Prompt and Keywords are context hints, sent only to models that
+	// SupportsTranscriptionContext. The sideband accepts exactly these.
+	Prompt   string
+	Keywords []string
 }
 
 // RealtimeCall is a created call. AnswerSDP goes to the browser; CallID
@@ -298,6 +308,8 @@ type realtimeTranscription struct {
 	Model     string   `json:"model"`
 	Language  string   `json:"language,omitempty"`
 	Languages []string `json:"languages,omitempty"`
+	Prompt    string   `json:"prompt,omitempty"`
+	Keywords  []string `json:"keywords,omitempty"`
 }
 
 type realtimeNoiseReduction struct {
@@ -316,6 +328,10 @@ func transcriptionSettings(req TranscriptionSessionRequest) realtimeTranscriptio
 		t.Languages = []string{req.Language}
 	default:
 		t.Language = req.Language
+	}
+	if SupportsTranscriptionContext(req.Model) {
+		t.Prompt = req.Prompt
+		t.Keywords = req.Keywords
 	}
 	return t
 }
@@ -699,7 +715,12 @@ func sessionEventMatches(data []byte, expected TranscriptionSessionRequest) bool
 	if got.Type != "transcription" || tr == nil || tr.Model != expected.Model {
 		return false
 	}
-	if tr.Prompt != nil && *tr.Prompt != "" || len(tr.Keywords) > 0 {
+	// Only the server-built context is allowed, unchanged.
+	want := transcriptionSettings(expected)
+	if tr.Prompt != nil && *tr.Prompt != want.Prompt || tr.Prompt == nil && want.Prompt != "" {
+		return false
+	}
+	if !slices.Equal(tr.Keywords, want.Keywords) && (len(tr.Keywords) > 0 || len(want.Keywords) > 0) {
 		return false
 	}
 	// OpenAI may report language as languages, or the reverse.
