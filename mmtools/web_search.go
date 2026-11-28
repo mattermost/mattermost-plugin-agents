@@ -186,6 +186,17 @@ func (s *webSearchService) Tool() *llm.Tool {
 			s.httpClient,
 			s.logger,
 		)
+	case "serply":
+		if webCfg.Serply.APIKey == "" {
+			s.logWarn("web search misconfigured: missing Serply API key")
+			return nil
+		}
+		s.provider = websearch.NewSerplyProvider(
+			webCfg.Serply.APIKey,
+			webCfg.Serply.APIURL,
+			s.httpClient,
+			s.logger,
+		)
 	default:
 		s.logDebug("web search provider not supported", "provider", webCfg.Provider)
 		return nil
@@ -226,6 +237,10 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 		}
 	case "searxng":
 		if strings.TrimSpace(webCfg.SearXNG.BaseURL) == "" {
+			return nil
+		}
+	case "serply":
+		if webCfg.Serply.APIKey == "" {
 			return nil
 		}
 	default:
@@ -320,6 +335,8 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 		resultLimit = webCfg.Brave.ResultLimit
 	case "searxng":
 		resultLimit = webCfg.SearXNG.ResultLimit
+	case "serply":
+		resultLimit = webCfg.Serply.ResultLimit
 	}
 
 	// Perform the search

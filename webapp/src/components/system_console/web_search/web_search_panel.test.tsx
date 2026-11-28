@@ -29,6 +29,7 @@ const enabledConfig: WebSearchConfig = {
     provider: 'brave',
     brave: {apiKey: '', resultLimit: 5, apiURL: ''},
     searxng: {baseURL: '', resultLimit: 5},
+    serply: {apiKey: '', resultLimit: 5, apiURL: ''},
     domainDenylist: [],
 };
 
@@ -86,6 +87,7 @@ describe('WebSearchPanel provider', () => {
         {provider: 'google', shown: true},
         {provider: 'brave', shown: false},
         {provider: 'searxng', shown: false},
+        {provider: 'serply', shown: false},
     ])('unsupported provider message for $provider shown: $shown', ({provider, shown}) => {
         render(
             <IntlProvider locale='en'>
@@ -97,5 +99,27 @@ describe('WebSearchPanel provider', () => {
         );
 
         expect(screen.queryByText(unsupportedMessage) !== null).toBe(shown);
+    });
+});
+
+describe('WebSearchPanel Serply provider', () => {
+    test('shows Serply fields and writes the key to the serply config', () => {
+        const onChange = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <WebSearchPanel
+                    value={{...enabledConfig, provider: 'serply'}}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Serply API Key')).not.toBeNull();
+        const keyInput = document.querySelector('input[type="password"]') as HTMLInputElement;
+        fireEvent.change(keyInput, {target: {value: 'serply-key'}});
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+            serply: {apiKey: 'serply-key', resultLimit: 5, apiURL: ''},
+            brave: enabledConfig.brave,
+        }));
     });
 });
